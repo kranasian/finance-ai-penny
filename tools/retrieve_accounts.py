@@ -4,6 +4,18 @@ import pandas as pd
 from sandbox_logging import log
 
 
+ACCOUNT_TYPE_TO_STRING = {
+  'deposit_savings': 'savings',
+  'deposit_money_market': 'money market',
+  'deposit_checking': 'checking',
+  'credit_card': 'credit card',
+  'loan_home_equity': 'home equity loan',
+  'loan_line_of_credit': 'line of credit',
+  'loan_mortgage': 'mortgage',
+}
+ACCOUNT_STRING_TO_TYPE = {v: k for k, v in ACCOUNT_TYPE_TO_STRING.items()}
+
+
 def retrieve_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   """Function to retrieve accounts from the database for a specific user"""
   db = Database()
@@ -42,6 +54,7 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
       account = df.iloc[i]
       account_name = account['account_name']
       account_type = account.get('account_type', None)
+      account_type_string = ACCOUNT_TYPE_TO_STRING.get(account_type, None)
       account_mask = account.get('account_mask', None)
       account_id = account.get('account_id', None)
       balance_available = account.get('balance_available', None)
@@ -55,7 +68,7 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
       
       utterance = template.format(
         account_name=account_name,
-        account_type=account_type,
+        account_type=account_type_string,
         account_mask=account_mask,
         account_id=account_id,
         balance_available=available_balance_str,
@@ -96,7 +109,7 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
     })
   
   log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries.")
-  log(f"**Utterances**:\n`{'\n  - '.join(utterances)}`")
+  log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
   log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
   return "\n".join(utterances), metadata
 

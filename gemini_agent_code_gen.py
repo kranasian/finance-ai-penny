@@ -175,9 +175,9 @@ def process_input():
         print("You have no checking accounts.")
       else:
         print("Here are your checking account balances:")
-        for_print, metadata["accounts"] = account_names_and_balances(df, "Account \\"{name}\\" has {current_balance} left with {available_balance} available now.")
+        for_print, metadata["accounts"] = account_names_and_balances(df, "Account \\"{name}\\" has {balance_current} left with {balance_available} available now.")
         print(for_print)
-        print(utter_account_totals(df, "Across all checking accounts, you have {current_balance} left."))
+        print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
     
     return True, metadata
 ```

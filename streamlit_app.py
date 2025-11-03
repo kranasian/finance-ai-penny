@@ -84,7 +84,7 @@ def process_prompt(prompt):
           # Format error response for better readability
           display_error(response_content, "⚠️ **Execution Error**")
         else:
-          st.markdown(response_content)
+          st.text(response_content)
         
         # Show function call information
         if response_data.get("function_called"):
@@ -195,10 +195,7 @@ def render_chat_interface():
         st.error("No users found")
     else:
       st.error("Failed to load users")
-    
-    
-    
-    
+
     st.markdown("""
     <div style="font-size: 10px; line-height: 1.8em; color: #aaa;">
       <p><b>Disclaimer:</b> I only did the bare minimum on the prompts, so don't use it as a barrometer for comparing quality between approaches.</p>
@@ -215,7 +212,7 @@ def render_chat_interface():
         # Format error for better readability
         display_error(content, "⚠️ **Error occurred**")
       else:
-        st.markdown(content)
+        st.text(content)
       
       # Show function call results if available
       if "function_called" in message and message["function_called"]:

@@ -274,22 +274,19 @@ def retrieve_accounts(user_id: int = 1):
 
 def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callable:
   """Compile and create a restricted function from a string"""    
-  try:
-    # Compile the code with restrictions
-    byte_code = compile_restricted(
-      code_str,
-      filename="<inline>",
-      mode="exec"
-    )
-    # Create namespace for execution
-    safe_locals = {}
-    safe_globals = _get_safe_globals(user_id=user_id, use_full_datetime=_check_code_for_full_datetime(code_str))
-    # Execute the compiled code in restricted environment
-    exec(byte_code, safe_globals, safe_locals)
-    # Return the compiled function
-    return safe_locals["process_input"]
-  except Exception as e:
-    raise ValueError(f"Failed to compile restricted code: {str(e)}", e)
+  # Compile the code with restrictions
+  byte_code = compile_restricted(
+    code_str,
+    filename="<inline>",
+    mode="exec"
+  )
+  # Create namespace for execution
+  safe_locals = {}
+  safe_globals = _get_safe_globals(user_id=user_id, use_full_datetime=_check_code_for_full_datetime(code_str))
+  # Execute the compiled code in restricted environment
+  exec(byte_code, safe_globals, safe_locals)
+  # Return the compiled function
+  return safe_locals["process_input"]
 
 
 def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, dict | None, str]:
@@ -301,20 +298,29 @@ def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, 
   clear_captured_print_output()
   clear_sandbox_logs()
   
-  # Create the restricted function
-  restricted_func = _create_restricted_process_input(code_str, user_id)
-  
-  # Run the function - if it fails, capture logs before exception propagates
+  success = None
+  captured_logs = ""
   try:
-    success, metadata = restricted_func()
-    captured_output = get_captured_print_output()
+    # Create the restricted function
+    restricted_func = _create_restricted_process_input(code_str, user_id)
   except Exception as e:
-    captured_output = f"**Execution Error**: `{str(e)}`\n{traceback.format_exc()}"
+    captured_output = f"**Compilation Error**: `{str(e)}`\n{traceback.format_exc()}"
     success = False
     metadata = {"error": traceback.format_exc()}
+    
+  # If the function was created successfully, run it
+  if success is None:
+    # Run the function - if it fails, capture logs before exception propagates
+    try:
+      success, metadata = restricted_func()
+      captured_output = get_captured_print_output()
+    except Exception as e:
+      captured_output = f"**Execution Error**: `{str(e)}`\n{traceback.format_exc()}"
+      success = False
+      metadata = {"error": traceback.format_exc()}
   
-  # Get the captured print output and logs
-  captured_logs = get_logs_as_string()
+    # Get the captured print output and logs
+    captured_logs = get_logs_as_string()
   
   # Validate result is a bool
   if not isinstance(success, bool):

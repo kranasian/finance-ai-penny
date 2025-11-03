@@ -68,9 +68,9 @@ def process_input_how_much_left_in_checking():
         print("You have no checking accounts.")
       else:
         print("Here are your checking account balances:")
-        for_print, metadata["accounts"] = account_names_and_balances(df, "Account \"{name}\" has {current_balance} left with {available_balance} available now.")
+        for_print, metadata["accounts"] = account_names_and_balances(df, "Account \"{account_name}\" has {balance_current} left with {balance_available} available now.")
         print(for_print)
-        print(utter_account_totals(df, "Across all checking accounts, you have {current_balance} left."))
+        print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
     
     return True, metadata
 
@@ -114,7 +114,7 @@ def process_input_how_much_eating_out_have_I_done():
         print("You have no eating out transactions.")
       else:
         print("Here are your eating out transactions:")
-        for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{name} on {date}: {amount}")
+        for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{transaction_name} on {transaction_date}: {transaction_amount}")
         print(for_print)
         print(utter_transaction_totals(df, "In total, you have spent {total_amount} on eating out."))
     
@@ -141,20 +141,8 @@ def main():
   else:
     print(f"✅ Using existing user: {username} (ID: {user['id']})")
   
-  user_id = user['id']
-  
-  # Create a checking account for the test user
-  print("\n🏦 Creating checking account for test user...")
-  account_id = db.create_account(
-    user_id=user_id,
-    account_type='deposit_checking',
-    balance_available=1500.00,
-    balance_current=0.00,
-    account_name='Test Checking Account',
-    account_mask='1234'
-  )
-  print(f"Created checking account with ID: {account_id}")
-  
+  user_id = 3
+
   # Test the checking account balance function
   print("\n💰 Testing checking account balance function...")
   success, metadata = process_input_how_much_left_in_checking()
