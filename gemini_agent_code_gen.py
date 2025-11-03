@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from datetime import datetime
 import sandbox
+from database import Database
 
 # Load environment variables
 load_dotenv()
@@ -46,18 +47,27 @@ Write a function `process_input` that takes no arguments and print()s what to te
   - The first element the boolean success or failure of the function.
   - The second element is the metadata for the entities created or retrieved.
 - Compute for dates using `datetime` package.  Assume `import datetime` is already included.
-- When looking for `name` and `==`, look for other relevant variations to find more matches.
+- When looking for `account_name` and `==`, look for other relevant variations like fuzzy search to find more matches. Refer to <ACCOUNT_NAMES> for the list of account names.
 
 <IMPLEMENTED_FUNCTIONS>
   These functions are already implemented:
     - `retrieve_accounts(): pd.DataFrame`
         - retrieves all accounts and returns a pandas DataFrame.  It may be empty if no accounts exist.
-        - Panda's dataframe columns: `account_id`, `account_type`, `account_name`, `balance_available`, `balance_current`
-        - `account_id` is a integer type, `account_type` and `name` is a str type, `balance_available` and `balance_current` is a float type.
+        - Panda's dataframe columns: `account_id`, `account_type`, `account_name`, `balance_available`, `balance_current`, `balance_limit`
+        - `account_id` is a integer type, `account_type` and `account_name` are str types, `balance_available`, `balance_current` and `balance_limit` are float types.
     - `account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
     - `utter_account_totals(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and calculates total balances and returns a formatted string based on `template`.
+    - `retrieve_transactions() -> pd.DataFrame`
+        - retrieves all transactions and returns a pandas DataFrame.  It may be empty if no transactions exist.
+        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`
+        - `transaction_id`, `account_id`, and `user_id` are integer types, `transaction_name` and `category` are str types, `amount` is a float type, `date` is a pandas datetime64 (pd.Timestamp) type.
+        - `amount` values are negative for spending/outflow, positive for receiving/inflow.
+    - `transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
+        - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
+    - `utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str) -> str`
+        - takes filtered `df`, `is_spending` flag (True for spending categories, False for income), and `template` string, calculates total transaction amounts and returns a formatted string.
 </IMPLEMENTED_FUNCTIONS>
 
 <ACCOUNT_TYPE>
@@ -151,6 +161,36 @@ Write a function `process_input` that takes no arguments and print()s what to te
     #     - `device_id` is a str type, `is_on` is a boolean type, `brightness` is an integer (0-100), `target_temperature` is a float.
 
   
+  def _build_account_names_section(self, user_id: int) -> str:
+    """
+    Build the ACCOUNT_NAMES section dynamically based on the user's accounts.
+    
+    Args:
+      user_id: The user ID to retrieve accounts for
+      
+    Returns:
+      String containing the ACCOUNT_NAMES section
+    """
+    db = Database()
+    accounts = db.get_accounts_by_user(user_id)
+    
+    if not accounts:
+      return "<ACCOUNT_NAMES>\n  These are the `account_name` in the `accounts` table:\n    (No accounts found for this user)\n</ACCOUNT_NAMES>"
+    
+    account_names_list = []
+    for account in accounts:
+      account_name = account.get('account_name', '')
+      if account_name:
+        account_names_list.append(f"    - `{account_name}`")
+    
+    account_names_text = "\n".join(account_names_list) if account_names_list else "    (No account names found)"
+    
+    return f"""<ACCOUNT_NAMES>
+  **REFERENCE ONLY** - These are example `account_name` values in the `accounts` table. This is NOT code - use `retrieve_accounts()` to get the actual DataFrame.
+  Account names:
+{account_names_text}
+</ACCOUNT_NAMES>"""
+
   def _create_few_shot_examples(self) -> str:
     """
     Create few-shot examples for code generation.
@@ -264,12 +304,17 @@ output:""")
     # Create content and configuration
     contents = [types.Content(role="user", parts=[request_text])]
     
+    # Build dynamic ACCOUNT_NAMES section for this user
+    account_names_section = self._build_account_names_section(user_id)
+    # Combine system prompt with dynamic account names
+    full_system_prompt = self.system_prompt + "\n\n" + account_names_section
+    
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
-      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      system_instruction=[types.Part.from_text(text=full_system_prompt)],
       thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
     )
 

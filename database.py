@@ -31,6 +31,7 @@ class Database:
         account_type TEXT NOT NULL CHECK (account_type IN ('deposit_savings', 'deposit_money_market', 'deposit_checking', 'credit_card', 'loan_home_equity', 'loan_line_of_credit', 'loan_mortgage', 'loan_auto')),
         balance_available REAL DEFAULT 0,
         balance_current REAL DEFAULT 0,
+        balance_limit REAL DEFAULT 0,
         account_name TEXT NOT NULL,
         account_mask TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -119,14 +120,14 @@ class Database:
   # Account management methods
   def create_account(self, user_id: int, account_type: str, 
                     balance_available: float, balance_current: float, 
-                    account_name: str, account_mask: str) -> int:
+                    account_name: str, account_mask: str, balance_limit: Optional[float] = None) -> int:
     """Create a new account and return account ID"""
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
     cursor.execute(
-      "INSERT INTO accounts (user_id, account_type, balance_available, balance_current, account_name, account_mask) VALUES (?, ?, ?, ?, ?, ?)",
-      (user_id, account_type, balance_available, balance_current, account_name, account_mask)
+      "INSERT INTO accounts (user_id, account_type, balance_available, balance_current, balance_limit, account_name, account_mask) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      (user_id, account_type, balance_available, balance_current, balance_limit, account_name, account_mask)
     )
     account_id = cursor.lastrowid
     conn.commit()
@@ -150,9 +151,10 @@ class Database:
         'account_type': result[2],
         'balance_available': result[3],
         'balance_current': result[4],
-        'account_name': result[5],
-        'account_mask': result[6],
-        'created_at': result[7]
+        'balance_limit': result[5],
+        'account_name': result[6],
+        'account_mask': result[7],
+        'created_at': result[8]
       }
     return None
 
@@ -173,9 +175,10 @@ class Database:
         'account_type': result[2],
         'balance_available': result[3],
         'balance_current': result[4],
-        'account_name': result[5],
-        'account_mask': result[6],
-        'created_at': result[7]
+        'balance_limit': result[5],
+        'account_name': result[6],
+        'account_mask': result[7],
+        'created_at': result[8]
       })
     
     return accounts
@@ -197,9 +200,10 @@ class Database:
         'account_type': result[2],
         'balance_available': result[3],
         'balance_current': result[4],
-        'account_name': result[5],
-        'account_mask': result[6],
-        'created_at': result[7]
+        'balance_limit': result[5],
+        'account_name': result[6],
+        'account_mask': result[7],
+        'created_at': result[8]
       })
     
     return accounts

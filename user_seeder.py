@@ -28,49 +28,99 @@ def create_sample_accounts(user_id: int, account_count: int) -> list:
       'account_type': 'deposit_checking',
       'account_name': 'Chase Total Checking Account',
       'balance_available': 2500.00,
-      'balance_current': 0.00
+      'balance_current': 2500.00,
+      'balance_limit': 0.00
     },
     {
       'account_type': 'deposit_savings',
       'account_name': 'Ally Bank Online Savings Account',
       'balance_available': 15000.00,
-      'balance_current': 0.00
+      'balance_current': 15000.00,
+      'balance_limit': 0.00
+    },
+    {
+      'account_type': 'deposit_savings',
+      'account_name': 'Marcus by Goldman Sachs High-Yield Savings',
+      'balance_available': 20000.00,
+      'balance_current': 20000.00,
+      'balance_limit': 0.00
+    },
+    {
+      'account_type': 'deposit_savings',
+      'account_name': 'American Express High Yield Savings',
+      'balance_available': 12000.00,
+      'balance_current': 12000.00,
+      'balance_limit': 0.00
     },
     {
       'account_type': 'deposit_money_market',
       'account_name': 'Capital One Money Market Account',
       'balance_available': 25000.00,
-      'balance_current': 0.00
+      'balance_current': 25000.00,
+      'balance_limit': 0.00
     },
     {
       'account_type': 'credit_card',
       'account_name': 'Chase Freedom Unlimited Credit Card',
-      'balance_available': 5000.00,
-      'balance_current': 1200.00
+      'balance_available': 3800.00,
+      'balance_current': 1200.00,
+      'balance_limit': 5000.00  # Credit limit
+    },
+    {
+      'account_type': 'credit_card',
+      'account_name': 'American Express Gold Card',
+      'balance_available': 7500.00,
+      'balance_current': 2500.00,
+      'balance_limit': 10000.00  # Credit limit
+    },
+    {
+      'account_type': 'credit_card',
+      'account_name': 'Capital One Venture Rewards Credit Card',
+      'balance_available': 8500.00,
+      'balance_current': 1500.00,
+      'balance_limit': 10000.00  # Credit limit
+    },
+    {
+      'account_type': 'credit_card',
+      'account_name': 'Citi Double Cash Card',
+      'balance_available': 5200.00,
+      'balance_current': 800.00,
+      'balance_limit': 6000.00  # Credit limit
+    },
+    {
+      'account_type': 'credit_card',
+      'account_name': 'Discover it Cash Back',
+      'balance_available': 3400.00,
+      'balance_current': 600.00,
+      'balance_limit': 4000.00  # Credit limit
     },
     {
       'account_type': 'loan_line_of_credit',
       'account_name': 'Bank of America Personal Line of Credit',
-      'balance_available': 15000.00,
-      'balance_current': 5000.00
+      'balance_available': 10000.00,
+      'balance_current': 5000.00,
+      'balance_limit': 15000.00  # Credit line limit
     },
     {
       'account_type': 'loan_home_equity',
       'account_name': 'Wells Fargo Home Equity Line of Credit',
-      'balance_available': 50000.00,
-      'balance_current': 12000.00
+      'balance_available': 38000.00,
+      'balance_current': 12000.00,
+      'balance_limit': 50000.00  # Credit line limit
     },
     {
       'account_type': 'loan_mortgage',
       'account_name': 'Quicken Loans Mortgage',
       'balance_available': 0.00,
-      'balance_current': 250000.00
+      'balance_current': 250000.00,
+      'balance_limit': 250000.00  # Original loan amount
     },
     {
       'account_type': 'loan_auto',
       'account_name': 'Toyota Financial Services Auto Loan',
       'balance_available': 0.00,
-      'balance_current': 18000.00
+      'balance_current': 18000.00,
+      'balance_limit': 22000.00  # Original loan amount
     }
   ]
   
@@ -78,12 +128,30 @@ def create_sample_accounts(user_id: int, account_count: int) -> list:
   if account_count == 1:
     # SmallDataUser: 1 checking account
     selected_accounts = [account_templates[0]]  # deposit_checking
-  else:
+  elif account_count == 3:
     # MediumDataUser: 3 accounts (checking, credit card, auto loan)
     selected_accounts = [
       account_templates[0],  # deposit_checking
-      account_templates[3],  # credit_card
-      account_templates[7]    # loan_auto
+      account_templates[5],  # credit_card (Chase Freedom)
+      account_templates[13]  # loan_auto
+    ]
+  else:
+    # HeavyDataUser: 13 accounts (all base account types + 2 additional savings + 3 additional credit cards)
+    selected_accounts = [
+      account_templates[0],  # deposit_checking
+      account_templates[1],  # deposit_savings (Ally)
+      account_templates[2],  # deposit_savings (Marcus) - additional
+      account_templates[3],  # deposit_savings (Amex) - additional
+      account_templates[4],  # deposit_money_market
+      account_templates[5],  # credit_card (Chase Freedom)
+      account_templates[6],  # credit_card (Amex Gold) - additional
+      account_templates[7],  # credit_card (Capital One) - additional
+      account_templates[8],  # credit_card (Citi) - additional
+      account_templates[9],  # credit_card (Discover) - additional
+      account_templates[10], # loan_line_of_credit
+      account_templates[11], # loan_home_equity
+      account_templates[12], # loan_mortgage
+      account_templates[13]  # loan_auto
     ]
   
   for account_template in selected_accounts:
@@ -95,7 +163,8 @@ def create_sample_accounts(user_id: int, account_count: int) -> list:
       balance_available=account_template['balance_available'],
       balance_current=account_template['balance_current'],
       account_name=account_template['account_name'],
-      account_mask=account_mask
+      account_mask=account_mask,
+      balance_limit=account_template.get('balance_limit', None)
     )
     account_ids.append(account_id)
   
@@ -292,12 +361,21 @@ def seed_users():
   print(f"  - {len(medium_accounts)} account(s)")
   print(f"  - {len(medium_transactions)} transactions over 3 months")
   
+  # Create HeavyDataUser with 13 accounts and 1000 transactions over 6 months
+  heavy_user_id = db.create_user("HeavyDataUser", "heavy@example.com")
+  heavy_accounts = create_sample_accounts(heavy_user_id, 13)
+  heavy_transactions = create_sample_transactions(heavy_user_id, heavy_accounts, 1000, 6)
+  print(f"Created HeavyDataUser with ID: {heavy_user_id}")
+  print(f"  - {len(heavy_accounts)} account(s)")
+  print(f"  - {len(heavy_transactions)} transactions over 6 months")
+  
   print("\nUser seeding completed successfully!")
   
   # Verify the seeding
   print("\nVerification:")
   small_user = db.get_user("SmallDataUser")
   medium_user = db.get_user("MediumDataUser")
+  heavy_user = db.get_user("HeavyDataUser")
   
   print(f"SmallDataUser:")
   print(f"  - Accounts: {len(db.get_accounts_by_user(small_user['id']))}")
@@ -307,12 +385,16 @@ def seed_users():
   print(f"  - Accounts: {len(db.get_accounts_by_user(medium_user['id']))}")
   print(f"  - Transactions: {len(db.get_transactions_by_user(medium_user['id']))}")
   
+  print(f"HeavyDataUser:")
+  print(f"  - Accounts: {len(db.get_accounts_by_user(heavy_user['id']))}")
+  print(f"  - Transactions: {len(db.get_transactions_by_user(heavy_user['id']))}")
+  
   print(f"\nTotal accounts in database: {len(db.get_all_accounts())}")
   print(f"Total transactions in database: {len(db.get_all_transactions())}")
   
   # Show account breakdown by user
   print("\nAccount Breakdown by User:")
-  for user in [small_user, medium_user]:
+  for user in [small_user, medium_user, heavy_user]:
     user_accounts = db.get_accounts_by_user(user['id'])
     print(f"\n{user['username']}:")
     if user_accounts:

@@ -1,4 +1,5 @@
 import json
+import re
 from database import Database
 import pandas as pd
 from sandbox_logging import log
@@ -12,6 +13,7 @@ ACCOUNT_TYPE_TO_STRING = {
   'loan_home_equity': 'home equity loan',
   'loan_line_of_credit': 'line of credit',
   'loan_mortgage': 'mortgage',
+  'loan_auto': 'auto loan',
 }
 ACCOUNT_STRING_TO_TYPE = {v: k for k, v in ACCOUNT_TYPE_TO_STRING.items()}
 
@@ -59,21 +61,159 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
       account_id = account.get('account_id', None)
       balance_available = account.get('balance_available', None)
       balance_current = account.get('balance_current', None)
+      balance_limit = account.get('balance_limit', None)
       
-      log(f"  - `A-{account_id}`]  **Name**: `{account_name}`  |  **A**: `${balance_available:,.0f}`  |  **C**: `${balance_current:,.0f}`")
+      # Handle None values for logging
+      balance_available_log = "None" if balance_available is None else f"${balance_available:,.0f}"
+      balance_current_log = "None" if balance_current is None else f"${balance_current:,.0f}"
+      balance_limit_log = "None" if balance_limit is None else f"${balance_limit:,.0f}"
+      log(f"  - `A-{account_id}`]  **Name**: `{account_name}`  |  **A**: `{balance_available_log}`  |  **C**: `{balance_current_log}`  |  **L**: `{balance_limit_log}`")
       
-      # Format balances, using "Unknown" for None values
-      available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
-      current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
+      # Check if template has format specifiers - if so, use numeric values
+      has_format_specifiers = bool(re.search(r'\{balance_(available|current|limit):[^}]+\}', template))
+      has_dollar_sign = bool(re.search(r'\$\{balance_(available|current|limit):', template)) if has_format_specifiers else False
+      # Check for dollar signs anywhere in template (for templates without format specifiers)
+      has_dollar_sign_anywhere = '$' in template
       
-      utterance = template.format(
-        account_name=account_name,
-        account_type=account_type_string,
-        account_mask=account_mask,
-        account_id=account_id,
-        balance_available=available_balance_str,
-        balance_current=current_balance_str
-      )
+      log(f"**Template analysis**: has_format_specifiers={has_format_specifiers}, has_dollar_sign={has_dollar_sign}, has_dollar_sign_anywhere={has_dollar_sign_anywhere}, template=`{template[:200]}`")
+      
+      # Try formatting - handle both cases: with and without format specifiers
+      try:
+        if has_format_specifiers and has_dollar_sign:
+          # Template has format specifiers WITH $ sign, pass raw numeric values
+          balance_available_val = 0.0 if balance_available is None else balance_available
+          balance_current_val = 0.0 if balance_current is None else balance_current
+          balance_limit_val = 0.0 if balance_limit is None else balance_limit
+          utterance = template.format(
+            name=account_name,
+            account_name=account_name,
+            account_type=account_type_string,
+            account_mask=account_mask,
+            account_id=account_id,
+            balance_available=balance_available_val,
+            balance_current=balance_current_val,
+            balance_limit=balance_limit_val
+          )
+        elif has_format_specifiers and not has_dollar_sign:
+          # Template has format specifiers but NO $ sign, format with $ included
+          available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
+          current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
+          limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+          # Replace ALL format specifiers with simple placeholders for formatting
+          temp_template = re.sub(r'\{balance_(available|current|limit):[^}]+\}', r'{\1}', template)
+          temp_template = temp_template.replace('{available}', '{balance_available}')
+          temp_template = temp_template.replace('{current}', '{balance_current}')
+          temp_template = temp_template.replace('{limit}', '{balance_limit}')
+          log(f"**Formatting with $ signs**: Template: `{template[:150]}...` -> Replaced: `{temp_template[:150]}...`")
+          log(f"**Values**: available={available_balance_str}, current={current_balance_str}, limit={limit_balance_str}")
+          # Use format_map to ensure proper substitution
+          format_dict = {
+            'name': account_name,
+            'account_name': account_name,
+            'account_type': account_type_string,
+            'account_mask': account_mask,
+            'account_id': account_id,
+            'balance_available': available_balance_str,
+            'balance_current': current_balance_str,
+            'balance_limit': limit_balance_str
+          }
+          utterance = temp_template.format(**format_dict)
+          log(f"**Final utterance before check**: `{utterance}`")
+          
+          # Post-process to ensure dollar signs are present for formatted numbers
+          # This is a safety net in case format() does something unexpected
+          if balance_current is not None:
+            # Look for numbers like "2,500" without dollar sign and add it
+            current_num = f"{balance_current:,.0f}"
+            if current_num in utterance and f"${current_num}" not in utterance:
+              utterance = utterance.replace(f" {current_num}", f" ${current_num}", 1)
+              log(f"**Fixed current balance**: Added $ to {current_num}")
+          if balance_available is not None:
+            available_num = f"{balance_available:,.0f}"
+            if available_num in utterance and f"${available_num}" not in utterance:
+              utterance = utterance.replace(f" {available_num}", f" ${available_num}", 1)
+              log(f"**Fixed available balance**: Added $ to {available_num}")
+          if balance_limit is not None:
+            limit_num = f"{balance_limit:,.0f}"
+            if limit_num in utterance and f"${limit_num}" not in utterance:
+              utterance = utterance.replace(f" {limit_num}", f" ${limit_num}", 1)
+              log(f"**Fixed limit balance**: Added $ to {limit_num}")
+          
+          log(f"**Final utterance after fixes**: `{utterance}`")
+        else:
+          # No format specifiers - check if template has dollar signs
+          if has_dollar_sign_anywhere:
+            # Template has dollar signs, format without $ prefix
+            available_balance_str = "Unknown" if balance_available is None else f"{balance_available:,.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"{balance_current:,.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"{balance_limit:,.0f}"
+          else:
+            # Template has NO dollar signs, format WITH $ prefix
+            available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+          log(f"**No format specifiers**: has_dollar_sign_anywhere={has_dollar_sign_anywhere}, formatting values: available={available_balance_str}, current={current_balance_str}, limit={limit_balance_str}")
+          utterance = template.format(
+            name=account_name,
+            account_name=account_name,
+            account_type=account_type_string,
+            account_mask=account_mask,
+            account_id=account_id,
+            balance_available=available_balance_str,
+            balance_current=current_balance_str,
+            balance_limit=limit_balance_str
+          )
+          log(f"**Final utterance**: `{utterance}`")
+      except (ValueError, KeyError) as e:
+        # If formatting with numeric values fails, try with formatted strings
+        # Check if template has format specifiers - if so, replace them and add $ signs
+        log(f"**Exception caught**: {e}, checking template for format specifiers")
+        has_format_specifiers = bool(re.search(r'\{balance_(available|current|limit):[^}]+\}', template))
+        if has_format_specifiers:
+          # Format with $ signs and replace format specifiers
+          available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
+          current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
+          limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+          temp_template = re.sub(r'\{balance_(available|current|limit):[^}]+\}', r'{\1}', template)
+          temp_template = temp_template.replace('{available}', '{balance_available}')
+          temp_template = temp_template.replace('{current}', '{balance_current}')
+          temp_template = temp_template.replace('{limit}', '{balance_limit}')
+          log(f"**Exception handler**: Template: `{template[:150]}...` -> Replaced: `{temp_template[:150]}...`")
+          utterance = temp_template.format(
+            name=account_name,
+            account_name=account_name,
+            account_type=account_type_string,
+            account_mask=account_mask,
+            account_id=account_id,
+            balance_available=available_balance_str,
+            balance_current=current_balance_str,
+            balance_limit=limit_balance_str
+          )
+        else:
+          # No format specifiers - check if template has dollar signs
+          has_dollar_sign_anywhere = '$' in template
+          if has_dollar_sign_anywhere:
+            # Template has dollar signs, format without $ prefix
+            available_balance_str = "Unknown" if balance_available is None else f"{balance_available:,.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"{balance_current:,.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"{balance_limit:,.0f}"
+          else:
+            # Template has NO dollar signs, format WITH $ prefix
+            available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+          log(f"**Exception handler - No format specifiers**: has_dollar_sign_anywhere={has_dollar_sign_anywhere}, formatting values: available={available_balance_str}, current={current_balance_str}, limit={limit_balance_str}")
+          utterance = template.format(
+            name=account_name,
+            account_name=account_name,
+            account_type=account_type_string,
+            account_mask=account_mask,
+            account_id=account_id,
+            balance_available=available_balance_str,
+            balance_current=current_balance_str,
+            balance_limit=limit_balance_str
+          )
+          log(f"**Exception handler - Final utterance**: `{utterance}`")
       utterances.append(utterance)
       
       metadata.append({
@@ -129,14 +269,108 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     log(f"- **`df` is missing required columns**")
     raise ValueError(f"- **`df` is missing required columns**: `{', '.join(missing_columns)}`. Available columns: `{', '.join(df.columns)}`")
   
+  # Calculate overall totals (for backward compatibility)
   total_available = df['balance_available'].sum()
   total_current = df['balance_current'].sum()
+  
+  # Calculate separate totals for savings and credit accounts if account_type column exists
+  savings_available = None
+  savings_current = None
+  credit_available = None
+  credit_current = None
+  
+  if 'account_type' in df.columns:
+    # Define account types
+    savings_types = ['deposit_savings', 'deposit_checking', 'deposit_money_market']
+    credit_types = ['credit_card', 'loan_home_equity', 'loan_line_of_credit', 'loan_mortgage', 'loan_auto']
+    
+    # Filter savings accounts
+    savings_df = df[df['account_type'].isin(savings_types)]
+    if not savings_df.empty:
+      savings_available = savings_df['balance_available'].sum()
+      savings_current = savings_df['balance_current'].sum()
+    
+    # Filter credit accounts
+    credit_df = df[df['account_type'].isin(credit_types)]
+    if not credit_df.empty:
+      credit_available = credit_df['balance_available'].sum()
+      credit_current = credit_df['balance_current'].sum()
+    
+    savings_avail_str = f"{savings_available:,.0f}" if savings_available is not None else "0"
+    savings_curr_str = f"{savings_current:,.0f}" if savings_current is not None else "0"
+    credit_avail_str = f"{credit_available:,.0f}" if credit_available is not None else "0"
+    credit_curr_str = f"{credit_current:,.0f}" if credit_current is not None else "0"
+    log(f"**Separated Totals**: Savings - Available: ${savings_avail_str}, Current: ${savings_curr_str} | Credit - Available: ${credit_avail_str}, Current: ${credit_curr_str}")
+  
   log(f"**Calculated Totals**: **TA**: `${total_available:,.0f}`  |  **TC**: `${total_current:,.0f}`")
   
-  result = template.format(
-    balance_available=f"${total_available:,.0f}",
-    balance_current=f"${total_current:,.0f}"
-  )
+  # Check if template uses separated totals placeholders
+  uses_separated_totals = bool(re.search(r"\{savings_balance_|credit_balance_", template))
+  
+  # If we have separated totals and template doesn't use them, automatically format with separated totals
+  has_both_account_types = (savings_available is not None or savings_current is not None) and (credit_available is not None or credit_current is not None)
+  
+  if has_both_account_types and not uses_separated_totals:
+    # Automatically format with separated totals
+    has_dollar_sign_anywhere = '$' in template
+    if has_dollar_sign_anywhere:
+      savings_curr_str = f"{savings_current:,.0f}" if savings_current is not None else "0"
+      credit_curr_str = f"{credit_current:,.0f}" if credit_current is not None else "0"
+      savings_avail_str = f"{savings_available:,.0f}" if savings_available is not None else "0"
+      credit_avail_str = f"{credit_available:,.0f}" if credit_available is not None else "0"
+    else:
+      savings_curr_str = f"${savings_current:,.0f}" if savings_current is not None else "$0"
+      credit_curr_str = f"${credit_current:,.0f}" if credit_current is not None else "$0"
+      savings_avail_str = f"${savings_available:,.0f}" if savings_available is not None else "$0"
+      credit_avail_str = f"${credit_available:,.0f}" if credit_available is not None else "$0"
+    
+    result = f"Your savings accounts (checking, savings, money market) have a total current balance of {savings_curr_str} and available balance of {savings_avail_str}. Your credit accounts (credit cards, loans) have a total current balance of {credit_curr_str} and available balance of {credit_avail_str}."
+    log(f"**Auto-separated Utterance**: `{result}`")
+    return result
+  
+  # Detect if template uses format specifiers like {balance_available:,.0f} or {savings_balance_available:,.0f}
+  has_format_specifiers = bool(re.search(r"\{(balance_available|balance_current|savings_balance_available|savings_balance_current|credit_balance_available|credit_balance_current):[^}]+\}", template))
+  has_dollar_sign_anywhere = '$' in template
+  
+  if has_format_specifiers:
+    # Pass raw numbers so the template's specifiers can format them
+    format_dict = {
+      'balance_available': 0.0 if total_available is None else total_available,
+      'balance_current': 0.0 if total_current is None else total_current,
+      'savings_balance_available': 0.0 if savings_available is None else savings_available,
+      'savings_balance_current': 0.0 if savings_current is None else savings_current,
+      'credit_balance_available': 0.0 if credit_available is None else credit_available,
+      'credit_balance_current': 0.0 if credit_current is None else credit_current,
+    }
+    result = template.format(**format_dict)
+  else:
+    # No format specifiers - check if template has dollar signs
+    if has_dollar_sign_anywhere:
+      # Template has dollar signs, format without $ prefix
+      available_str = "Unknown" if total_available is None else f"{total_available:,.0f}"
+      current_str = "Unknown" if total_current is None else f"{total_current:,.0f}"
+      savings_available_str = "Unknown" if savings_available is None else f"{savings_available:,.0f}"
+      savings_current_str = "Unknown" if savings_current is None else f"{savings_current:,.0f}"
+      credit_available_str = "Unknown" if credit_available is None else f"{credit_available:,.0f}"
+      credit_current_str = "Unknown" if credit_current is None else f"{credit_current:,.0f}"
+    else:
+      # Template has NO dollar signs, format WITH $ prefix
+      available_str = "Unknown" if total_available is None else f"${total_available:,.0f}"
+      current_str = "Unknown" if total_current is None else f"${total_current:,.0f}"
+      savings_available_str = "Unknown" if savings_available is None else f"${savings_available:,.0f}"
+      savings_current_str = "Unknown" if savings_current is None else f"${savings_current:,.0f}"
+      credit_available_str = "Unknown" if credit_available is None else f"${credit_available:,.0f}"
+      credit_current_str = "Unknown" if credit_current is None else f"${credit_current:,.0f}"
+    
+    format_dict = {
+      'balance_available': available_str,
+      'balance_current': current_str,
+      'savings_balance_available': savings_available_str,
+      'savings_balance_current': savings_current_str,
+      'credit_balance_available': credit_available_str,
+      'credit_balance_current': credit_current_str,
+    }
+    result = template.format(**format_dict)
   log(f"**Utterance**: `{result}`")
   return result
 

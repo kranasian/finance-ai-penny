@@ -113,10 +113,21 @@ def render_example_prompts():
   st.markdown("##### 💡 Example Prompts")
   
   example_prompts = [
+    # General account balance questions
     "What is my account balance?",
     "Show me all my account balances",
     "What are my current balances?",
-    "Check my account balances"
+    "Check my account balances",
+    "Do I have accounts with current balance over 5k?",
+    "How much is my credit limit?",
+    "What is the balance of my Amex accounts?",
+    "What is the balance of my BoF and Citibank accounts?",
+    # General transaction questions
+    "What are my recent transactions?",
+    "What are my recent Amex transactions?",
+    "Do I have dining out transactions with amount over $40 last month?",
+    "List my dining out transactions last month.",
+    "List income past 2 weeks."
   ]
   
   cols = st.columns(4)

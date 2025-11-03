@@ -13,6 +13,7 @@ import pandas as pd
 import traceback
 import json
 from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
+from tools.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
 from sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
 
 
@@ -91,10 +92,49 @@ class _DataFrameGuard:
       # Allow access to PrintHandler's _call_print method
       if obj.__class__.__name__ == 'PrintHandler' and name == '_call_print':
         return getattr(obj, name)
+      # Special handling for datetime - check if obj is the datetime module or class
+      if obj is dt or obj is datetime:
+        # If obj is the datetime module (dt), allow access to its attributes (including datetime class)
+        if obj is dt:
+          return getattr(dt, name)
+        # If obj is the datetime class, allow access to its methods
+        # If accessing .datetime on the class, return the class itself (for compatibility with datetime.datetime.now())
+        if name == 'datetime':
+          return datetime
+        # If accessing .timedelta on the class, return timedelta (from datetime module)
+        if name == 'timedelta':
+          return timedelta
+        try:
+          return getattr(datetime, name)
+        except AttributeError:
+          pass
+      # Check if obj is a datetime class type (but not the module)
+      if type(obj).__name__ == 'type' and hasattr(obj, '__name__') and obj.__name__ == 'datetime' and obj is not dt:
+        if name == 'datetime':
+          return datetime
+        try:
+          return getattr(datetime, name)
+        except AttributeError:
+          pass
+      # Handle method_descriptor objects that might be datetime-related
+      if type(obj).__name__ == 'method_descriptor' and name in ('today', 'now', 'utcnow', 'fromtimestamp', 'fromordinal'):
+        # Try to get the attribute from datetime class
+        try:
+          return getattr(datetime, name)
+        except AttributeError:
+          pass
       # For other objects, use a more restrictive approach
       if name.startswith('_'):
         raise AttributeError(f"_getattr_ guard: Access to private attribute '{name}' on {type(obj).__name__} is not allowed")
       return getattr(obj, name)
+    except AttributeError as e:
+      # If it's a datetime-related attribute error, try to get it from datetime class
+      if name in ('today', 'now', 'utcnow', 'fromtimestamp', 'fromordinal'):
+        try:
+          return getattr(datetime, name)
+        except AttributeError:
+          pass
+      raise AttributeError(f"_getattr_ guard: Failed to access attribute '{name}' on {type(obj).__name__}. Error: {e}") from e
     except Exception as e:
       raise AttributeError(f"_getattr_ guard: Failed to access attribute '{name}' on {type(obj).__name__}. Error: {e}") from e
   
@@ -208,6 +248,17 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_account_totals_wrapper(df: pd.DataFrame, template: str):
     return utter_account_totals(df, template)
   
+  # Create a wrapper function for retrieve_transactions that uses the provided user_id
+  def retrieve_transactions_wrapper():
+    return retrieve_transactions(user_id)
+  
+  # Create wrapper functions for transaction utility functions
+  def transaction_names_and_amounts_wrapper(df: pd.DataFrame, template: str):
+    return transaction_names_and_amounts(df, template)
+  
+  def utter_transaction_totals_wrapper(df: pd.DataFrame, is_spending: bool, template: str):
+    return utter_transaction_totals(df, is_spending, template)
+  
   safe_globals_dict = {
     "__builtins__": all_builtins,
     "pd": pd,
@@ -234,6 +285,9 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "retrieve_accounts": retrieve_accounts_wrapper,
     "account_names_and_balances": account_names_and_balances_wrapper,
     "utter_account_totals": utter_account_totals_wrapper,
+    "retrieve_transactions": retrieve_transactions_wrapper,
+    "transaction_names_and_amounts": transaction_names_and_amounts_wrapper,
+    "utter_transaction_totals": utter_transaction_totals_wrapper,
     "utter_delta_from_now": utter_delta_from_now,
     "reminder_data": reminder_data,
     "log": sandbox_log,
@@ -270,6 +324,11 @@ def clear_captured_print_output():
 def retrieve_accounts(user_id: int = 1):
   """Internal function to retrieve accounts - available to executed code"""
   return retrieve_accounts_function_code_gen(user_id)
+
+
+def retrieve_transactions(user_id: int = 1):
+  """Internal function to retrieve transactions - available to executed code"""
+  return retrieve_transactions_function_code_gen(user_id)
 
 
 def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callable:
