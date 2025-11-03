@@ -13,6 +13,7 @@ import pandas as pd
 import traceback
 import json
 from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
+from sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
 
 
 def _write_(obj):
@@ -235,6 +236,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "utter_account_totals": utter_account_totals_wrapper,
     "utter_delta_from_now": utter_delta_from_now,
     "reminder_data": reminder_data,
+    "log": sandbox_log,
   }
   return safe_globals_dict
 
@@ -290,86 +292,85 @@ def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callabl
     raise ValueError(f"Failed to compile restricted code: {str(e)}", e)
 
 
-def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, dict | None]:
+def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, dict | None, str]:
   """
   Run the provided code in a restricted sandbox environment
-  Returns processed DataFrame or raises exception
+  Returns (success, captured_output, metadata, logs)
   """
+  # Clear any previous captured print output and logs
+  clear_captured_print_output()
+  clear_sandbox_logs()
+  
+  # Create the restricted function
+  restricted_func = _create_restricted_process_input(code_str, user_id)
+  
+  # Run the function - if it fails, capture logs before exception propagates
   try:
-    # Clear any previous captured print output
-    clear_captured_print_output()
-    
-    # Create the restricted function
-    restricted_func = _create_restricted_process_input(code_str, user_id)
-    
-    # Run the function with input DataFrame
     success, metadata = restricted_func()
-    
-    # Get the captured print output
     captured_output = get_captured_print_output()
-    
-    # Validate result is a bool
-    if not isinstance(success, bool):
-      raise ValueError(f"Restricted code must return a bool. Type: {type(success)}")
-    if not (isinstance(metadata, dict) or metadata is None):
-      if isinstance(metadata, list):
-        metadata = {
-          "reminders": metadata
-        }
-      else:
-        raise ValueError(f"Restricted code must return a dict. Type: {type(metadata)}")
-    
-    # Filter out non-serializable objects from metadata
-    if metadata is not None:
-      serializable_metadata = {}
-      removed_keys = []
-      
-      for key, value in metadata.items():
-        if _is_json_serializable(value):
-          serializable_metadata[key] = value
-        else:
-          removed_keys.append(key)
-          print(f"Removed non-serializable key '{key}' (type: {type(value).__name__})")
-      
-      if removed_keys:
-        print(f"Removed {len(removed_keys)} non-serializable keys: {removed_keys}")
-      
-      metadata = serializable_metadata
-    
-    return success, captured_output, metadata
   except Exception as e:
-    error_msg = f"Sandbox execution failed: {str(e)}"
-    error_msg += f"\nTraceback: {traceback.format_exc()}"
-    raise RuntimeError(error_msg, e)
+    captured_output = f"**Execution Error**: `{str(e)}`\n{traceback.format_exc()}"
+    success = False
+    metadata = {"error": traceback.format_exc()}
+  
+  # Get the captured print output and logs
+  captured_logs = get_logs_as_string()
+  
+  # Validate result is a bool
+  if not isinstance(success, bool):
+    raise ValueError(f"Restricted code must return a bool. Type: {type(success)}")
+  
+  if not (isinstance(metadata, dict) or metadata is None):
+    if isinstance(metadata, list):
+      metadata = {
+        # TODO: In case the wrapping is wrong, sometimes its a list of things and no outside wrapping.
+      }
+    else:
+      raise ValueError(f"Restricted code must return a dict. Type: {type(metadata)}")
+  
+  # Filter out non-serializable objects from metadata
+  if metadata is not None:
+    serializable_metadata = {}
+    removed_keys = []
+    
+    for key, value in metadata.items():
+      if _is_json_serializable(value):
+        serializable_metadata[key] = value
+      else:
+        removed_keys.append(key)
+        print(f"Removed non-serializable key '{key}' (type: {type(value).__name__})")
+    
+    if removed_keys:
+      print(f"Removed {len(removed_keys)} non-serializable keys: {removed_keys}")
+    
+    metadata = serializable_metadata
+  
+  return success, captured_output, metadata, captured_logs
 
 # Function to process DataFrame
-def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, dict | None]:
+def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, dict | None, str]:
   """
   Extract Python code from generated response and execute it in restricted Python sandbox
-  Returns: (success, utter, metadata)
+  Returns: (success, utter, metadata, logs)
   """
-  try:
-    # Extract Python code from the response (look for ```python blocks)
-    code_start = code_str.find("```python")
-    if code_start != -1:
-      code_start += len("```python")
-      code_end = code_str.find("```", code_start)
-      if code_end != -1:
-        sandboxed_code = code_str[code_start:code_end].strip()
-      else:
-        # No closing ``` found, use the entire response as code
-        sandboxed_code = code_str[code_start:].strip()
+  # Extract Python code from the response (look for ```python blocks)
+  code_start = code_str.find("```python")
+  if code_start != -1:
+    code_start += len("```python")
+    code_end = code_str.find("```", code_start)
+    if code_end != -1:
+      sandboxed_code = code_str[code_start:code_end].strip()
     else:
-      # No ```python found, try to use the entire response as code
-      sandboxed_code = code_str.strip()
-    
-    # Preprocess the code to replace _print_ with print (if needed)
-    sandboxed_code = sandboxed_code.replace('_print_', 'print')
-    
-    return _run_sandbox_process_input(sandboxed_code, user_id)
-  except Exception as e:
-    print(f"Error in restricted processing: {str(e)}")
-    raise e
+      # No closing ``` found, use the entire response as code
+      sandboxed_code = code_str[code_start:].strip()
+  else:
+    # No ```python found, try to use the entire response as code
+    sandboxed_code = code_str.strip()
+  
+  # Preprocess the code to replace _print_ with print (if needed)
+  sandboxed_code = sandboxed_code.replace('_print_', 'print')
+  
+  return _run_sandbox_process_input(sandboxed_code, user_id)
 
 
 # Helper functions for agent code

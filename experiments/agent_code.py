@@ -17,11 +17,17 @@ if parent_dir not in sys.path:
 from database import Database
 from user_seeder import seed_users
 from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
+from tools.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
 user_id = 1
 
 def retrieve_accounts() -> pd.DataFrame:
   global user_id
   return retrieve_accounts_function_code_gen(user_id=user_id)
+
+
+def retrieve_transactions() -> pd.DataFrame:
+  global user_id
+  return retrieve_transactions_function_code_gen(user_id=user_id)
 
 
 def utter_delta_from_now(future_time: datetime) -> str:
@@ -92,6 +98,28 @@ def process_input_what_is_my_net_worth():
 
     return True, metadata
 
+
+def process_input_how_much_eating_out_have_I_done():
+    df = retrieve_transactions()
+    metadata = {"transactions": []}
+    
+    if df.empty:
+      print("You have no transactions.")
+    else:
+      # Filter for eating out categories
+      eating_out_categories = ['meals_dining_out', 'meals_delivered_food']
+      df = df[df['category'].isin(eating_out_categories)]
+      
+      if df.empty:
+        print("You have no eating out transactions.")
+      else:
+        print("Here are your eating out transactions:")
+        for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{name} on {date}: {amount}")
+        print(for_print)
+        print(utter_transaction_totals(df, "In total, you have spent {total_amount} on eating out."))
+    
+    return True, metadata
+
 def main():
   """Main function that demonstrates the reminder tools"""
   global user_id
@@ -134,6 +162,11 @@ def main():
   print(f"Metadata: {metadata}")
   
   success, metadata = process_input_what_is_my_net_worth()
+  print(f"Success: {success}")
+  print(f"Metadata: {metadata}")
+  
+  print("\n🍽️  Testing eating out spending function...")
+  success, metadata = process_input_how_much_eating_out_have_I_done()
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
   # success, metadata = process_input_simple_tell_me_to_wash_dishes_at_11_00()

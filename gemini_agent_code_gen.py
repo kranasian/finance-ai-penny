@@ -285,12 +285,16 @@ output:""")
     
     # Execute the generated code in sandbox
     try:
-      success, utter, metadata = sandbox.execute_agent_with_tools(output_text, user_id)
+      success, utter, metadata, logs = sandbox.execute_agent_with_tools(output_text, user_id)
     except Exception as e:
-      # If sandbox execution fails, return error
+      # Extract logs from error message if available
+      error_str = str(e)
+      logs = ""
+      if "Captured logs:" in error_str:
+        logs = error_str.split("Captured logs:")[-1].strip()
       success = False
-      utter = f"Error executing code: {str(e)}"
-      metadata = {"error": str(e)}
+      utter = f"Error executing code: {error_str}"
+      metadata = {"error": error_str}
     
     execution_end = time.time()
     
@@ -313,7 +317,8 @@ output:""")
       'function_called': None,
       'execution_success': success,
       'execution_metadata': metadata,
-      'code_generated': output_text
+      'code_generated': output_text,
+      'logs': logs
     }
 
   

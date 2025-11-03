@@ -3,6 +3,8 @@ import requests
 import json
 import time
 
+from streamlit_app.error_handling import format_error_message, display_error, is_error_response
+
 # Configure Streamlit page
 st.set_page_config(
   page_title="AI Assistant Chatbot",
@@ -44,53 +46,100 @@ def get_users():
   except requests.exceptions.RequestException as e:
     return {"error": f"Failed to get users: {str(e)}"}
 
+def process_prompt(prompt):
+  """Process a prompt and add it to chat"""
+  # Add user message to chat history
+  st.session_state.messages.append({
+    "role": "user", 
+    "content": prompt,
+    "request_time": time.time(),
+    "timing": None
+  })
+  
+  # Display user message
+  with st.chat_message("user"):
+    st.markdown(prompt)
+  
+  # Get AI response
+  with st.chat_message("assistant"):
+    with st.spinner("Thinking..."):
+      response_data = send_message_to_backend(
+        prompt, 
+        st.session_state.username, 
+        st.session_state.current_mode, 
+        st.session_state.current_model, 
+        st.session_state.messages
+      )
+      
+      if "error" in response_data:
+        # Format error for better readability
+        display_error(response_data["error"], "⚠️ **Error occurred**")
+        main_error, _ = format_error_message(response_data["error"])
+        response_content = f"Sorry, I encountered an error: {main_error or response_data['error']}"
+      else:
+        response_content = response_data.get("response", "I'm sorry, I didn't understand that.")
+        
+        # Check if response contains error information
+        if is_error_response(response_content):
+          # Format error response for better readability
+          display_error(response_content, "⚠️ **Execution Error**")
+        else:
+          st.markdown(response_content)
+        
+        # Show function call information
+        if response_data.get("function_called"):
+          with st.expander(f"🔧 Function Called: {response_data['function_called']}"):
+            st.json(response_data.get("function_result", {}))
+        
+        # Show logs if available
+        if response_data.get("logs"):
+          with st.expander("📋 Execution Logs"):
+            st.markdown(response_data['logs'])
+  
+  # Add assistant response to chat history
+  st.session_state.messages.append({
+    "role": "assistant", 
+    "content": response_content,
+    "function_called": response_data.get("function_called"),
+    "function_result": response_data.get("function_result"),
+    "code_generated": response_data.get("code_generated"),
+    "logs": response_data.get("logs"),
+    "timing": response_data.get("timing"),
+    "request_time": time.time()
+  })
+
+def render_example_prompts():
+  """Render example prompts for checking account balances"""
+  st.markdown("##### 💡 Example Prompts")
+  
+  example_prompts = [
+    "What is my account balance?",
+    "Show me all my account balances",
+    "What are my current balances?",
+    "Check my account balances"
+  ]
+  
+  cols = st.columns(4)
+  for idx, prompt in enumerate(example_prompts):
+    col = cols[idx % 4]
+    with col:
+      if st.button(prompt, key=f"example_prompt_{idx}", use_container_width=True):
+        # Store prompt in session state to process it
+        st.session_state.pending_prompt = prompt
+        st.rerun()
+  
+  # Process pending prompt if one exists
+  if "pending_prompt" in st.session_state and st.session_state.pending_prompt:
+    prompt_to_process = st.session_state.pending_prompt
+    del st.session_state.pending_prompt
+    process_prompt(prompt_to_process)
 
 def render_chat_input():
   """Render the chat input"""
-  mode = st.session_state.current_mode
-  model = st.session_state.current_model
   placeholder_text = "Ask me to help with code generation or programming!"
   prompt = st.chat_input(placeholder_text)
   if prompt:
-    # Add user message to chat history
-    st.session_state.messages.append({
-      "role": "user", 
-      "content": prompt,
-      "request_time": time.time(),
-      "timing": None
-    })
-    
-    # Display user message
-    with st.chat_message("user"):
-      st.markdown(prompt)
-    
-    # Get AI response
-    with st.chat_message("assistant"):
-      with st.spinner("Thinking..."):
-        response_data = send_message_to_backend(prompt, st.session_state.username, mode, model, st.session_state.messages)
-        
-        if "error" in response_data:
-          st.error(response_data["error"])
-          response_content = f"Sorry, I encountered an error: {response_data['error']}"
-        else:
-          response_content = response_data.get("response", "I'm sorry, I didn't understand that.")
-          st.markdown(response_content)
-          
-          # Show function call information
-          if response_data.get("function_called"):
-            with st.expander(f"🔧 Function Called: {response_data['function_called']}"):
-              st.json(response_data.get("function_result", {}))
-    
-    # Add assistant response to chat history
-    st.session_state.messages.append({
-      "role": "assistant", 
-      "content": response_content,
-      "function_called": response_data.get("function_called"),
-      "function_result": response_data.get("function_result"),
-      "code_generated": response_data.get("code_generated"),
-      "timing": response_data.get("timing"),
-      "request_time": time.time()
-    })
+    process_prompt(prompt)
 
 def main():
   
@@ -99,10 +148,6 @@ def main():
     st.session_state.messages = []
   if "username" not in st.session_state:
     st.session_state.username = "EmptyUser"  # Default to first seeded user
-  if "current_mode" not in st.session_state:
-    st.session_state.current_mode = "function_calling"
-  if "current_model" not in st.session_state:
-    st.session_state.current_model = "gemini-2.0-flash"
   
   # Set AI Mode to Proposed option (Code Gen: Gemini Flash Lite Latest)
   st.session_state.current_mode = "code_gen"
@@ -111,6 +156,9 @@ def main():
   
   # Render the chat interface
   render_chat_interface()
+  
+  # Example prompts
+  render_example_prompts()
   
   # Chat input
   render_chat_input()
@@ -157,54 +205,17 @@ def render_chat_interface():
     </div>
     """, unsafe_allow_html=True)
 
-  
-  # Performance summary
-  if st.session_state.messages:
-    assistant_messages = [msg for msg in st.session_state.messages if msg["role"] == "assistant" and "timing" in msg and msg["timing"] is not None]
-    if assistant_messages:
-      latest_timing = assistant_messages[-1]["timing"]
-      
-      # Check if timing data has the required keys
-      if (latest_timing and 
-          "backend_processing_start" in latest_timing and 
-          "request_received" in latest_timing and
-          "total_processing_time" in latest_timing and
-          "end_to_end_latency" in latest_timing):
-        
-        # Create performance summary
-        with st.expander("📊 Latest Performance Summary", expanded=False):
-          col1, col2, col3, col4, col5 = st.columns(5)
-          
-          with col1:
-            backend_start = (latest_timing["backend_processing_start"] - latest_timing["request_received"]) * 1000
-            st.metric("Backend Start", f"{backend_start:.1f}ms")
-          
-          with col2:
-            processing_time = latest_timing["total_processing_time"]
-            st.metric("Processing Time", f"{processing_time:.1f}ms")
-          
-          with col3:
-            e2e_latency = latest_timing["end_to_end_latency"]
-            st.metric("End-to-End", f"{e2e_latency:.1f}ms")
-          
-          with col4:
-            if latest_timing.get("gemini_api_calls"):
-              total_gemini_time = sum(call["duration_ms"] for call in latest_timing["gemini_api_calls"])
-              st.metric("Gemini API", f"{total_gemini_time:.1f}ms")
-            else:
-              st.metric("Gemini API", "")
-
-          with col5:
-            if latest_timing.get("execution_time"):
-              total_execution_time = sum(call["duration_ms"] for call in latest_timing["execution_time"])
-              st.metric("Execution Time", f"{total_execution_time:.1f}ms")
-            else:
-              st.metric("Execution Time", "")
-
   # Display chat messages
   for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-      st.markdown(message["content"])
+      content = message.get("content", "")
+      
+      # Check if content contains error information and format it nicely
+      if message["role"] == "assistant" and is_error_response(content):
+        # Format error for better readability
+        display_error(content, "⚠️ **Error occurred**")
+      else:
+        st.markdown(content)
       
       # Show function call results if available
       if "function_called" in message and message["function_called"]:
@@ -215,6 +226,11 @@ def render_chat_interface():
       if "code_generated" in message and message["code_generated"]:
         with st.expander("💻 Generated Code"):
           st.code(message["code_generated"], language="python")
+      
+      # Show logs if available
+      if "logs" in message and message["logs"]:
+        with st.expander("📋 Execution Logs"):
+          st.markdown(message['logs'])
       
       # Show timing information if available
       if ("timing" in message and 
