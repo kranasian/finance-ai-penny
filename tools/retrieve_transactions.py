@@ -1,4 +1,5 @@
 from database import Database
+import json
 import pandas as pd
 import re
 from sandbox_logging import log
@@ -6,26 +7,24 @@ from sandbox_logging import log
 
 def retrieve_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   """Function to retrieve transactions from the database for a specific user"""
-  log(f"retrieve_transactions_function_code_gen called with user_id={user_id}")
   db = Database()
   transactions = db.get_transactions_by_user(user_id=user_id)
-  log(f"Retrieved {len(transactions)} transactions from database for user_id={user_id}")
   df = pd.DataFrame(transactions)
   
   # Convert date column to datetime for proper comparisons
   if 'date' in df.columns and len(df) > 0:
     df['date'] = pd.to_datetime(df['date'])
   
-  log(f"Created DataFrame with shape {df.shape} and columns: {list(df.columns)}")
+  log(f"**Retrieved All Transactions** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   return df
 
 
 def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Generate a formatted string describing transaction names and amounts using the provided template and return metadata"""
-  log(f"transaction_names_and_amounts called with df.shape={df.shape}, columns={list(df.columns)}")
+  log(f"**Transaction Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
-    log("DataFrame is empty, returning empty string and metadata")
+    log("- **`df` is empty**, returning empty string and metadata.")
     return "", []
   
   # Check if required columns exist
@@ -39,7 +38,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
   utterances = []
   metadata = []
   
-  log(f"Processing {len(df)} transactions")
+  log(f"**Listing Individual Transactions**: Processing {len(df)} items.")
   for i in range(len(df)):
     transaction = df.iloc[i]
     transaction_name = transaction.get('transaction_name', 'Unknown Transaction')
@@ -48,8 +47,8 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     category = transaction.get('category', 'Unknown Category')
     transaction_id = transaction.get('transaction_id', None)
     
-    log(f"Processing transaction {i+1}/{len(df)}: transaction_id={transaction_id}, transaction_name={transaction_name}, "
-        f"amount={amount}, date={date}, category={category}")
+    amount_log = f"${abs(amount):,.2f}" if amount else "Unknown"
+    log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`")
     
     # Determine direction and preposition based on amount sign
     # Negative amount = spending/outflow = "spent" / "on"
@@ -103,13 +102,28 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
           date_str = date
       else:
         date_str = str(date)
+    else:
+      # No date format specifier - format as date only (YYYY-MM-DD)
+      if hasattr(date, 'strftime'):
+        # pandas Timestamp or datetime object - format as date only
+        date_str = date.strftime('%Y-%m-%d')
+      elif isinstance(date, str):
+        # If date string includes time, extract just the date part
+        if ' ' in date:
+          date_str = date.split(' ')[0]
+        else:
+          date_str = date
+      else:
+        # Convert to string and extract date part if it includes time
+        date_str = str(date)
+        if ' ' in date_str:
+          date_str = date_str.split(' ')[0]
     
     # Handle amount formatting based on template format specifiers
     # Apply amount format replacement to temp_template (after date format replacement)
     if has_amount_format_specifier:
       # Template has format specifiers, replace ALL of them with simple {amount}
       temp_template = re.sub(amount_format_pattern, '{amount}', temp_template)
-      log(f"**Replaced amount format specifiers**: Template now: `{temp_template[:200]}`")
     
     # Format amount string based on template requirements
     if has_amount_format_specifier:
@@ -141,7 +155,6 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       )
     except (ValueError, KeyError) as e:
       # If formatting fails, try with raw numeric amount (only if template had format specifiers)
-      log(f"**Formatting error**: {e}, trying with raw numeric amount")
       if has_amount_format_specifier:
         # Try with raw number (format specifier was already replaced)
         try:
@@ -155,7 +168,6 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
             preposition=preposition
           )
         except Exception as e2:
-          log(f"**Raw number also failed**: {e2}, using formatted string")
           # Fall back to formatted string
           utterance = temp_template.format(
             name=transaction_name,
@@ -168,40 +180,50 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
           )
       else:
         # No format specifiers, so the error is unexpected - re-raise
-        log(f"**Unexpected formatting error**: {e}")
         raise
     utterances.append(utterance)
+    
+    # Convert date to string for JSON serialization
+    date_for_metadata = date
+    if hasattr(date, 'strftime'):
+      # pandas Timestamp or datetime object
+      date_for_metadata = date.strftime('%Y-%m-%d')
+    elif not isinstance(date, str):
+      # Convert to string if not already
+      date_for_metadata = str(date)
     
     metadata.append({
       "transaction_id": transaction_id,
       "transaction_name": transaction_name,
       "amount": amount,
-      "date": date,
+      "date": date_for_metadata,
       "category": category
     })
   
-  log(f"Returning {len(utterances)} utterances and {len(metadata)} metadata entries")
+  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries.")
+  log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
+  log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
   return "\n".join(utterances), metadata
 
 
 def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str) -> str:
   """Calculate total transaction amounts and return formatted string"""
-  log(f"utter_transaction_totals called with df.shape={df.shape}, columns={list(df.columns)}, is_spending={is_spending}")
+  log(f"**Transaction Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
-    log("DataFrame is empty, returning empty string")
+    log("- **`df` is empty**, returning empty string.")
     return ""
   
   # Check if required columns exist
   required_columns = ['amount']
   missing_columns = [col for col in required_columns if col not in df.columns]
   if missing_columns:
-    error_msg = f"DataFrame is missing required columns: {missing_columns}. Available columns: {list(df.columns)}"
+    error_msg = f"- **`df` is missing required columns**: `{', '.join(missing_columns)}`. Available columns: `{', '.join(df.columns)}`"
     log(error_msg)
     raise ValueError(error_msg)
   
   total_amount = df['amount'].sum()
-  log(f"Calculated total: total_amount={total_amount}")
+  log(f"**Calculated Total**: **Amount**: `${abs(total_amount):,.2f}`")
   
   # Determine verb/phrase based on is_spending and sign of total_amount
   # Always use abs() for display amount
@@ -236,11 +258,9 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
   if has_total_amount_format_specifier:
     # Template has format specifiers, replace them with simple {total_amount}
     temp_template = re.sub(total_amount_format_pattern, '{total_amount}', temp_template)
-    log(f"**Replaced total_amount format specifiers**: Template now: `{temp_template[:200]}`")
   if has_amount_format_specifier:
     # Template uses {amount} instead of {total_amount}, replace format specifiers with {total_amount}
     temp_template = re.sub(amount_format_pattern, '{total_amount}', temp_template)
-    log(f"**Replaced amount format specifiers**: Template now: `{temp_template[:200]}`")
   
   # Also replace any plain {amount} with {total_amount}
   temp_template = temp_template.replace('{amount}', '{total_amount}')
@@ -301,7 +321,6 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
       result = temp_template.format(total_amount=total_amount_str)
   except (ValueError, KeyError) as e:
     # If formatting fails, try with raw numeric amount (only if template had format specifiers)
-    log(f"**Formatting error**: {e}, trying with raw numeric amount")
     if has_any_format_specifier:
       # Try with raw number (format specifier was already replaced)
       try:
@@ -319,16 +338,13 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
             total_amount=display_amount
           )
       except Exception as e2:
-        log(f"**Raw number also failed**: {e2}, using formatted string")
         # Fall back to formatted string
         result = temp_template.format(
           total_amount=total_amount_str
         )
     else:
       # No format specifiers, so the error is unexpected - re-raise
-      log(f"**Unexpected formatting error**: {e}")
       raise
   
-  log(f"Formatted result: {result}")
   return result
 

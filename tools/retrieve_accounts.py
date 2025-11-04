@@ -75,7 +75,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
       # Check for dollar signs anywhere in template (for templates without format specifiers)
       has_dollar_sign_anywhere = '$' in template
       
-      log(f"**Template analysis**: has_format_specifiers={has_format_specifiers}, has_dollar_sign={has_dollar_sign}, has_dollar_sign_anywhere={has_dollar_sign_anywhere}, template=`{template[:200]}`")
       
       # Try formatting - handle both cases: with and without format specifiers
       try:
@@ -118,8 +117,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
             'balance_limit': limit_balance_str
           }
           utterance = temp_template.format(**format_dict)
-          log(f"**Final utterance before check**: `{utterance}`")
-          
           # Post-process to ensure dollar signs are present for formatted numbers
           # This is a safety net in case format() does something unexpected
           if balance_current is not None:
@@ -139,7 +136,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
               utterance = utterance.replace(f" {limit_num}", f" ${limit_num}", 1)
               log(f"**Fixed limit balance**: Added $ to {limit_num}")
           
-          log(f"**Final utterance after fixes**: `{utterance}`")
         else:
           # No format specifiers - check if template has dollar signs
           if has_dollar_sign_anywhere:
@@ -152,7 +148,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
             available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
             current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
             limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
-          log(f"**No format specifiers**: has_dollar_sign_anywhere={has_dollar_sign_anywhere}, formatting values: available={available_balance_str}, current={current_balance_str}, limit={limit_balance_str}")
           utterance = template.format(
             name=account_name,
             account_name=account_name,
@@ -163,7 +158,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
             balance_current=current_balance_str,
             balance_limit=limit_balance_str
           )
-          log(f"**Final utterance**: `{utterance}`")
       except (ValueError, KeyError) as e:
         # If formatting with numeric values fails, try with formatted strings
         # Check if template has format specifiers - if so, replace them and add $ signs
@@ -202,7 +196,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
             available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
             current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
             limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
-          log(f"**Exception handler - No format specifiers**: has_dollar_sign_anywhere={has_dollar_sign_anywhere}, formatting values: available={available_balance_str}, current={current_balance_str}, limit={limit_balance_str}")
           utterance = template.format(
             name=account_name,
             account_name=account_name,
@@ -213,7 +206,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
             balance_current=current_balance_str,
             balance_limit=limit_balance_str
           )
-          log(f"**Exception handler - Final utterance**: `{utterance}`")
       utterances.append(utterance)
       
       metadata.append({
@@ -269,10 +261,6 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     log(f"- **`df` is missing required columns**")
     raise ValueError(f"- **`df` is missing required columns**: `{', '.join(missing_columns)}`. Available columns: `{', '.join(df.columns)}`")
   
-  # Calculate overall totals (for backward compatibility)
-  total_available = df['balance_available'].sum()
-  total_current = df['balance_current'].sum()
-  
   # Calculate separate totals for savings and credit accounts if account_type column exists
   savings_available = None
   savings_current = None
@@ -300,12 +288,14 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     savings_curr_str = f"{savings_current:,.0f}" if savings_current is not None else "0"
     credit_avail_str = f"{credit_available:,.0f}" if credit_available is not None else "0"
     credit_curr_str = f"{credit_current:,.0f}" if credit_current is not None else "0"
-    log(f"**Separated Totals**: Savings - Available: ${savings_avail_str}, Current: ${savings_curr_str} | Credit - Available: ${credit_avail_str}, Current: ${credit_curr_str}")
-  
-  log(f"**Calculated Totals**: **TA**: `${total_available:,.0f}`  |  **TC**: `${total_current:,.0f}`")
+    log(f"**Separated Totals**: STA: `${savings_avail_str}` | STC: `${savings_curr_str}` | CTA: `${credit_avail_str}` | CTC: `${credit_curr_str}`")
   
   # Check if template uses separated totals placeholders
   uses_separated_totals = bool(re.search(r"\{savings_balance_|credit_balance_", template))
+  
+  # Check if template uses overall totals (balance_available or balance_current without savings_/credit_ prefix)
+  # Match {balance_available} or {balance_current} but not {savings_balance_available} or {credit_balance_available}
+  uses_overall_totals = bool(re.search(r"\{balance_(available|current)\}", template)) and not bool(re.search(r"\{savings_balance_|credit_balance_", template))
   
   # If we have separated totals and template doesn't use them, automatically format with separated totals
   has_both_account_types = (savings_available is not None or savings_current is not None) and (credit_available is not None or credit_current is not None)
@@ -327,6 +317,14 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     result = f"Your savings accounts (checking, savings, money market) have a total current balance of {savings_curr_str} and available balance of {savings_avail_str}. Your credit accounts (credit cards, loans) have a total current balance of {credit_curr_str} and available balance of {credit_avail_str}."
     log(f"**Auto-separated Utterance**: `{result}`")
     return result
+  
+  # Calculate overall totals only if needed (for templates that use them)
+  total_available = None
+  total_current = None
+  if uses_overall_totals:
+    total_available = df['balance_available'].sum()
+    total_current = df['balance_current'].sum()
+    log(f"**Calculated Totals**: **TA**: `${total_available:,.0f}`  |  **TC**: `${total_current:,.0f}`")
   
   # Detect if template uses format specifiers like {balance_available:,.0f} or {savings_balance_available:,.0f}
   has_format_specifiers = bool(re.search(r"\{(balance_available|balance_current|savings_balance_available|savings_balance_current|credit_balance_available|credit_balance_current):[^}]+\}", template))

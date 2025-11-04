@@ -246,6 +246,44 @@ def process_input():
         print(f"You have a net worth of ${net_worth:,.0f} with assets of ${total_assets:,.0f} and liabilities of ${total_liabilities:,.0f}.")
 
     return True, metadata
+```
+
+input: User: how much did i spend on streaming last month?
+output: ```python
+def process_input():
+    from datetime import datetime
+    import pandas as pd
+    
+    df = retrieve_transactions()
+    metadata = {"transactions": []}
+    
+    if df.empty:
+      print("You have no transactions.")
+    else:
+      # Filter for streaming/entertainment category
+      df = df[df['category'] == 'leisure_entertainment']
+      
+      if df.empty:
+        print("You have no streaming/entertainment transactions.")
+      else:
+        # Filter for last month
+        now = datetime.now()
+        # First day of last month
+        first_day_last_month = (now.replace(day=1) - pd.DateOffset(months=1))
+        # Last day of last month
+        last_day_last_month = now.replace(day=1) - pd.DateOffset(days=1)
+        
+        # Filter transactions from last month
+        df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
+        
+        if df.empty:
+          print("You have no streaming/entertainment transactions from last month.")
+        else:
+          # Calculate and display total spending
+          total_str = utter_transaction_totals(df, True, "You {verb} ${total_amount:,.2f} on streaming/entertainment last month.")
+          print(total_str)
+    
+    return True, metadata
 ```"""
 
 

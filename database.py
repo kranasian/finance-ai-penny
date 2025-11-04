@@ -34,7 +34,6 @@ class Database:
         balance_limit REAL DEFAULT 0,
         account_name TEXT NOT NULL,
         account_mask TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users (id)
       )
     ''')
@@ -49,7 +48,6 @@ class Database:
         transaction_name TEXT NOT NULL,
         amount REAL NOT NULL,
         category TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users (id),
         FOREIGN KEY (account_id) REFERENCES accounts (account_id)
       )
@@ -140,7 +138,7 @@ class Database:
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM accounts WHERE account_id = ?", (account_id,))
+    cursor.execute("SELECT account_id, user_id, account_type, balance_available, balance_current, balance_limit, account_name, account_mask FROM accounts WHERE account_id = ?", (account_id,))
     result = cursor.fetchone()
     conn.close()
     
@@ -153,8 +151,7 @@ class Database:
         'balance_current': result[4],
         'balance_limit': result[5],
         'account_name': result[6],
-        'account_mask': result[7],
-        'created_at': result[8]
+        'account_mask': result[7]
       }
     return None
 
@@ -163,7 +160,7 @@ class Database:
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM accounts WHERE user_id = ? ORDER BY account_type, account_name", (user_id,))
+    cursor.execute("SELECT account_id, user_id, account_type, balance_available, balance_current, balance_limit, account_name, account_mask FROM accounts WHERE user_id = ? ORDER BY account_type, account_name", (user_id,))
     results = cursor.fetchall()
     conn.close()
     
@@ -177,8 +174,7 @@ class Database:
         'balance_current': result[4],
         'balance_limit': result[5],
         'account_name': result[6],
-        'account_mask': result[7],
-        'created_at': result[8]
+        'account_mask': result[7]
       })
     
     return accounts
@@ -188,7 +184,7 @@ class Database:
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM accounts ORDER BY user_id, account_type, account_name")
+    cursor.execute("SELECT account_id, user_id, account_type, balance_available, balance_current, balance_limit, account_name, account_mask FROM accounts ORDER BY user_id, account_type, account_name")
     results = cursor.fetchall()
     conn.close()
     
@@ -202,8 +198,7 @@ class Database:
         'balance_current': result[4],
         'balance_limit': result[5],
         'account_name': result[6],
-        'account_mask': result[7],
-        'created_at': result[8]
+        'account_mask': result[7]
       })
     
     return accounts
@@ -241,8 +236,7 @@ class Database:
         'date': result[3],
         'transaction_name': result[4],
         'amount': result[5],
-        'category': result[6],
-        'created_at': result[7]
+        'category': result[6]
       }
     return None
 
@@ -251,7 +245,7 @@ class Database:
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC", (user_id,))
+    cursor.execute("SELECT transaction_id, user_id, account_id, date, transaction_name, amount, category FROM transactions WHERE user_id = ? ORDER BY date DESC", (user_id,))
     results = cursor.fetchall()
     conn.close()
     
@@ -264,8 +258,7 @@ class Database:
         'date': result[3],
         'transaction_name': result[4],
         'amount': result[5],
-        'category': result[6],
-        'created_at': result[7]
+        'category': result[6]
       })
     
     return transactions
@@ -275,7 +268,7 @@ class Database:
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM transactions WHERE account_id = ? ORDER BY date DESC", (account_id,))
+    cursor.execute("SELECT transaction_id, user_id, account_id, date, transaction_name, amount, category FROM transactions WHERE account_id = ? ORDER BY date DESC", (account_id,))
     results = cursor.fetchall()
     conn.close()
     
@@ -288,8 +281,7 @@ class Database:
         'date': result[3],
         'transaction_name': result[4],
         'amount': result[5],
-        'category': result[6],
-        'created_at': result[7]
+        'category': result[6]
       })
     
     return transactions
@@ -299,7 +291,7 @@ class Database:
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM transactions ORDER BY date DESC")
+    cursor.execute("SELECT transaction_id, user_id, account_id, date, transaction_name, amount, category FROM transactions ORDER BY date DESC")
     results = cursor.fetchall()
     conn.close()
     
@@ -312,8 +304,7 @@ class Database:
         'date': result[3],
         'transaction_name': result[4],
         'amount': result[5],
-        'category': result[6],
-        'created_at': result[7]
+        'category': result[6]
       })
     
     return transactions
