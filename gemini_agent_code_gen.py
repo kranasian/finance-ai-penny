@@ -47,7 +47,8 @@ Write a function `process_input` that takes no arguments and print()s what to te
   - The first element the boolean success or failure of the function.
   - The second element is the metadata for the entities created or retrieved.
 - Compute for dates using `datetime` package.  Assume `import datetime` is already included.
-- When looking for `account_name` and `==`, look for other relevant variations like fuzzy search to find more matches. Refer to <ACCOUNT_NAMES> for the list of account names.
+- When looking for `account_name` and `==`, look for other relevant variations to find more matches. Refer to <ACCOUNT_NAMES> for the list of account names.
+- Today's date is {today_date}.
 
 <IMPLEMENTED_FUNCTIONS>
   These functions are already implemented:
@@ -68,6 +69,8 @@ Write a function `process_input` that takes no arguments and print()s what to te
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
     - `utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str) -> str`
         - takes filtered `df`, `is_spending` flag (True for spending categories, False for income), and `template` string, calculates total transaction amounts and returns a formatted string.
+    - `compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]`
+        - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
 </IMPLEMENTED_FUNCTIONS>
 
 <ACCOUNT_TYPE>
@@ -84,7 +87,7 @@ Write a function `process_input` that takes no arguments and print()s what to te
 
 <CATEGORY>
   These are the `category` in the `transactions` table:
-    - `income` for salary, bonuses, interest, side hussles and business.
+    - `income` for salary, bonuses, interest, side hussles and business. Includes:
         - `income_salary` for regular paychecks and bonuses.
         - `income_sidegig` for side hussles like Uber, Etsy and other gigs.
         - `income_business` for business income and spending.
@@ -284,6 +287,45 @@ def process_input():
           print(total_str)
     
     return True, metadata
+```
+
+input: User: did i spend more on dining out over groceries last month?
+output: ```python
+def process_input():
+    from datetime import datetime
+    import pandas as pd
+    
+    df = retrieve_transactions()
+    metadata = {"transactions": []}
+    
+    if df.empty:
+      print("You have no transactions.")
+    else:
+      # Filter for last month
+      now = datetime.now()
+      first_day_last_month = (now.replace(day=1) - pd.DateOffset(months=1))
+      last_day_last_month = now.replace(day=1) - pd.DateOffset(days=1)
+      
+      df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
+      
+      if df.empty:
+        print("You have no transactions from last month.")
+      else:
+        # Filter for dining out and groceries categories
+        df = df[df['category'].isin(['meals_dining_out', 'meals_groceries'])]
+        
+        if df.empty:
+          print("You have no dining out or groceries transactions from last month.")
+        else:
+          categories = df['category'].unique()
+          if len(categories) < 2:
+            print(f"You only have transactions in one category: {categories[0]}")
+          else:
+            # Compare spending between categories
+            result, metadata["comparison"] = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+            print(result)
+    
+    return True, metadata
 ```"""
 
 
@@ -344,8 +386,11 @@ output:""")
     
     # Build dynamic ACCOUNT_NAMES section for this user
     account_names_section = self._build_account_names_section(user_id)
+    # Add today's date to the system prompt
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    system_prompt_with_date = self.system_prompt.format(today_date=today_date)
     # Combine system prompt with dynamic account names
-    full_system_prompt = self.system_prompt + "\n\n" + account_names_section
+    full_system_prompt = system_prompt_with_date + "\n\n" + account_names_section
     
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,

@@ -127,7 +127,12 @@ def render_example_prompts():
     "What are my recent Amex transactions?",
     "Do I have dining out transactions with amount over $40 last month?",
     "List my dining out transactions last month.",
-    "List income past 2 weeks."
+    "List income past 2 weeks.",
+    # General comparison questions
+    "Compare my dining out and groceries spending last month.",
+    "Compare my dining out last sept 2025 vs oct 2025.",
+    "Compare my spending on entertainment and travel to my bills and medicines last month.",
+    "Compare how much I earned last month to September 2025."
   ]
   
   cols = st.columns(4)

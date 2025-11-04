@@ -14,6 +14,7 @@ import traceback
 import json
 from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
 from tools.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
+from tools.compare_spending import compare_spending
 from sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
 
 
@@ -259,6 +260,9 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_transaction_totals_wrapper(df: pd.DataFrame, is_spending: bool, template: str):
     return utter_transaction_totals(df, is_spending, template)
   
+  def compare_spending_wrapper(df: pd.DataFrame, template: str):
+    return compare_spending(df, template)
+  
   safe_globals_dict = {
     "__builtins__": all_builtins,
     "pd": pd,
@@ -288,6 +292,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "retrieve_transactions": retrieve_transactions_wrapper,
     "transaction_names_and_amounts": transaction_names_and_amounts_wrapper,
     "utter_transaction_totals": utter_transaction_totals_wrapper,
+    "compare_spending": compare_spending_wrapper,
     "utter_delta_from_now": utter_delta_from_now,
     "reminder_data": reminder_data,
     "log": sandbox_log,
