@@ -3,6 +3,7 @@ import os
 import random
 import uuid
 from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from database import Database
 
 def reset_database(db_path: str = "chatbot.db"):
@@ -170,7 +171,7 @@ def create_sample_accounts(user_id: int, account_count: int) -> list:
   
   return account_ids
 
-def create_sample_transactions(user_id: int, account_ids: list, transaction_count: int, months: int) -> list:
+def create_sample_transactions(user_id: int, account_ids: list, transaction_count: int, months: int, start_date: datetime = None) -> list:
   """Create sample transactions for a user across their accounts"""
   db = Database()
   transaction_ids = []
@@ -304,7 +305,10 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
   }
   
   # Generate transactions over the specified time period
-  start_date = datetime.now() - timedelta(days=months * 30)
+  if start_date is None:
+    start_date = datetime.now() - timedelta(days=months * 30)
+  
+  end_date = start_date + timedelta(days=months * 30)
   
   for i in range(transaction_count):
     # Select random category and transaction template
@@ -317,6 +321,10 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
     # Generate random date within the time period
     random_days = random.randint(0, months * 30)
     transaction_date = start_date + timedelta(days=random_days)
+    
+    # Ensure transaction date is within the range
+    if transaction_date > end_date:
+      transaction_date = end_date
     
     # Generate unique transaction ID
     transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
@@ -337,6 +345,121 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
     transaction_ids.append(transaction_id)
   
   return transaction_ids
+
+def create_sample_forecasts(user_id: int) -> list:
+  """Create sample monthly and weekly forecasts for a user"""
+  db = Database()
+  forecast_count = 0
+  
+  # Category ID mapping (from category_masterlist)
+  category_map = {
+    'income_salary': 36,
+    'income_sidegig': 37,
+    'income_business': 38,
+    'income_interest': 39,
+    'meals_groceries': 4,
+    'meals_dining_out': 2,
+    'meals_delivered_food': 3,
+    'leisure_entertainment': 6,
+    'leisure_travel': 7,
+    'bills_connectivity': 10,
+    'bills_insurance': 11,
+    'shelter_home': 15,
+    'shelter_utilities': 16,
+    'shelter_upkeep': 17,
+    'transportation_car': 26,
+    'health_gym_wellness': 30,
+  }
+  
+  # Get current date and calculate dates for next 12 months
+  today = datetime.now()
+  
+  # Generate monthly forecasts for next 12 months
+  for month_offset in range(1, 13):
+    forecast_date = today + relativedelta(months=month_offset)
+    # Set to first day of month (YYYY-MM-01)
+    month_date = forecast_date.replace(day=1).strftime("%Y-%m-%d")
+    
+    # Monthly income forecasts
+    db.create_monthly_forecast(
+      user_id=user_id,
+      ai_category_id=category_map['income_salary'],
+      month_date=month_date,
+      forecasted_amount=3500.00
+    )
+    forecast_count += 1
+    
+    # Occasional side gig income (every 3 months)
+    if month_offset % 3 == 0:
+      db.create_monthly_forecast(
+        user_id=user_id,
+        ai_category_id=category_map['income_sidegig'],
+        month_date=month_date,
+        forecasted_amount=200.00
+      )
+      forecast_count += 1
+    
+    # Monthly spending forecasts
+    monthly_spending = {
+      category_map['shelter_home']: 1200.00,
+      category_map['shelter_utilities']: 200.00,
+      category_map['bills_connectivity']: 80.00,
+      category_map['bills_insurance']: 150.00,
+      category_map['transportation_car']: 100.00,
+      category_map['health_gym_wellness']: 50.00,
+      category_map['meals_groceries']: 480.00,  # 4 weeks * 120
+      category_map['leisure_entertainment']: 25.00,
+    }
+    
+    for ai_category_id, amount in monthly_spending.items():
+      db.create_monthly_forecast(
+        user_id=user_id,
+        ai_category_id=ai_category_id,
+        month_date=month_date,
+        forecasted_amount=amount
+      )
+      forecast_count += 1
+  
+  # Generate weekly forecasts for next 12 weeks
+  for week_offset in range(0, 12):
+    # Calculate Sunday date for the week
+    forecast_date = today + timedelta(days=week_offset * 7)
+    # Find the Sunday of that week (Sunday is weekday 6)
+    days_since_sunday = forecast_date.weekday()
+    if days_since_sunday == 6:  # Already Sunday
+      sunday_date = forecast_date
+    else:
+      # Go back to previous Sunday
+      sunday_date = forecast_date - timedelta(days=days_since_sunday + 1)
+    sunday_date_str = sunday_date.strftime("%Y-%m-%d")
+    
+    # Weekly spending forecasts
+    weekly_spending = {
+      category_map['meals_groceries']: 120.00,
+      category_map['meals_dining_out']: random.uniform(50.00, 150.00),
+      category_map['transportation_car']: 25.00,
+    }
+    
+    for ai_category_id, amount in weekly_spending.items():
+      db.create_weekly_forecast(
+        user_id=user_id,
+        ai_category_id=ai_category_id,
+        sunday_date=sunday_date_str,
+        forecasted_amount=amount
+      )
+      forecast_count += 1
+    
+    # Occasional weekly income (side gig every 4 weeks)
+    if week_offset % 4 == 0:
+      db.create_weekly_forecast(
+        user_id=user_id,
+        ai_category_id=category_map['income_sidegig'],
+        sunday_date=sunday_date_str,
+        forecasted_amount=50.00
+      )
+      forecast_count += 1
+  
+  return forecast_count
 
 def seed_users():
   """Seed the database with test users, accounts, and transactions"""
@@ -365,9 +488,20 @@ def seed_users():
   heavy_user_id = db.create_user("HeavyDataUser", "heavy@example.com")
   heavy_accounts = create_sample_accounts(heavy_user_id, 13)
   heavy_transactions = create_sample_transactions(heavy_user_id, heavy_accounts, 1000, 6)
+  
+  # Add transactions from last year (12 months ago)
+  last_year_start = datetime.now() - relativedelta(years=1)
+  months_diff = 12
+  heavy_transactions_last_year = create_sample_transactions(heavy_user_id, heavy_accounts, 500, months_diff, start_date=last_year_start)
+  
+  # Create forecast data for HeavyDataUser
+  forecast_count = create_sample_forecasts(heavy_user_id)
+  
   print(f"Created HeavyDataUser with ID: {heavy_user_id}")
   print(f"  - {len(heavy_accounts)} account(s)")
   print(f"  - {len(heavy_transactions)} transactions over 6 months")
+  print(f"  - {len(heavy_transactions_last_year)} transactions from last year")
+  print(f"  - {forecast_count} forecasts (monthly and weekly)")
   
   print("\nUser seeding completed successfully!")
   

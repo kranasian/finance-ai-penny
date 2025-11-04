@@ -132,7 +132,9 @@ def render_example_prompts():
     "Compare my dining out and groceries spending last month.",
     "Compare my dining out last sept 2025 vs oct 2025.",
     "Compare my spending on entertainment and travel to my bills and medicines last month.",
-    "Compare how much I earned last month to September 2025."
+    "Compare how much I earned last month to September 2025.",
+    # Combination of forecast questions
+    "How much am I expected to save in the next 3 months?",
   ]
   
   cols = st.columns(4)
@@ -317,6 +319,10 @@ def render_chat_interface():
                   value=f"{call['duration_ms']:.1f}ms",
                   help=f"Duration of execution #{call['call_number']}"
                 )
+          
+          # Show output tokens if available
+          if timing.get("output_tokens") is not None:
+            st.metric("Output Tokens", f"{timing['output_tokens']:,}")
   
   
 

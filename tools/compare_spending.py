@@ -4,13 +4,18 @@ import re
 from sandbox_logging import log
 
 
-def compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]:
+def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]:
   """Compare spending data between categories or time periods and return formatted string with metadata"""
   log(f"**Compare Spending**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
+  # Initialize metadata dict if not provided
+  if metadata is None:
+    metadata = {}
+  
   if df.empty:
     log("- **`df` is empty**, returning empty string and metadata.")
-    return "", []
+    metadata["comparison"] = []
+    return "", metadata
   
   # Check if required columns exist
   if 'category' not in df.columns:
@@ -68,7 +73,7 @@ def compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]:
         # Default message if template doesn't have the right placeholders
         result = f"You only have transactions in {group_label} this month. You spent {amount_str} on {group_label} ({count} transactions)."
       
-      metadata = [{
+      comparison_metadata = [{
         "comparison_type": "single_group",
         "group": {
           "name": group_name,
@@ -78,9 +83,11 @@ def compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]:
         }
       }]
       
+      metadata["comparison"] = comparison_metadata
+      
       log(f"**Returning** single group result and metadata.")
       log(f"**Result**: `{result}`")
-      log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
+      log(f"**Metadata**:\n```json\n{json.dumps(comparison_metadata, indent=2)}\n```")
       
       return result, metadata
     elif len(groups) != 2:
@@ -141,7 +148,7 @@ def compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]:
         # Default message if template doesn't have the right placeholders
         result = f"You only have transactions in {category_label} this month. You spent {amount_str} on {category_label} ({count} transactions)."
       
-      metadata = [{
+      comparison_metadata = [{
         "comparison_type": "single_category",
         "category": {
           "name": category_name,
@@ -151,9 +158,11 @@ def compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]:
         }
       }]
       
+      metadata["comparison"] = comparison_metadata
+      
       log(f"**Returning** single category result and metadata.")
       log(f"**Result**: `{result}`")
-      log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
+      log(f"**Metadata**:\n```json\n{json.dumps(comparison_metadata, indent=2)}\n```")
       
       return result, metadata
     elif len(categories) != 2:
@@ -298,8 +307,8 @@ def compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]:
       # If that also fails, use the original template with minimal formatting
       result = f"{first_label}: {first_amount_str} | {second_label}: {second_amount_str}"
   
-  # Create metadata
-  metadata = [{
+  # Create comparison metadata
+  comparison_metadata = [{
     "comparison_type": "group" if 'group' in df.columns else "category",
     "first_group": {
       "name": group1_name,
@@ -319,15 +328,16 @@ def compare_spending(df: pd.DataFrame, template: str) -> tuple[str, list]:
     "count_difference_abs": int(count_difference_abs)
   }]
   
+  # Set comparison metadata in the provided metadata dict
+  metadata["comparison"] = comparison_metadata
+  
   log(f"**Returning** comparison result and metadata.")
   log(f"**Result**: `{result}`")
-  log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
+  log(f"**Metadata**:\n```json\n{json.dumps(comparison_metadata, indent=2)}\n```")
   
   # Ensure we always return a tuple
   if result is None:
     result = f"{first_label}: {first_amount_str} | {second_label}: {second_amount_str}"
-  if metadata is None:
-    metadata = []
   
   return result, metadata
 

@@ -53,6 +53,30 @@ class Database:
       )
     ''')
     
+    # Create ai_monthly_forecasts table
+    cursor.execute('''
+      CREATE TABLE IF NOT EXISTS ai_monthly_forecasts (
+        user_id INTEGER NOT NULL,
+        ai_category_id INTEGER NOT NULL,
+        month_date DATE NOT NULL,
+        forecasted_amount REAL NOT NULL,
+        PRIMARY KEY (user_id, ai_category_id, month_date),
+        FOREIGN KEY (user_id) REFERENCES users (id)
+      )
+    ''')
+    
+    # Create ai_weekly_forecasts table
+    cursor.execute('''
+      CREATE TABLE IF NOT EXISTS ai_weekly_forecasts (
+        user_id INTEGER NOT NULL,
+        ai_category_id INTEGER NOT NULL,
+        sunday_date DATE NOT NULL,
+        forecasted_amount REAL NOT NULL,
+        PRIMARY KEY (user_id, ai_category_id, sunday_date),
+        FOREIGN KEY (user_id) REFERENCES users (id)
+      )
+    ''')
+    
     conn.commit()
     conn.close()
   
@@ -308,3 +332,119 @@ class Database:
       })
     
     return transactions
+
+  # AI Monthly Forecasts management methods
+  def create_monthly_forecast(self, user_id: int, ai_category_id: int, month_date: str, forecasted_amount: float) -> None:
+    """Create or update a monthly forecast"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute(
+      "INSERT OR REPLACE INTO ai_monthly_forecasts (user_id, ai_category_id, month_date, forecasted_amount) VALUES (?, ?, ?, ?)",
+      (user_id, ai_category_id, month_date, forecasted_amount)
+    )
+    conn.commit()
+    conn.close()
+
+  def get_monthly_forecasts_by_user(self, user_id: int) -> List[Dict]:
+    """Get all monthly forecasts for a specific user"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute(
+      "SELECT user_id, ai_category_id, month_date, forecasted_amount FROM ai_monthly_forecasts WHERE user_id = ? ORDER BY month_date ASC, ai_category_id ASC",
+      (user_id,)
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    forecasts = []
+    for result in results:
+      forecasts.append({
+        'user_id': result[0],
+        'ai_category_id': result[1],
+        'month_date': result[2],
+        'forecasted_amount': result[3]
+      })
+    
+    return forecasts
+
+  def get_all_monthly_forecasts(self) -> List[Dict]:
+    """Get all monthly forecasts from the database"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute(
+      "SELECT user_id, ai_category_id, month_date, forecasted_amount FROM ai_monthly_forecasts ORDER BY month_date ASC, ai_category_id ASC"
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    forecasts = []
+    for result in results:
+      forecasts.append({
+        'user_id': result[0],
+        'ai_category_id': result[1],
+        'month_date': result[2],
+        'forecasted_amount': result[3]
+      })
+    
+    return forecasts
+
+  # AI Weekly Forecasts management methods
+  def create_weekly_forecast(self, user_id: int, ai_category_id: int, sunday_date: str, forecasted_amount: float) -> None:
+    """Create or update a weekly forecast"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute(
+      "INSERT OR REPLACE INTO ai_weekly_forecasts (user_id, ai_category_id, sunday_date, forecasted_amount) VALUES (?, ?, ?, ?)",
+      (user_id, ai_category_id, sunday_date, forecasted_amount)
+    )
+    conn.commit()
+    conn.close()
+
+  def get_weekly_forecasts_by_user(self, user_id: int) -> List[Dict]:
+    """Get all weekly forecasts for a specific user"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute(
+      "SELECT user_id, ai_category_id, sunday_date, forecasted_amount FROM ai_weekly_forecasts WHERE user_id = ? ORDER BY sunday_date ASC, ai_category_id ASC",
+      (user_id,)
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    forecasts = []
+    for result in results:
+      forecasts.append({
+        'user_id': result[0],
+        'ai_category_id': result[1],
+        'sunday_date': result[2],
+        'forecasted_amount': result[3]
+      })
+    
+    return forecasts
+
+  def get_all_weekly_forecasts(self) -> List[Dict]:
+    """Get all weekly forecasts from the database"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute(
+      "SELECT user_id, ai_category_id, sunday_date, forecasted_amount FROM ai_weekly_forecasts ORDER BY sunday_date ASC, ai_category_id ASC"
+    )
+    results = cursor.fetchall()
+    conn.close()
+    
+    forecasts = []
+    for result in results:
+      forecasts.append({
+        'user_id': result[0],
+        'ai_category_id': result[1],
+        'sunday_date': result[2],
+        'forecasted_amount': result[3]
+      })
+    
+    return forecasts

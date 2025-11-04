@@ -14,7 +14,20 @@ import traceback
 import json
 from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
 from tools.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
+from tools.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
+from tools.forecast_utils import forecast_dates_and_amount, utter_forecasts
 from tools.compare_spending import compare_spending
+from tools.date_utils import (
+    get_today_date,
+    get_date,
+    get_start_of_month,
+    get_end_of_month,
+    get_start_of_year,
+    get_end_of_year,
+    get_start_of_week,
+    get_end_of_week,
+    get_after_periods
+)
 from sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
 
 
@@ -253,6 +266,13 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def retrieve_transactions_wrapper():
     return retrieve_transactions(user_id)
   
+  # Create wrapper functions for forecast retrieval
+  def retrieve_spending_forecasts_wrapper(granularity: str = 'monthly'):
+    return retrieve_spending_forecasts(user_id, granularity)
+  
+  def retrieve_income_forecasts_wrapper(granularity: str = 'monthly'):
+    return retrieve_income_forecasts(user_id, granularity)
+  
   # Create wrapper functions for transaction utility functions
   def transaction_names_and_amounts_wrapper(df: pd.DataFrame, template: str):
     return transaction_names_and_amounts(df, template)
@@ -260,8 +280,14 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_transaction_totals_wrapper(df: pd.DataFrame, is_spending: bool, template: str):
     return utter_transaction_totals(df, is_spending, template)
   
-  def compare_spending_wrapper(df: pd.DataFrame, template: str):
-    return compare_spending(df, template)
+  def utter_forecasts_wrapper(df: pd.DataFrame, template: str):
+    return utter_forecasts(df, template)
+  
+  def forecast_dates_and_amount_wrapper(df: pd.DataFrame, template: str):
+    return forecast_dates_and_amount(df, template)
+  
+  def compare_spending_wrapper(df: pd.DataFrame, template: str, metadata: dict = None):
+    return compare_spending(df, template, metadata)
   
   safe_globals_dict = {
     "__builtins__": all_builtins,
@@ -290,12 +316,25 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "account_names_and_balances": account_names_and_balances_wrapper,
     "utter_account_totals": utter_account_totals_wrapper,
     "retrieve_transactions": retrieve_transactions_wrapper,
+    "retrieve_spending_forecasts": retrieve_spending_forecasts_wrapper,
+    "retrieve_income_forecasts": retrieve_income_forecasts_wrapper,
     "transaction_names_and_amounts": transaction_names_and_amounts_wrapper,
     "utter_transaction_totals": utter_transaction_totals_wrapper,
+    "utter_forecasts": utter_forecasts_wrapper,
+    "forecast_dates_and_amount": forecast_dates_and_amount_wrapper,
     "compare_spending": compare_spending_wrapper,
     "utter_delta_from_now": utter_delta_from_now,
     "reminder_data": reminder_data,
     "log": sandbox_log,
+    "get_today_date": get_today_date,
+    "get_date": get_date,
+    "get_start_of_month": get_start_of_month,
+    "get_end_of_month": get_end_of_month,
+    "get_start_of_year": get_start_of_year,
+    "get_end_of_year": get_end_of_year,
+    "get_start_of_week": get_start_of_week,
+    "get_end_of_week": get_end_of_week,
+    "get_after_periods": get_after_periods,
   }
   return safe_globals_dict
 
@@ -334,6 +373,16 @@ def retrieve_accounts(user_id: int = 1):
 def retrieve_transactions(user_id: int = 1):
   """Internal function to retrieve transactions - available to executed code"""
   return retrieve_transactions_function_code_gen(user_id)
+
+
+def retrieve_spending_forecasts(user_id: int = 1, granularity: str = 'monthly'):
+  """Internal function to retrieve spending forecasts - available to executed code"""
+  return retrieve_spending_forecasts_function_code_gen(user_id, granularity)
+
+
+def retrieve_income_forecasts(user_id: int = 1, granularity: str = 'monthly'):
+  """Internal function to retrieve income forecasts - available to executed code"""
+  return retrieve_income_forecasts_function_code_gen(user_id, granularity)
 
 
 def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callable:
