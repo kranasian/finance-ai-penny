@@ -108,43 +108,107 @@ def process_prompt(prompt):
     "request_time": time.time()
   })
 
-def render_example_prompts():
-  """Render example prompts for checking account balances"""
-  st.markdown("##### 💡 Example Prompts")
-  
-  example_prompts = [
-    # General account balance questions
-    "What is my account balance?",
-    "Show me all my account balances",
-    "What are my current balances?",
-    "Check my account balances",
-    "Do I have accounts with current balance over 5k?",
-    "How much is my credit limit?",
-    "What is the balance of my Amex accounts?",
-    "What is the balance of my BoF and Citibank accounts?",
-    # General transaction questions
-    "What are my recent transactions?",
-    "What are my recent Amex transactions?",
-    "Do I have dining out transactions with amount over $40 last month?",
-    "List my dining out transactions last month.",
-    "List income past 2 weeks.",
-    # General comparison questions
-    "Compare my dining out and groceries spending last month.",
-    "Compare my dining out last sept 2025 vs oct 2025.",
-    "Compare my spending on entertainment and travel to my bills and medicines last month.",
-    "Compare how much I earned last month to September 2025.",
-    # Combination of forecast questions
-    "How much am I expected to save in the next 3 months?",
-  ]
-  
+def render_prompt_section(title: str, prompts: list, key_prefix: str):
+  """Render a section of example prompts with buttons"""
+  st.markdown(f"**{title}**")
   cols = st.columns(4)
-  for idx, prompt in enumerate(example_prompts):
+  for idx, prompt in enumerate(prompts):
     col = cols[idx % 4]
     with col:
-      if st.button(prompt, key=f"example_prompt_{idx}", use_container_width=True):
-        # Store prompt in session state to process it
+      if st.button(prompt, key=f"{key_prefix}_{idx}", use_container_width=True):
         st.session_state.pending_prompt = prompt
         st.rerun()
+
+def render_example_prompts():
+  """Render example prompts organized by type"""
+  st.markdown("##### 💡 Example Prompts")
+  
+  # Account balance questions
+  render_prompt_section(
+    "📊 Account Balance Questions",
+    [
+      "What is my account balance?",
+      "Show me all my account balances",
+      "What are my current balances?",
+      "Check my account balances",
+      "Do I have accounts with current balance over 5k?",
+      "How much is my credit limit?",
+      "What is the balance of my Amex accounts?",
+      "What is the balance of my BoF and Citibank accounts?",
+    ],
+    "account_balance"
+  )
+  
+  st.markdown("---")
+  
+  # Transaction questions
+  render_prompt_section(
+    "💳 Transaction Questions",
+    [
+      "What are my recent transactions?",
+      "What are my recent Amex transactions?",
+      "Do I have dining out transactions with amount over $40 last month?",
+      "List my dining out transactions last month.",
+      "List income past 2 weeks.",
+      "What was my total side gig income last quarter?"
+    ],
+    "transaction"
+  )
+  
+  st.markdown("---")
+  
+  # Comparison questions
+  render_prompt_section(
+    "📈 Comparison Questions",
+    [
+      "Compare my dining out and groceries spending last month.",
+      "Compare my dining out last sept 2025 vs oct 2025.",
+      "Compare my spending on entertainment and travel to my bills and medicines last month.",
+      "Compare how much I earned last month to September 2025.",
+    ],
+    "comparison"
+  )
+  
+  st.markdown("---")
+  
+  # Forecast questions
+  render_prompt_section(
+    "🔮 Forecast Questions",
+    [
+      "How much am I expected to save in the next 3 months?",
+      "List my expected spending per category next month.",
+    ],
+    "forecast"
+  )
+  
+  st.markdown("---")
+  
+  # Subscription questions
+  render_prompt_section(
+    "🔗 Subscription Questions",
+    [
+      "List my streaming subscriptions",
+      "List my streaming subscriptions paid this month",
+      "List active streaming subscriptions",
+      "List netflix subscription payments in the last 2 months",
+      "Did I pay for any music subscriptions last month?",
+    ],
+    "subscription"
+  )
+  
+  st.markdown("---")
+  
+  # Combination questions
+  render_prompt_section(
+    "🔗 Combination Questions",
+    [
+      "Does my checking account have enough to pay for my rent next month?",
+      "Check my checking account if I can afford paying my dining out last month",
+      "Check my checking account if i can afford paying my rent next month",
+      "How much was my average monthly savings last year?",
+    ],
+    "combination"
+  )
   
   # Process pending prompt if one exists
   if "pending_prompt" in st.session_state and st.session_state.pending_prompt:

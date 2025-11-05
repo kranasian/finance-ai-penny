@@ -48,6 +48,7 @@ Write a function `process_input` that takes no arguments and print()s what to te
   - The second element is the metadata for the entities created or retrieved.
 - Compute for dates using `datetime` package.  Assume `import datetime` is already included.
 - When looking for `account_name` and `==`, look for other relevant variations to find more matches. Refer to <ACCOUNT_NAMES> for the list of account names.
+- When looking for `subscription_name` and `==`, look for other relevant variations to find more matches. Refer to <SUBSCRIPTION_NAMES> for the list of subscription names.
 - Today's date is {today_date}.
 
 <IMPLEMENTED_FUNCTIONS>
@@ -90,6 +91,14 @@ Write a function `process_input` that takes no arguments and print()s what to te
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
     - `utter_forecasts(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and calculates total forecasted amounts and returns a formatted string based on `template`.
+    - `retrieve_subscriptions() -> pd.DataFrame`
+        - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
+        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`, `output_category`, `subscription_name`, `confidence_score_bills`, `reviewer_bills`.
+        - `amount` values: **Negative** values are **inflows/earnings/refunds**, **Positive** values are **outflows/spending**.
+    - `subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
+        - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
+    - `utter_subscription_totals(df: pd.DataFrame, template: str) -> str`
+        - takes filtered `df` and `template` string, calculates total subscription transaction amounts (sum of `amount`) and returns a formatted string.
 </IMPLEMENTED_FUNCTIONS>
 
 <IMPLEMENTED_DATE_FUNCTIONS>
@@ -226,6 +235,40 @@ Write a function `process_input` that takes no arguments and print()s what to te
 {account_names_text}
 </ACCOUNT_NAMES>"""
 
+  def _build_subscription_names_section(self, user_id: int) -> str:
+    """
+    Build the SUBSCRIPTION_NAMES section dynamically based on the user's subscriptions.
+    
+    Args:
+      user_id: The user ID to retrieve subscriptions for
+      
+    Returns:
+      String containing the SUBSCRIPTION_NAMES section
+    """
+    db = Database()
+    # Get subscription transactions to extract unique subscription names
+    subscription_transactions = db.get_subscription_transactions(user_id, confidence_score_bills_threshold=0.5)
+    
+    if not subscription_transactions:
+      return "<SUBSCRIPTION_NAMES>\n  These are the `name` in the `user_recurring_transactions` table:\n    (No subscriptions found for this user)\n</SUBSCRIPTION_NAMES>"
+    
+    # Extract unique subscription names from transactions
+    subscription_names_set = set()
+    for transaction in subscription_transactions:
+      subscription_name = transaction.get('subscription_name', '')
+      if subscription_name:
+        subscription_names_set.add(subscription_name)
+    
+    subscription_names_list = [f"    - `{name}`" for name in sorted(subscription_names_set)]
+    
+    subscription_names_text = "\n".join(subscription_names_list) if subscription_names_list else "    (No subscription names found)"
+    
+    return f"""<SUBSCRIPTION_NAMES>
+  **REFERENCE ONLY** - These are example `name` values in the `user_recurring_transactions` table. This is NOT code - use `retrieve_subscriptions()` to get the actual DataFrame.
+  Subscription names:
+{subscription_names_text}
+</SUBSCRIPTION_NAMES>"""
+
   def _create_few_shot_examples(self) -> str:
     """
     Create few-shot examples for code generation.
@@ -279,39 +322,6 @@ def process_input():
         net_worth = total_assets - total_liabilities
         print(f"You have a net worth of ${net_worth:,.0f} with assets of ${total_assets:,.0f} and liabilities of ${total_liabilities:,.0f}.")
 
-    return True, metadata
-```
-
-input: User: how much did i spend on streaming last month?
-output: ```python
-def process_input():
-    df = retrieve_transactions()
-    metadata = {"transactions": []}
-    
-    if df.empty:
-      print("You have no transactions.")
-    else:
-      # Filter for streaming/entertainment category
-      df = df[df['category'] == 'leisure_entertainment']
-      
-      if df.empty:
-        print("You have no streaming/entertainment transactions.")
-      else:
-        # Filter for last month
-        first_day_current_month = get_start_of_month(get_today_date())
-        first_day_last_month = get_after_periods(first_day_current_month, -1, "monthly")
-        last_day_last_month = get_end_of_month(first_day_last_month)
-        
-        # Filter transactions from last month
-        df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
-        
-        if df.empty:
-          print("You have no streaming/entertainment transactions from last month.")
-        else:
-          # Calculate and display total spending
-          total_str = utter_transaction_totals(df, True, "You {verb} ${total_amount:,.2f} on streaming/entertainment last month.")
-          print(total_str)
-    
     return True, metadata
 ```
 
@@ -497,6 +507,136 @@ def process_input():
     
     return True, metadata
 ```
+
+input: User: check my checking account if i can afford paying my rent next month
+output: ```python
+def process_input():
+    metadata = {"accounts": [], "transactions": []}
+    
+    # Get checking account balance
+    accounts_df = retrieve_accounts()
+    
+    if accounts_df.empty:
+      print("You have no accounts.")
+      return True, metadata
+    
+    # Filter for checking account
+    checking_df = accounts_df[accounts_df['account_type'] == 'checking']
+    
+    if checking_df.empty:
+      print("You have no checking account.")
+      return True, metadata
+    
+    # Get total available balance from checking accounts
+    total_available = checking_df['balance_available'].sum()
+    
+    for_print, metadata["accounts"] = account_names_and_balances(checking_df, 'Your {account_name} ({account_type}) has ${balance_available:,.2f} available.')
+    
+    # Get next month date
+    first_day_current_month = get_start_of_month(get_today_date())
+    first_day_next_month = get_after_periods(first_day_current_month, 1, "monthly")
+    next_month_date = first_day_next_month.replace(day=1)
+    
+    # Retrieve spending forecasts for next month
+    spending_df = retrieve_spending_forecasts('monthly')
+    
+    if spending_df.empty:
+      print("You have no spending forecasts for next month.")
+      return True, metadata
+    
+    # Filter for next month
+    spending_df = spending_df[spending_df['month_date'] == next_month_date]
+    
+    if spending_df.empty:
+      print("You have no spending forecasts for next month.")
+      return True, metadata
+    
+    rent_df = spending_df[spending_df['ai_category_id'] == 14]
+    
+    if rent_df.empty:
+      print("You have no rent forecast for next month.")
+      return True, metadata
+    
+    # Calculate total forecasted rent
+    total_rent = rent_df['forecasted_amount'].sum()
+    
+    for_print, metadata["forecasts"] = forecast_dates_and_amount(rent_df, 'On {month_date}, you are expected to spend ${forecasted_amount:,.2f} on {category}.')
+    
+    # Compare and determine affordability
+    if total_available >= total_rent:
+      print(f"You can afford your rent next month. Your checking account has ${total_available:,.2f} available, and your forecasted rent is ${total_rent:,.2f}. You would have ${total_available - total_rent:,.2f} remaining.")
+    else:
+      print(f"You cannot afford your rent next month. Your checking account has ${total_available:,.2f} available, but your forecasted rent is ${total_rent:,.2f}. You would need ${total_rent - total_available:,.2f} more.")
+    
+    return True, metadata
+```
+
+input: User: list my subscriptions
+output: ```python
+def process_input():
+    metadata = {"subscriptions": []}
+    
+    subscriptions_df = retrieve_subscriptions()
+    
+    if subscriptions_df.empty:
+      print("You have no subscriptions.")
+      return True, metadata
+    
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{subscription_name}: {direction} ${amount:,.2f} on {date}')
+    transaction_count = len(subscriptions_df)
+    print(f"Your subscriptions ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
+    print(for_print)
+    
+    print(utter_subscription_totals(subscriptions_df, 'Total subscription transactions: ${total_amount:,.2f}'))
+    
+    return True, metadata
+```
+
+input: User: list streaming subscriptions paid last month
+output: ```python
+def process_input():
+    metadata = {"subscriptions": []}
+    
+    subscriptions_df = retrieve_subscriptions()
+    
+    if subscriptions_df.empty:
+      print("You have no subscriptions.")
+      return True, metadata
+    
+    # Filter for streaming subscriptions: use subscription_name OR category
+    # Populate using relevant names from SUBSCRIPTION_NAMES
+    streaming_names = []
+    streaming_categories = ['leisure_entertainment']
+    
+    name_matches = subscriptions_df['subscription_name'].str.lower().isin(streaming_names)
+    category_matches = subscriptions_df['category'].isin(streaming_categories)
+    streaming_df = subscriptions_df[name_matches & category_matches]
+    
+    if streaming_df.empty:
+      print("You have no streaming subscriptions.")
+      return True, metadata
+      
+    # Filter for last month
+    today = get_today_date()
+    first_day_current_month = get_start_of_month(today)
+    first_day_last_month = get_after_periods(first_day_current_month, -1, "monthly")
+    last_day_last_month = get_end_of_month(first_day_last_month)
+    
+    streaming_df = streaming_df[(streaming_df['date'] >= first_day_last_month) & (streaming_df['date'] <= last_day_last_month)]
+    
+    if streaming_df.empty:
+      print("You have no streaming subscription payments last month.")
+      return True, metadata
+    
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{subscription_name}: {direction} ${amount:,.2f} on {date}')
+    transaction_count = len(streaming_df)
+    print(f"Your streaming subscription payments last month ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
+    print(for_print)
+    
+    print(utter_subscription_totals(streaming_df, 'Total streaming subscription spending last month: ${total_amount:,.2f}'))
+    
+    return True, metadata
+```
 """
 
 
@@ -557,11 +697,13 @@ output:""")
     
     # Build dynamic ACCOUNT_NAMES section for this user
     account_names_section = self._build_account_names_section(user_id)
+    # Build dynamic SUBSCRIPTION_NAMES section for this user
+    subscription_names_section = self._build_subscription_names_section(user_id)
     # Add today's date to the system prompt
     today_date = datetime.now().strftime("%Y-%m-%d")
     system_prompt_with_date = self.system_prompt.format(today_date=today_date)
-    # Combine system prompt with dynamic account names
-    full_system_prompt = system_prompt_with_date + "\n\n" + account_names_section
+    # Combine system prompt with dynamic account names and subscription names
+    full_system_prompt = system_prompt_with_date + "\n\n" + account_names_section + "\n\n" + subscription_names_section
     
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,

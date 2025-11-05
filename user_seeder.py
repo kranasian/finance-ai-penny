@@ -461,6 +461,256 @@ def create_sample_forecasts(user_id: int) -> list:
   
   return forecast_count
 
+def create_sample_subscriptions(user_id: int) -> int:
+  """Create sample subscription data for a user"""
+  from database import Database
+  from datetime import datetime, timedelta
+  import random
+  
+  db = Database()
+  subscription_count = 0
+  
+  today = datetime.now()
+  
+  # Sample subscriptions with different frequencies and types
+  subscriptions = [
+    {
+      'name': 'netflix',
+      'recurrence_json': {'min': 28, 'mean': 30, 'max': 31},
+      'confidence_score_bills': 0.95,
+      'next_amount': 15.99,
+      'frequency': 'monthly',
+      'next_likely_payment_date': (today + timedelta(days=30)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'spotify',
+      'recurrence_json': {'min': 28, 'mean': 30, 'max': 31},
+      'confidence_score_bills': 0.92,
+      'next_amount': 9.99,
+      'frequency': 'monthly',
+      'next_likely_payment_date': (today + timedelta(days=28)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'gym membership',
+      'recurrence_json': {'min': 28, 'mean': 30, 'max': 31},
+      'confidence_score_bills': 0.88,
+      'next_amount': 49.99,
+      'frequency': 'monthly',
+      'next_likely_payment_date': (today + timedelta(days=15)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'amazon prime',
+      'recurrence_json': {'min': 360, 'mean': 365, 'max': 366},
+      'confidence_score_bills': 0.90,
+      'next_amount': 139.00,
+      'frequency': 'yearly',
+      'next_likely_payment_date': (today + timedelta(days=180)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'salary',
+      'recurrence_json': {'min': 14, 'mean': 14, 'max': 15},
+      'confidence_score_salary': 0.98,
+      'next_amount': 3500.00,
+      'frequency': 'biweekly',
+      'next_likely_payment_date': (today + timedelta(days=14)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'side gig',
+      'recurrence_json': {'min': 28, 'mean': 30, 'max': 31},
+      'confidence_score_sidegig': 0.85,
+      'next_amount': 200.00,
+      'frequency': 'monthly',
+      'next_likely_payment_date': (today + timedelta(days=25)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'municipal water and sewer',
+      'recurrence_json': {'min': 28, 'mean': 30, 'max': 31},
+      'confidence_score_bills': 0.95,
+      'next_amount': 150.00,
+      'frequency': 'monthly',
+      'next_likely_payment_date': (today + timedelta(days=12)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'mid-carolina electric cooperative',
+      'recurrence_json': {'min': 28, 'mean': 30, 'max': 31},
+      'confidence_score_bills': 0.92,
+      'next_amount': 120.00,
+      'frequency': 'monthly',
+      'next_likely_payment_date': (today + timedelta(days=15)).strftime('%Y-%m-%d')
+    },
+    {
+      'name': 'phone bill',
+      'recurrence_json': {'min': 28, 'mean': 30, 'max': 31},
+      'confidence_score_bills': 0.93,
+      'next_amount': 80.00,
+      'frequency': 'monthly',
+      'next_likely_payment_date': (today + timedelta(days=20)).strftime('%Y-%m-%d')
+    }
+  ]
+  
+  for sub in subscriptions:
+    db.create_subscription(
+      user_id=user_id,
+      name=sub['name'],
+      recurrence_json=sub['recurrence_json'],
+      confidence_score_bills=sub.get('confidence_score_bills'),
+      confidence_score_salary=sub.get('confidence_score_salary'),
+      confidence_score_sidegig=sub.get('confidence_score_sidegig'),
+      next_amount=sub.get('next_amount'),
+      frequency=sub.get('frequency'),
+      next_likely_payment_date=sub.get('next_likely_payment_date')
+    )
+    subscription_count += 1
+  
+  return subscription_count
+
+
+def create_subscription_transactions(user_id: int, account_ids: list, months: int = 6, start_date: datetime = None) -> int:
+  """Create subscription transactions that match subscription names"""
+  from database import Database
+  from datetime import datetime, timedelta
+  from dateutil.relativedelta import relativedelta
+  import random
+  import uuid
+  
+  db = Database()
+  
+  # Get subscriptions for this user
+  subscriptions = db.get_subscriptions(user_id)
+  if not subscriptions:
+    return 0
+  
+  # Subscription name to transaction mapping
+  subscription_transaction_map = {
+    'netflix': ('Netflix', -15.99, 'leisure_entertainment'),
+    'spotify': ('Spotify', -9.99, 'leisure_entertainment'),
+    'gym membership': ('Gym Membership', -49.99, 'health_gym_wellness'),
+    'amazon prime': ('Amazon Prime', -139.00, 'shopping_gadgets'),
+    'salary': ('Salary', 3500.00, 'income_salary'),
+    'side gig': ('Side Gig', 200.00, 'income_sidegig'),
+    'municipal water and sewer': ('Municipal Water And Sewer', -150.00, 'shelter_utilities'),
+    'mid-carolina electric cooperative': ('Mid-Carolina Electric Cooperative', -120.00, 'shelter_utilities'),
+    'phone bill': ('Phone Bill', -80.00, 'bills_connectivity')
+  }
+  
+  # Determine date range - ensure we cover all calendar months from start_date to today
+  if start_date is None:
+    today = datetime.now()
+    # Start from months ago
+    start_date = today - relativedelta(months=months)
+  else:
+    today = datetime.now()
+  
+  # Ensure start_date is the first day of that month
+  start_date = start_date.replace(day=1)
+  end_date = today
+  
+  transaction_count = 0
+  
+  for subscription in subscriptions:
+    sub_name = subscription.get('name', '').lower()
+    if sub_name not in subscription_transaction_map:
+      continue
+    
+    transaction_name, amount, category = subscription_transaction_map[sub_name]
+    
+    # Determine frequency based on subscription
+    if sub_name in ['netflix', 'spotify', 'gym membership', 'municipal water and sewer', 'mid-carolina electric cooperative', 'phone bill', 'side gig']:
+      # Monthly subscriptions - create one transaction per calendar month
+      # Start from the first day of the start month
+      current_month = start_date.replace(day=1)
+      end_month = end_date.replace(day=1)
+      
+      # Iterate through each calendar month from start to end (inclusive)
+      while current_month <= end_month:
+        # For the current month, only create transactions up to today's date
+        # For past months, create transactions throughout the month
+        if current_month.month == end_date.month and current_month.year == end_date.year:
+          # Current month - only create transactions up to today
+          max_day = min(28, end_date.day)  # Use today's day or 28, whichever is smaller
+          random_day = random.randint(1, max_day)
+        else:
+          # Past months - can create transactions throughout the month
+          random_day = random.randint(1, 28)
+        
+        transaction_date = current_month.replace(day=random_day)
+        
+        # Only create if transaction date is not in the future and within our range
+        if transaction_date <= end_date and transaction_date >= start_date:
+          # Select random account
+          account_id = random.choice(account_ids)
+          
+          # Generate unique transaction ID
+          transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
+          
+          # Create transaction with exact subscription name (lowercase) so it matches
+          db.create_transaction(
+            user_id=user_id,
+            account_id=account_id,
+            transaction_id=transaction_id,
+            date=transaction_date.strftime("%Y-%m-%d"),
+            transaction_name=transaction_name.lower(),  # Use lowercase to match subscription name
+            amount=amount,
+            category=category
+          )
+          transaction_count += 1
+        
+        # Move to next month
+        current_month = current_month + relativedelta(months=1)
+        
+    elif sub_name == 'salary':
+      # Biweekly salary - create one transaction every 14 days
+      current_date = start_date
+      while current_date <= end_date:
+        # Select random account
+        account_id = random.choice(account_ids)
+        
+        # Generate unique transaction ID
+        transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
+        
+        # Create transaction
+        db.create_transaction(
+          user_id=user_id,
+          account_id=account_id,
+          transaction_id=transaction_id,
+          date=current_date.strftime("%Y-%m-%d"),
+          transaction_name=transaction_name.lower(),
+          amount=amount,
+          category=category
+        )
+        transaction_count += 1
+        
+        # Move to next occurrence (14 days)
+        current_date += timedelta(days=14)
+        
+    elif sub_name == 'amazon prime':
+      # Yearly subscription - create one transaction per year within the range
+      current_date = start_date.replace(day=1)
+      while current_date <= end_date:
+        # Create one transaction per year
+        random_day = random.randint(1, 28)
+        transaction_date = current_date.replace(day=random_day)
+        
+        if transaction_date <= end_date and transaction_date >= start_date:
+          account_id = random.choice(account_ids)
+          transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
+          
+          db.create_transaction(
+            user_id=user_id,
+            account_id=account_id,
+            transaction_id=transaction_id,
+            date=transaction_date.strftime("%Y-%m-%d"),
+            transaction_name=transaction_name.lower(),
+            amount=amount,
+            category=category
+          )
+          transaction_count += 1
+        
+        # Move to next year
+        current_date = current_date + relativedelta(years=1)
+  
+  return transaction_count
+
 def seed_users():
   """Seed the database with test users, accounts, and transactions"""
   print("Starting user seeding process...")
@@ -497,11 +747,27 @@ def seed_users():
   # Create forecast data for HeavyDataUser
   forecast_count = create_sample_forecasts(heavy_user_id)
   
+  # Create subscription data for HeavyDataUser
+  subscription_count = create_sample_subscriptions(heavy_user_id)
+  
+  # Create subscription transactions that match subscription names
+  # Create subscription transactions for the last 6 months (calendar months) including current month
+  today = datetime.now()
+  six_months_ago = today - relativedelta(months=6)
+  subscription_transaction_count = create_subscription_transactions(heavy_user_id, heavy_accounts, months=6, start_date=six_months_ago.replace(day=1))
+  
+  # Also create subscription transactions for last year (12 months ago, calendar months)
+  last_year_start = datetime.now() - relativedelta(years=1)
+  subscription_transaction_count_last_year = create_subscription_transactions(heavy_user_id, heavy_accounts, months=12, start_date=last_year_start.replace(day=1))
+  
   print(f"Created HeavyDataUser with ID: {heavy_user_id}")
   print(f"  - {len(heavy_accounts)} account(s)")
   print(f"  - {len(heavy_transactions)} transactions over 6 months")
   print(f"  - {len(heavy_transactions_last_year)} transactions from last year")
   print(f"  - {forecast_count} forecasts (monthly and weekly)")
+  print(f"  - {subscription_count} subscriptions")
+  print(f"  - {subscription_transaction_count} subscription transactions (last 6 months)")
+  print(f"  - {subscription_transaction_count_last_year} subscription transactions (last year)")
   
   print("\nUser seeding completed successfully!")
   

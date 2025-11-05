@@ -15,6 +15,7 @@ import json
 from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
 from tools.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
 from tools.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
+from tools.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from tools.forecast_utils import forecast_dates_and_amount, utter_forecasts
 from tools.compare_spending import compare_spending
 from tools.date_utils import (
@@ -273,6 +274,17 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def retrieve_income_forecasts_wrapper(granularity: str = 'monthly'):
     return retrieve_income_forecasts(user_id, granularity)
   
+  # Create wrapper function for subscriptions
+  def retrieve_subscriptions_wrapper():
+    return retrieve_subscriptions(user_id)
+  
+  # Create wrapper functions for subscription utility functions
+  def subscription_names_and_amounts_wrapper(df: pd.DataFrame, template: str):
+    return subscription_names_and_amounts(df, template)
+  
+  def utter_subscription_totals_wrapper(df: pd.DataFrame, template: str):
+    return utter_subscription_totals(df, template)
+  
   # Create wrapper functions for transaction utility functions
   def transaction_names_and_amounts_wrapper(df: pd.DataFrame, template: str):
     return transaction_names_and_amounts(df, template)
@@ -318,6 +330,9 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "retrieve_transactions": retrieve_transactions_wrapper,
     "retrieve_spending_forecasts": retrieve_spending_forecasts_wrapper,
     "retrieve_income_forecasts": retrieve_income_forecasts_wrapper,
+    "retrieve_subscriptions": retrieve_subscriptions_wrapper,
+    "subscription_names_and_amounts": subscription_names_and_amounts_wrapper,
+    "utter_subscription_totals": utter_subscription_totals_wrapper,
     "transaction_names_and_amounts": transaction_names_and_amounts_wrapper,
     "utter_transaction_totals": utter_transaction_totals_wrapper,
     "utter_forecasts": utter_forecasts_wrapper,
@@ -383,6 +398,11 @@ def retrieve_spending_forecasts(user_id: int = 1, granularity: str = 'monthly'):
 def retrieve_income_forecasts(user_id: int = 1, granularity: str = 'monthly'):
   """Internal function to retrieve income forecasts - available to executed code"""
   return retrieve_income_forecasts_function_code_gen(user_id, granularity)
+
+
+def retrieve_subscriptions(user_id: int = 1):
+  """Internal function to retrieve subscriptions - available to executed code"""
+  return retrieve_subscriptions_function_code_gen(user_id)
 
 
 def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callable:

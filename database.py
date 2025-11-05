@@ -77,6 +77,42 @@ class Database:
       )
     ''')
     
+    # Create user_recurring_transactions table
+    cursor.execute('''
+      CREATE TABLE IF NOT EXISTS user_recurring_transactions (
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        last_reviewed_datetime TIMESTAMP,
+        recurrence_json TEXT NOT NULL,
+        confidence_score_bills REAL,
+        confidence_score_salary REAL,
+        confidence_score_sidegig REAL,
+        reviewer_bills INTEGER DEFAULT 0,
+        reviewer_salary INTEGER DEFAULT 0,
+        reviewer_sidegig INTEGER DEFAULT 0,
+        user_not_bills INTEGER,
+        user_not_salary INTEGER,
+        user_not_sidegig INTEGER,
+        user_need_level TEXT CHECK (user_need_level IN ('need', 'want', 'trial')),
+        necessity TEXT CHECK (necessity IN ('need', 'want', 'trial')),
+        next_user_remind_datetime TIMESTAMP,
+        user_remind_last_response TEXT,
+        user_cancelled_date DATE,
+        next_likely_payment_date DATE,
+        next_earliest_payment_date DATE,
+        next_latest_payment_date DATE,
+        next_payment_date_debug TEXT,
+        next_amount REAL,
+        last_transaction_date TIMESTAMP,
+        awaiting_new_transaction INTEGER,
+        necessity_update_date TIMESTAMP,
+        necessity_prompt_date TIMESTAMP,
+        frequency TEXT CHECK (frequency IN ('weekly', 'biweekly', 'monthly', 'quarterly', 'biannual', 'yearly', 'irregular', 'no_pattern')),
+        PRIMARY KEY (user_id, name),
+        FOREIGN KEY (user_id) REFERENCES users (id)
+      )
+    ''')
+    
     conn.commit()
     conn.close()
   
@@ -448,3 +484,129 @@ class Database:
       })
     
     return forecasts
+
+  # Subscription management methods
+  def create_subscription(self, user_id: int, name: str, recurrence_json: dict,
+                         confidence_score_bills: Optional[float] = None,
+                         confidence_score_salary: Optional[float] = None,
+                         confidence_score_sidegig: Optional[float] = None,
+                         next_amount: Optional[float] = None,
+                         frequency: Optional[str] = None,
+                         next_likely_payment_date: Optional[str] = None) -> None:
+    """Create or update a subscription"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    import json
+    recurrence_json_str = json.dumps(recurrence_json)
+    
+    cursor.execute('''
+      INSERT OR REPLACE INTO user_recurring_transactions 
+      (user_id, name, recurrence_json, confidence_score_bills, confidence_score_salary, 
+       confidence_score_sidegig, next_amount, frequency, next_likely_payment_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (user_id, name.lower(), recurrence_json_str, confidence_score_bills,
+          confidence_score_salary, confidence_score_sidegig, next_amount, frequency, next_likely_payment_date))
+    
+    conn.commit()
+    conn.close()
+
+  def get_subscription_transactions(self, user_id: int, confidence_score_bills_threshold: float = 0.5) -> List[Dict]:
+    """Get subscription transactions by joining transactions with user_recurring_transactions"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+      SELECT DISTINCT t.transaction_id, t.user_id, t.account_id, t.date, t.transaction_name, t.amount, t.category,
+             urt.name as subscription_name, urt.confidence_score_bills, urt.reviewer_bills
+      FROM transactions t
+      INNER JOIN user_recurring_transactions urt
+          ON lower(t.transaction_name) = urt.name
+      WHERE t.user_id = ?
+          AND t.user_id = urt.user_id
+          AND ((urt.confidence_score_bills > ?)
+          OR (urt.reviewer_bills = 1))
+      ORDER BY t.date DESC
+    ''', (user_id, confidence_score_bills_threshold))
+    
+    results = cursor.fetchall()
+    conn.close()
+    
+    transactions = []
+    for result in results:
+      transactions.append({
+        'transaction_id': result[0],
+        'user_id': result[1],
+        'account_id': result[2],
+        'date': result[3],
+        'transaction_name': result[4],
+        'amount': result[5],
+        'category': result[6],
+        'subscription_name': result[7],
+        'confidence_score_bills': result[8],
+        'reviewer_bills': bool(result[9]) if result[9] is not None else None
+      })
+    
+    return transactions
+
+  def get_subscriptions(self, user_id: int) -> List[Dict]:
+    """Get all subscriptions for a specific user"""
+    conn = sqlite3.connect(self.db_path)
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+      SELECT user_id, name, last_reviewed_datetime, recurrence_json, 
+             confidence_score_bills, confidence_score_salary, confidence_score_sidegig,
+             reviewer_bills, reviewer_salary, reviewer_sidegig,
+             user_not_bills, user_not_salary, user_not_sidegig,
+             user_need_level, necessity, next_user_remind_datetime,
+             user_remind_last_response, user_cancelled_date,
+             next_likely_payment_date, next_earliest_payment_date, next_latest_payment_date,
+             next_payment_date_debug, next_amount, last_transaction_date,
+             awaiting_new_transaction, necessity_update_date, necessity_prompt_date
+      FROM user_recurring_transactions 
+      WHERE user_id = ? 
+      ORDER BY name ASC
+    ''', (user_id,))
+    
+    results = cursor.fetchall()
+    conn.close()
+    
+    import json
+    subscriptions = []
+    for result in results:
+      recurrence_json = json.loads(result[3]) if result[3] else {}
+      subscriptions.append({
+        'user_id': result[0],
+        'name': result[1],
+        'last_reviewed_datetime': result[2],
+        'recurrence_json': recurrence_json,
+        'recurrence_min': recurrence_json.get('min'),
+        'recurrence_mean': recurrence_json.get('mean'),
+        'recurrence_max': recurrence_json.get('max'),
+        'confidence_score_bills': result[4],
+        'confidence_score_salary': result[5],
+        'confidence_score_sidegig': result[6],
+        'reviewer_bills': bool(result[7]) if result[7] is not None else None,
+        'reviewer_salary': bool(result[8]) if result[8] is not None else None,
+        'reviewer_sidegig': bool(result[9]) if result[9] is not None else None,
+        'user_not_bills': bool(result[10]) if result[10] is not None else None,
+        'user_not_salary': bool(result[11]) if result[11] is not None else None,
+        'user_not_sidegig': bool(result[12]) if result[12] is not None else None,
+        'user_need_level': result[13],
+        'necessity': result[14],
+        'next_user_remind_datetime': result[15],
+        'user_remind_last_response': result[16],
+        'user_cancelled_date': result[17],
+        'next_likely_payment_date': result[18],
+        'next_earliest_payment_date': result[19],
+        'next_latest_payment_date': result[20],
+        'next_payment_date_debug': result[21],
+        'next_amount': result[22],
+        'last_transaction_date': result[23],
+        'awaiting_new_transaction': bool(result[24]) if result[24] is not None else None,
+        'necessity_update_date': result[25],
+        'necessity_prompt_date': result[26]
+      })
+    
+    return subscriptions
