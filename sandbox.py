@@ -18,6 +18,8 @@ from tools.retrieve_forecasts import retrieve_spending_forecasts_function_code_g
 from tools.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from tools.forecast_utils import forecast_dates_and_amount, utter_forecasts
 from tools.compare_spending import compare_spending
+from tools.respond_to_app_inquiry import respond_to_app_inquiry
+from tools.create_goal import create_goal
 from tools.date_utils import (
     get_today_date,
     get_date,
@@ -27,7 +29,8 @@ from tools.date_utils import (
     get_end_of_year,
     get_start_of_week,
     get_end_of_week,
-    get_after_periods
+    get_after_periods,
+    get_date_string
 )
 from sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
 
@@ -301,6 +304,12 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def compare_spending_wrapper(df: pd.DataFrame, template: str, metadata: dict = None):
     return compare_spending(df, template, metadata)
   
+  def respond_to_app_inquiry_wrapper(inquiry: str):
+    return respond_to_app_inquiry(inquiry)
+  
+  def create_goal_wrapper(goals: list[dict]):
+    return create_goal(goals)
+  
   safe_globals_dict = {
     "__builtins__": all_builtins,
     "pd": pd,
@@ -338,6 +347,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "utter_forecasts": utter_forecasts_wrapper,
     "forecast_dates_and_amount": forecast_dates_and_amount_wrapper,
     "compare_spending": compare_spending_wrapper,
+    "respond_to_app_inquiry": respond_to_app_inquiry_wrapper,
+    "create_goal": create_goal_wrapper,
     "utter_delta_from_now": utter_delta_from_now,
     "reminder_data": reminder_data,
     "log": sandbox_log,
@@ -350,6 +361,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "get_start_of_week": get_start_of_week,
     "get_end_of_week": get_end_of_week,
     "get_after_periods": get_after_periods,
+    "get_date_string": get_date_string,
   }
   return safe_globals_dict
 

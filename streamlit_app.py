@@ -177,6 +177,7 @@ def render_example_prompts():
     [
       "How much am I expected to save in the next 3 months?",
       "List my expected spending per category next month.",
+      "Am I expected to earn more next month compared to this month?",
     ],
     "forecast"
   )
@@ -198,6 +199,44 @@ def render_example_prompts():
   
   st.markdown("---")
   
+  # App Inquiry questions
+  render_prompt_section(
+    "🔗 App Inquiry Questions",
+    [
+      "What can you do?",
+      "Where should I categorize my rent?",
+      "What's the difference between upkeep and shelter?"
+    ],
+    "app_inquiry"
+  )
+  
+  st.markdown("---")
+  
+  # Create Goal requests
+  render_prompt_section(
+    "🔗 Create Goal Requests",
+    [
+      "Set a goal of $100 monthly on dining out starting December.",
+      "Create a goal for $3500 car insurance every year by year end",
+      "Create a goal for $1000 savings every month for the next 3 months",
+      "Set a $100 limit on movies next month.",
+      "Save 10k this year.",
+      "Save $100 weekly on my checking account until end of year.",
+      "Pay my Amex by end of year.",
+      "Set a $50 weekly limit on groceries",
+      "Pay $200 weekly on my credit card",
+      "Pay $200 weekly on my Chase credit card",
+      "Pay $500 monthly on my Amex credit card",
+      "Save $5000 by next month for down payment",
+      "Pay my credit card down to $0 by next week",
+      "Pay my Amex credit card down to $0 by next week",
+      "Save 20% of my income to my Amex savings account weekly"
+    ],
+    "create_goal"
+  )
+  
+  st.markdown("---")
+  
   # Combination questions
   render_prompt_section(
     "🔗 Combination Questions",
@@ -206,6 +245,8 @@ def render_example_prompts():
       "Check my checking account if I can afford paying my dining out last month",
       "Check my checking account if i can afford paying my rent next month",
       "How much was my average monthly savings last year?",
+      "How long will it take me to save 100k?",
+      "How long will it take me to save 100k of new money?",
     ],
     "combination"
   )
@@ -348,7 +389,7 @@ def render_chat_interface():
             )
 
 
-          col4, col5 = st.columns(2)
+          col4, col5, col6 = st.columns(3)
           
           with col4:
             if timing.get("gemini_api_calls"):
@@ -384,9 +425,10 @@ def render_chat_interface():
                   help=f"Duration of execution #{call['call_number']}"
                 )
           
-          # Show output tokens if available
-          if timing.get("output_tokens") is not None:
-            st.metric("Output Tokens", f"{timing['output_tokens']:,}")
+          with col6:
+            # Show output tokens if available
+            if timing.get("output_tokens") is not None:
+              st.metric("Output Tokens", f"{timing['output_tokens']:,}")
   
   
 

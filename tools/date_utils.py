@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import calendar
+import pandas as pd
 
 
 def get_today_date() -> datetime:
@@ -24,41 +25,43 @@ def get_date(year: int, month: int, day: int) -> datetime:
 
 
 def get_start_of_month(date: datetime) -> datetime:
-    """Returns the start of the month for a given date."""
-    return date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    """Returns the first day of the month for a given date."""
+    date_obj = pd.to_datetime(date)
+    start = date_obj.replace(day=1)
+    return datetime.combine(start.date(), datetime.min.time())
 
 
 def get_end_of_month(date: datetime) -> datetime:
-    """Returns the end of the month for a given date."""
-    # Get the last day of the month
-    last_day = calendar.monthrange(date.year, date.month)[1]
-    return date.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+    """Returns the last day of the month for a given date."""
+    date_obj = pd.to_datetime(date)
+    end = date_obj.replace(day=1) + pd.offsets.MonthEnd()
+    return datetime.combine(end.date(), datetime.min.time())
 
 
 def get_start_of_year(date: datetime) -> datetime:
-    """Returns the start of the year for a given date."""
-    return date.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    """Returns January 1st for the year of the given date."""
+    date_obj = pd.to_datetime(date)
+    return datetime(date_obj.year, 1, 1)
 
 
 def get_end_of_year(date: datetime) -> datetime:
-    """Returns the end of the year for a given date."""
-    return date.replace(month=12, day=31, hour=23, minute=59, second=59, microsecond=999999)
+    """Returns December 31st for the year of the given date."""
+    date_obj = pd.to_datetime(date)
+    return datetime(date_obj.year, 12, 31)
 
 
 def get_start_of_week(date: datetime) -> datetime:
-    """Returns the start of the week (Monday) for a given date."""
-    # Get Monday of the week (weekday() returns 0 for Monday, 6 for Sunday)
-    days_since_monday = date.weekday()
-    start_of_week = date - timedelta(days=days_since_monday)
-    return start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    """Returns the Sunday of the week for the given date."""
+    date_obj = pd.to_datetime(date)
+    start = (date_obj + pd.DateOffset(days=1) - pd.offsets.Week(weekday=6))
+    return datetime.combine(start.date(), datetime.min.time())
 
 
 def get_end_of_week(date: datetime) -> datetime:
-    """Returns the end of the week (Sunday) for a given date."""
-    # Get Sunday of the week (weekday() returns 0 for Monday, 6 for Sunday)
-    days_until_sunday = 6 - date.weekday()
-    end_of_week = date + timedelta(days=days_until_sunday)
-    return end_of_week.replace(hour=23, minute=59, second=59, microsecond=999999)
+    """Returns the Saturday of the week for the given date."""
+    date_obj = pd.to_datetime(date)
+    end = (date_obj + pd.offsets.Week(weekday=6) - pd.DateOffset(days=1))
+    return datetime.combine(end.date(), datetime.min.time())
 
 
 def get_after_periods(date: datetime, count: int, granularity: str) -> datetime:
@@ -73,16 +76,26 @@ def get_after_periods(date: datetime, count: int, granularity: str) -> datetime:
     Returns:
         The date after adding the specified periods
     """
-    granularity = granularity.lower()
+    date_obj = pd.to_datetime(date)
+    g = (granularity or "").lower()
     
-    if granularity == "daily":
-        return date + timedelta(days=count)
-    elif granularity == "weekly":
-        return date + timedelta(weeks=count)
-    elif granularity == "monthly":
-        return date + relativedelta(months=count)
-    elif granularity == "yearly":
-        return date + relativedelta(years=count)
+    if g == "daily" or g == "day":
+        result = date_obj + pd.DateOffset(days=count)
+    elif g == "weekly" or g == "week":
+        result = date_obj + pd.DateOffset(weeks=count)
+    elif g == "monthly" or g == "month":
+        result = date_obj + pd.DateOffset(months=count)
+    elif g == "yearly" or g == "year":
+        result = date_obj + pd.DateOffset(years=count)
     else:
-        raise ValueError(f"Invalid granularity: {granularity}. Must be one of: daily, weekly, monthly, yearly")
+        # Fallback: return original date when granularity not recognized
+        result = date_obj
+    
+    ts = pd.to_datetime(result).normalize()
+    return datetime.combine(ts.date(), datetime.min.time())
+
+
+def get_date_string(date: datetime) -> str:
+    """Return date in "YYYY-MM-DD" format."""
+    return date.strftime("%Y-%m-%d")
 

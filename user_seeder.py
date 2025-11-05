@@ -179,128 +179,128 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
   # Transaction templates organized by category
   transaction_templates = {
     'income_salary': [
-      ('Direct Deposit - Salary', 'PAYROLL DEPOSIT COMPANY INC', 3500.00),
-      ('Monthly Bonus', 'BONUS PAYMENT COMPANY CORP', 500.00),
-      ('Overtime Pay', 'OVERTIME PAYMENT COMPANY', 200.00)
+      ('Direct Deposit - Salary', 'PAYROLL DEPOSIT COMPANY INC', -3500.00),
+      ('Monthly Bonus', 'BONUS PAYMENT COMPANY CORP', -500.00),
+      ('Overtime Pay', 'OVERTIME PAYMENT COMPANY', -200.00)
     ],
     'income_sidegig': [
-      ('Uber Earnings', 'UBER TECHNOLOGIES INC', 150.00),
-      ('Etsy Sales', 'ETSY INC', 75.00),
-      ('Freelance Payment', 'FREELANCE CLIENT LLC', 300.00)
+      ('Uber Earnings', 'UBER TECHNOLOGIES INC', -150.00),
+      ('Etsy Sales', 'ETSY INC', -75.00),
+      ('Freelance Payment', 'FREELANCE CLIENT LLC', -300.00)
     ],
     'meals_groceries': [
-      ('Whole Foods', 'WHOLE FOODS MARKET', -85.50),
-      ('Safeway', 'SAFEWAY STORE', -120.30),
-      ('Trader Joes', 'TRADER JOES', -65.75),
-      ('Costco', 'COSTCO WHOLESALE', -180.00)
+      ('Whole Foods', 'WHOLE FOODS MARKET', 85.50),
+      ('Safeway', 'SAFEWAY STORE', 120.30),
+      ('Trader Joes', 'TRADER JOES', 65.75),
+      ('Costco', 'COSTCO WHOLESALE', 180.00)
     ],
     'meals_dining_out': [
-      ('McDonalds', 'MCDONALDS RESTAURANT', -12.50),
-      ('Starbucks', 'STARBUCKS COFFEE', -5.75),
-      ('Local Restaurant', 'DOWNTOWN BISTRO', -45.00),
-      ('Pizza Palace', 'PIZZA PALACE INC', -28.90)
+      ('McDonalds', 'MCDONALDS RESTAURANT', 12.50),
+      ('Starbucks', 'STARBUCKS COFFEE', 5.75),
+      ('Local Restaurant', 'DOWNTOWN BISTRO', 45.00),
+      ('Pizza Palace', 'PIZZA PALACE INC', 28.90)
     ],
     'meals_delivered_food': [
-      ('DoorDash', 'DOORDASH INC', -35.00),
-      ('Uber Eats', 'UBER EATS', -42.50),
-      ('Grubhub', 'GRUBHUB INC', -38.75)
+      ('DoorDash', 'DOORDASH INC', 35.00),
+      ('Uber Eats', 'UBER EATS', 42.50),
+      ('Grubhub', 'GRUBHUB INC', 38.75)
     ],
     'leisure_entertainment': [
-      ('Netflix', 'NETFLIX INC', -15.99),
-      ('Spotify', 'SPOTIFY USA', -9.99),
-      ('Movie Theater', 'AMC THEATERS', -25.00),
-      ('Concert Tickets', 'TICKETMASTER', -85.00)
+      ('Netflix', 'NETFLIX INC', 15.99),
+      ('Spotify', 'SPOTIFY USA', 9.99),
+      ('Movie Theater', 'AMC THEATERS', 25.00),
+      ('Concert Tickets', 'TICKETMASTER', 85.00)
     ],
     'leisure_travel': [
-      ('Airline Ticket', 'DELTA AIRLINES', -450.00),
-      ('Hotel Booking', 'MARRIOTT HOTELS', -180.00),
-      ('Car Rental', 'ENTERPRISE RENTAL', -95.00),
-      ('Airbnb', 'AIRBNB INC', -120.00)
+      ('Airline Ticket', 'DELTA AIRLINES', 450.00),
+      ('Hotel Booking', 'MARRIOTT HOTELS', 180.00),
+      ('Car Rental', 'ENTERPRISE RENTAL', 95.00),
+      ('Airbnb', 'AIRBNB INC', 120.00)
     ],
     'bills_connectivity': [
-      ('Internet Bill', 'COMCAST CABLE', -79.99),
-      ('Phone Bill', 'VERIZON WIRELESS', -85.00),
-      ('Cable TV', 'SPECTRUM CABLE', -65.00)
+      ('Internet Bill', 'COMCAST CABLE', 79.99),
+      ('Phone Bill', 'VERIZON WIRELESS', 85.00),
+      ('Cable TV', 'SPECTRUM CABLE', 65.00)
     ],
     'bills_insurance': [
-      ('Car Insurance', 'STATE FARM INS', -125.00),
-      ('Health Insurance', 'BLUE CROSS BLUE', -200.00),
-      ('Home Insurance', 'ALLSTATE INSURANCE', -85.00)
+      ('Car Insurance', 'STATE FARM INS', 125.00),
+      ('Health Insurance', 'BLUE CROSS BLUE', 200.00),
+      ('Home Insurance', 'ALLSTATE INSURANCE', 85.00)
     ],
     'bills_service_fees': [
-      ('Bank Fee', 'BANK OF AMERICA', -12.00),
-      ('ATM Fee', 'ATM TRANSACTION', -3.50),
-      ('Service Charge', 'MONTHLY SERVICE', -8.00)
+      ('Bank Fee', 'BANK OF AMERICA', 12.00),
+      ('ATM Fee', 'ATM TRANSACTION', 3.50),
+      ('Service Charge', 'MONTHLY SERVICE', 8.00)
     ],
     'shelter_home': [
-      ('Rent Payment', 'APARTMENT COMPLEX', -1200.00),
-      ('Mortgage Payment', 'MORTGAGE COMPANY', -1800.00),
-      ('Property Tax', 'COUNTY TREASURER', -300.00)
+      ('Rent Payment', 'APARTMENT COMPLEX', 1200.00),
+      ('Mortgage Payment', 'MORTGAGE COMPANY', 1800.00),
+      ('Property Tax', 'COUNTY TREASURER', 300.00)
     ],
     'shelter_utilities': [
-      ('Electric Bill', 'PGE ELECTRIC', -85.00),
-      ('Water Bill', 'CITY WATER DEPT', -45.00),
-      ('Gas Bill', 'NATURAL GAS CO', -65.00),
-      ('Trash Service', 'WASTE MANAGEMENT', -25.00)
+      ('Electric Bill', 'PGE ELECTRIC', 85.00),
+      ('Water Bill', 'CITY WATER DEPT', 45.00),
+      ('Gas Bill', 'NATURAL GAS CO', 65.00),
+      ('Trash Service', 'WASTE MANAGEMENT', 25.00)
     ],
     'shelter_upkeep': [
-      ('Home Depot', 'HOME DEPOT INC', -150.00),
-      ('Lowe\'s', 'LOWES HOME IMPROVEMENT', -95.00),
-      ('Plumber Service', 'ABC PLUMBING', -200.00),
-      ('HVAC Repair', 'COOL AIR SYSTEMS', -350.00)
+      ('Home Depot', 'HOME DEPOT INC', 150.00),
+      ('Lowe\'s', 'LOWES HOME IMPROVEMENT', 95.00),
+      ('Plumber Service', 'ABC PLUMBING', 200.00),
+      ('HVAC Repair', 'COOL AIR SYSTEMS', 350.00)
     ],
     'education_tuition': [
-      ('School Tuition', 'UNIVERSITY NAME', -1200.00),
-      ('Daycare Payment', 'KIDS CARE CENTER', -800.00),
-      ('Textbook Purchase', 'CAMPUS BOOKSTORE', -150.00)
+      ('School Tuition', 'UNIVERSITY NAME', 1200.00),
+      ('Daycare Payment', 'KIDS CARE CENTER', 800.00),
+      ('Textbook Purchase', 'CAMPUS BOOKSTORE', 150.00)
     ],
     'shopping_clothing': [
-      ('Target', 'TARGET STORE', -75.00),
-      ('Amazon', 'AMAZON.COM', -45.00),
-      ('Nike Store', 'NIKE INC', -120.00),
-      ('Macy\'s', 'MACYS DEPARTMENT', -85.00)
+      ('Target', 'TARGET STORE', 75.00),
+      ('Amazon', 'AMAZON.COM', 45.00),
+      ('Nike Store', 'NIKE INC', 120.00),
+      ('Macy\'s', 'MACYS DEPARTMENT', 85.00)
     ],
     'shopping_gadgets': [
-      ('Best Buy', 'BEST BUY STORE', -299.99),
-      ('Apple Store', 'APPLE INC', -1299.00),
-      ('Microsoft Store', 'MICROSOFT CORP', -199.00)
+      ('Best Buy', 'BEST BUY STORE', 299.99),
+      ('Apple Store', 'APPLE INC', 1299.00),
+      ('Microsoft Store', 'MICROSOFT CORP', 199.00)
     ],
     'transportation_public': [
-      ('Metro Card', 'METRO TRANSIT', -50.00),
-      ('Bus Pass', 'CITY BUS SYSTEM', -30.00),
-      ('Train Ticket', 'AMTRAK', -45.00)
+      ('Metro Card', 'METRO TRANSIT', 50.00),
+      ('Bus Pass', 'CITY BUS SYSTEM', 30.00),
+      ('Train Ticket', 'AMTRAK', 45.00)
     ],
     'transportation_car': [
-      ('Gas Station', 'SHELL OIL', -45.00),
-      ('Gas Station', 'CHEVRON', -52.00),
-      ('Car Wash', 'CAR WASH EXPRESS', -15.00),
-      ('Auto Parts', 'AUTOZONE INC', -85.00)
+      ('Gas Station', 'SHELL OIL', 45.00),
+      ('Gas Station', 'CHEVRON', 52.00),
+      ('Car Wash', 'CAR WASH EXPRESS', 15.00),
+      ('Auto Parts', 'AUTOZONE INC', 85.00)
     ],
     'health_medical_pharmacy': [
-      ('CVS Pharmacy', 'CVS PHARMACY', -35.00),
-      ('Doctor Visit', 'MEDICAL CENTER', -150.00),
-      ('Walgreens', 'WALGREENS STORE', -25.00),
-      ('Dental Office', 'SMILES DENTAL', -200.00)
+      ('CVS Pharmacy', 'CVS PHARMACY', 35.00),
+      ('Doctor Visit', 'MEDICAL CENTER', 150.00),
+      ('Walgreens', 'WALGREENS STORE', 25.00),
+      ('Dental Office', 'SMILES DENTAL', 200.00)
     ],
     'health_gym_wellness': [
-      ('Gym Membership', 'FITNESS CENTER', -49.99),
-      ('Personal Trainer', 'FITNESS TRAINER', -80.00),
-      ('Spa Service', 'RELAX SPA', -120.00)
+      ('Gym Membership', 'FITNESS CENTER', 49.99),
+      ('Personal Trainer', 'FITNESS TRAINER', 80.00),
+      ('Spa Service', 'RELAX SPA', 120.00)
     ],
     'donations_gifts': [
-      ('Charity Donation', 'RED CROSS', -50.00),
-      ('Birthday Gift', 'GIFT PURCHASE', -75.00),
-      ('Wedding Gift', 'WEDDING REGISTRY', -100.00)
+      ('Charity Donation', 'RED CROSS', 50.00),
+      ('Birthday Gift', 'GIFT PURCHASE', 75.00),
+      ('Wedding Gift', 'WEDDING REGISTRY', 100.00)
     ],
     'transfers': [
-      ('Transfer to Savings', 'ACCOUNT TRANSFER', -500.00),
-      ('Credit Card Payment', 'CREDIT CARD PAYMENT', -800.00),
-      ('Loan Payment', 'LOAN PAYMENT', -400.00)
+      ('Transfer to Savings', 'ACCOUNT TRANSFER', 500.00),
+      ('Credit Card Payment', 'CREDIT CARD PAYMENT', 800.00),
+      ('Loan Payment', 'LOAN PAYMENT', 400.00)
     ],
     'miscellaneous': [
-      ('ATM Withdrawal', 'ATM CASH WITHDRAWAL', -100.00),
-      ('Cash Back', 'CASH BACK PURCHASE', -20.00),
-      ('Refund', 'MERCHANT REFUND', 25.00)
+      ('ATM Withdrawal', 'ATM CASH WITHDRAWAL', 100.00),
+      ('Cash Back', 'CASH BACK PURCHASE', 20.00),
+      ('Refund', 'MERCHANT REFUND', -25.00)
     ]
   }
   
@@ -310,9 +310,21 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
   
   end_date = start_date + timedelta(days=months * 30)
   
+  # Separate income and expense categories
+  income_categories = ['income_salary', 'income_sidegig']
+  expense_categories = [cat for cat in transaction_templates.keys() if cat not in income_categories]
+  
+  # Generate a mix of transactions ensuring income is more frequent
+  # Approximately 50% income, 50% expenses, but income amounts are larger
+  income_weight = 0.5  # 50% chance of income transaction
+  
   for i in range(transaction_count):
-    # Select random category and transaction template
-    category = random.choice(list(transaction_templates.keys()))
+    # Select category with weighted probability for income
+    if random.random() < income_weight:
+      category = random.choice(income_categories)
+    else:
+      category = random.choice(expense_categories)
+    
     name, raw_name, amount = random.choice(transaction_templates[category])
     
     # Select random account
@@ -582,15 +594,15 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
   
   # Subscription name to transaction mapping
   subscription_transaction_map = {
-    'netflix': ('Netflix', -15.99, 'leisure_entertainment'),
-    'spotify': ('Spotify', -9.99, 'leisure_entertainment'),
-    'gym membership': ('Gym Membership', -49.99, 'health_gym_wellness'),
-    'amazon prime': ('Amazon Prime', -139.00, 'shopping_gadgets'),
-    'salary': ('Salary', 3500.00, 'income_salary'),
-    'side gig': ('Side Gig', 200.00, 'income_sidegig'),
-    'municipal water and sewer': ('Municipal Water And Sewer', -150.00, 'shelter_utilities'),
-    'mid-carolina electric cooperative': ('Mid-Carolina Electric Cooperative', -120.00, 'shelter_utilities'),
-    'phone bill': ('Phone Bill', -80.00, 'bills_connectivity')
+    'netflix': ('Netflix', 15.99, 'leisure_entertainment'),
+    'spotify': ('Spotify', 9.99, 'leisure_entertainment'),
+    'gym membership': ('Gym Membership', 49.99, 'health_gym_wellness'),
+    'amazon prime': ('Amazon Prime', 139.00, 'shopping_gadgets'),
+    'salary': ('Salary', -3500.00, 'income_salary'),
+    'side gig': ('Side Gig', -200.00, 'income_sidegig'),
+    'municipal water and sewer': ('Municipal Water And Sewer', 150.00, 'shelter_utilities'),
+    'mid-carolina electric cooperative': ('Mid-Carolina Electric Cooperative', 120.00, 'shelter_utilities'),
+    'phone bill': ('Phone Bill', 80.00, 'bills_connectivity')
   }
   
   # Determine date range - ensure we cover all calendar months from start_date to today

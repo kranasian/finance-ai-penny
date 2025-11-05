@@ -49,6 +49,10 @@ Write a function `process_input` that takes no arguments and print()s what to te
 - Compute for dates using `datetime` package.  Assume `import datetime` is already included.
 - When looking for `account_name` and `==`, look for other relevant variations to find more matches. Refer to <ACCOUNT_NAMES> for the list of account names.
 - When looking for `subscription_name` and `==`, look for other relevant variations to find more matches. Refer to <SUBSCRIPTION_NAMES> for the list of subscription names.
+- When creating goals that require an `account_id` (credit_X_amount, save_X_amount, credit_0, save_0), if multiple accounts of the same type exist and the user didn't specify which account or said "all", handle as follows:
+  - If user explicitly mentions "all" (e.g., "all my credit cards", "all credit cards"), create separate goals for each matching account.
+  - If multiple accounts exist but user didn't specify which one and didn't say "all", set `clarification_needed` in the goal dict to ask which account they want, and set `account_id` to None.
+  - If only one account of that type exists, use that account's `account_id`.
 - Today's date is {today_date}.
 
 <IMPLEMENTED_FUNCTIONS>
@@ -99,6 +103,26 @@ Write a function `process_input` that takes no arguments and print()s what to te
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
     - `utter_subscription_totals(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and `template` string, calculates total subscription transaction amounts (sum of `amount`) and returns a formatted string.
+    - `respond_to_app_inquiry(inquiry: str) -> str`
+        - accepts a string `inquiry` on how to categorize transactions, Penny's capabilities, or other app questions and returns a string response.
+    - `create_goal(goals: list[dict]) -> tuple[str, dict]`
+        - creates spending budgets or goals. Accepts a list of goal dictionaries.
+        - Each goal dict should contain:
+          - `type`: "category", "credit_X_amount", "save_X_amount", "credit_0", or "save_0"
+          - `granularity`: "weekly", "monthly", or "yearly"
+          - `title`: Goal title/name
+          - `amount`: Target dollar amount (>= 0)
+          - `start_date`: Start date in YYYY-MM-DD format
+          - `end_date`: End date in YYYY-MM-DD format (defaults to "2099-12-31")
+          - `description`: Goal description string
+          - `category`: Raw category text (for type="category")
+          - `match_category`: Official category name (for type="category")
+          - `account_id`: Account ID integer (for credit_X_amount/save_X_amount/credit_0/save_0)
+          - `percent`: Target percent 0-100 (only valid for credit_X_amount/save_X_amount)
+          - `match_caveats`: Matching constraints explanation
+          - `clarification_needed`: Clarification prompt if needed
+        - Goal types: "category" (requires match_category), "credit_X_amount"/"save_X_amount" (requires account_id), "credit_0"/"save_0" (requires account_id).
+        - Returns tuple: (str response message with caveats, success message, and goal descriptions, dict metadata with goals list).
 </IMPLEMENTED_FUNCTIONS>
 
 <IMPLEMENTED_DATE_FUNCTIONS>
@@ -112,6 +136,7 @@ Write a function `process_input` that takes no arguments and print()s what to te
     - `get_start_of_week(date: datetime) -> datetime`: Returns the start of the week for a given date.
     - `get_end_of_week(date: datetime) -> datetime`: Returns the end of the week for a given date.
     - `get_after_periods(date: datetime, count: int, granularity: str) -> datetime`: Adds periods ("daily" | "weekly" | "monthly" | "yearly") and returns date.
+    - `get_date_string(date: datetime) -> str`: Returns date in "YYYY-MM-DD" format.
 </IMPLEMENTED_DATE_FUNCTIONS>
 
 <ACCOUNT_TYPE>
@@ -462,6 +487,50 @@ def process_input():
     return True, metadata
 ```
 
+input: User: how much am i expected to save next week?
+output: ```python
+def process_input():
+    metadata = {}
+    
+    # Get next week dates
+    start_of_next_week = get_after_periods(get_today_date(), 1, "weekly")
+    
+    # Retrieve income and spending forecasts for next week
+    income_df = retrieve_income_forecasts('weekly')
+    spending_df = retrieve_spending_forecasts('weekly')
+    
+    if income_df.empty and spending_df.empty:
+      print("You have no forecasts for next week.")
+      return True, metadata
+    
+    # Filter for next week (sunday_date matches start of next week)
+    if not income_df.empty:
+      income_df = income_df[income_df['sunday_date'] == start_of_next_week]
+      for_print, metadata["income"] = forecast_dates_and_amount(income_df, 'On {date}, you are expected to earn ${amount}.')
+    if not spending_df.empty:
+      spending_df = spending_df[spending_df['sunday_date'] == start_of_next_week]
+      for_print, metadata["spending"] = forecast_dates_and_amount(spending_df, 'On {date}, you are expected to spend ${amount}.')
+    if income_df.empty and spending_df.empty:
+      print("You have no forecasts for next week.")
+      return True, metadata
+    
+    # Calculate totals
+    total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
+    total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
+    
+    # Calculate expected savings
+    expected_savings = total_income - total_spending
+    
+    if expected_savings > 0:
+      print(f"You are expected to save ${expected_savings:,.2f} next week. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+    elif expected_savings < 0:
+      print(f"You are expected to spend ${abs(expected_savings):,.2f} more than you earn next week. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+    else:
+      print(f"You are expected to break even next week. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+    
+    return True, metadata
+```
+
 input: User: how much am i expected to save next month?
 output: ```python
 def process_input():
@@ -603,7 +672,7 @@ def process_input():
       print("You have no subscriptions.")
       return True, metadata
     
-    # Filter for streaming subscriptions: use subscription_name OR category
+    # Filter for streaming subscriptions: use subscription_name AND category
     # Populate using relevant names from SUBSCRIPTION_NAMES
     streaming_names = []
     streaming_categories = ['leisure_entertainment']
@@ -634,6 +703,156 @@ def process_input():
     print(for_print)
     
     print(utter_subscription_totals(streaming_df, 'Total streaming subscription spending last month: ${total_amount:,.2f}'))
+    
+    return True, metadata
+```
+
+input: User: create a budget for $60 gas every week for the next 6 months
+output: ```python
+def process_input():
+    metadata = {"goals": []}
+    
+    # Get start of week today
+    start_date = get_start_of_week(get_today_date())
+    
+    # Calculate end date: 6 months from start, then get Saturday of that week
+    end_date = get_after_periods(start_date, 6, "monthly")
+    end_date = get_end_of_week(end_date)
+    
+    goals = [{
+        "type": "category",
+        "granularity": "weekly",
+        "title": "Weekly Gas ⛽",
+        "amount": 60.0,
+        "start_date": get_date_string(start_date),
+        "end_date": get_date_string(end_date),
+        "category": "gas",
+        "match_category": "transportation_car",
+        "match_caveats": "Matching gas to overall car expenses.",
+        "clarification_needed": None,
+        "description": "Created $60 Weekly Gas ⛽ from 2025-01-05 to 2025-07-05."
+    }]
+    
+    response, goal_metadata = create_goal(goals)
+    
+    print(response)
+    
+    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
+        metadata["goals"] = goal_metadata["goals"]
+    
+    return True, metadata
+```
+
+input: User: Pay $200 weekly on my BoFa credit card
+output: ```python
+def process_input():
+    metadata = {"goals": []}
+    
+    # Retrieve all accounts to check for credit cards
+    accounts_df = retrieve_accounts()
+    
+    # Filter for credit cards
+    credit_cards_df = accounts_df[accounts_df['account_type'] == 'credit_card']
+    
+    if credit_cards_df.empty:
+        print("You don't have any credit cards.")
+        return True, metadata
+    
+    # Populate using relevant names from ACCOUNT_NAMES
+    bofa_names = []
+
+    bofa_cards_df = credit_cards_df[
+        credit_cards_df['account_name'].str.lower().isin(bofa_names)
+    ]
+    
+    if bofa_cards_df.empty:
+        print("You don't have any BoFa credit cards.")
+        return True, metadata
+    
+    # Multiple Amex credit cards exist but user didn't specify which one
+    # Check if user mentioned "all" in their request - if not, ask for clarification
+    if len(bofa_cards_df) > 1:
+        card_names = bofa_cards_df['account_name'].tolist()
+        goals = [{
+            "type": "credit_X_amount",
+            "granularity": "weekly",
+            "title": "Weekly Credit Card Payment",
+            "amount": 200.0,
+            "start_date": get_date_string(get_start_of_week(get_today_date())),
+            "end_date": "2099-12-31",
+            "account_id": None,
+            "clarification_needed": f"You have multiple BoFa credit cards: {', '.join(card_names)}. Which BoFa credit card would you like to pay $200 weekly on?",
+            "description": None
+        }]
+        
+        response, goal_metadata = create_goal(goals)
+        print(response)
+        return True, metadata
+    
+    # Single BoFa credit card found
+    card = bofa_cards_df.iloc[0]
+    start_date = get_start_of_week(get_today_date())
+    title = f"Weekly Payment - {card['account_name']}"
+    amount = 200.0
+    
+    goals = [{
+        "type": "credit_X_amount",
+        "granularity": "weekly",
+        "title": title,
+        "amount": amount,
+        "start_date": get_date_string(start_date),
+        "end_date": "2099-12-31",
+        "account_id": int(card['account_id']),
+        "description": f"Created ${amount:.0f} {title} from {get_date_string(start_date)} to 2099-12-31."
+    }]
+    
+    response, goal_metadata = create_goal(goals)
+    print(response)
+    
+    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
+        metadata["goals"] = goal_metadata["goals"]
+    
+    return True, metadata
+```
+
+input: User: Pay $200 weekly on all my credit cards
+output: ```python
+def process_input():
+    metadata = {"goals": []}
+    
+    # Retrieve all accounts to find credit cards
+    accounts_df = retrieve_accounts()
+    
+    # Filter for credit cards
+    credit_cards_df = accounts_df[accounts_df['account_type'] == 'credit_card']
+    
+    if credit_cards_df.empty:
+        print("You don't have any credit cards.")
+        return True, metadata
+    
+    # Create goals for all credit cards
+    goals = []
+    start_date = get_start_of_week(get_today_date())
+    
+    for _, card in credit_cards_df.iterrows():
+        title = f"Weekly Payment - {card['account_name']}"
+        amount = 200.0
+        goals.append({
+            "type": "credit_X_amount",
+            "granularity": "weekly",
+            "title": title,
+            "amount": amount,
+            "start_date": get_date_string(start_date),
+            "end_date": "2099-12-31",
+            "account_id": int(card['account_id']),
+            "description": f"Created ${amount:.0f} {title} from {get_date_string(start_date)} to 2099-12-31."
+        })
+    
+    response, goal_metadata = create_goal(goals)
+    print(response)
+    
+    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
+        metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
 ```
