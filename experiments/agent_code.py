@@ -16,8 +16,8 @@ if parent_dir not in sys.path:
 
 from database import Database
 from user_seeder import seed_users
-from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
-from tools.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
+from penny.tool_funcs.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
+from penny.tool_funcs.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
 user_id = 1
 
 def retrieve_accounts() -> pd.DataFrame:

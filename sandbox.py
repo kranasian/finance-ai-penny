@@ -12,15 +12,15 @@ import dateutil
 import pandas as pd
 import traceback
 import json
-from tools.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
-from tools.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
-from tools.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
-from tools.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
-from tools.forecast_utils import forecast_dates_and_amount, utter_forecasts
-from tools.compare_spending import compare_spending
-from tools.respond_to_app_inquiry import respond_to_app_inquiry
-from tools.create_goal import create_goal
-from tools.date_utils import (
+from penny.tool_funcs.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
+from penny.tool_funcs.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
+from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
+from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
+from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_forecasts
+from penny.tool_funcs.compare_spending import compare_spending
+from penny.tool_funcs.respond_to_app_inquiry import respond_to_app_inquiry
+from penny.tool_funcs.create_goal import create_goal
+from penny.tool_funcs.date_utils import (
     get_today_date,
     get_date,
     get_start_of_month,
