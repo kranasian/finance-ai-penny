@@ -182,9 +182,9 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       date_for_metadata = str(date)
     
     metadata.append({
-      "transaction_id": transaction_id,
+      "transaction_id": int(transaction_id),
       "transaction_name": transaction_name,
-      "amount": amount,
+      "amount": float(amount),
       "date": date_for_metadata,
       "category": category
     })
