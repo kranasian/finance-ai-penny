@@ -74,6 +74,10 @@ Write a function `process_input` that takes no arguments and print()s what to te
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
     - `utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str) -> str`
         - takes filtered `df`, `is_spending` flag (True for spending categories, False for income), and `template` string, calculates total transaction amounts and returns a formatted string.
+    - `get_income_msg(amount: float) -> str`
+        - formats income amount with inflow/outflow label (negative = inflow/income, positive = outflow/refunds).
+    - `get_spending_msg(amount: float) -> str`
+        - formats spending/expenses amount with inflow/outflow label (negative = outflow/expenses, positive = inflow/refunds).
     - `compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]`
         - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
     - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
@@ -468,21 +472,26 @@ def process_input():
     # Calculate income (filter by income categories)
     income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
     income_df = transactions_df[transactions_df['category'].isin(income_categories)]
-    total_income = abs(income_df['amount'].sum())
+    total_income = income_df['amount'].sum()
     
     # Calculate expenses (all non-income transactions, use absolute value)
     expenses_df = transactions_df[~transactions_df['category'].isin(income_categories)]
-    total_expenses = abs(expenses_df['amount'].sum())
+    total_expenses = expenses_df['amount'].sum()
     
     # Calculate savings
     savings = total_income - total_expenses
     
-    if savings > 0:
-      print(f"You saved ${savings:,.2f} last month. Your income was ${total_income:,.2f} and your expenses were ${total_expenses:,.2f}.")
-    elif savings < 0:
-      print(f"You spent ${abs(savings):,.2f} more than you earned last month. Your income was ${total_income:,.2f} and your expenses were ${total_expenses:,.2f}.")
+    # Get formatted income and spending messages
+    income_msg = get_income_msg(total_income)
+    expenses_msg = get_spending_msg(total_expenses)
+    
+    # Format and print savings message
+    if savings < 0:
+      print(f"You saved ${abs(savings):,.2f} last month. Your income was {income_msg} and your expenses were {expenses_msg}.")
+    elif savings > 0:
+      print(f"You spent ${savings:,.2f} more than you earned last month. Your income was {income_msg} and your expenses were {expenses_msg}.")
     else:
-      print(f"You broke even last month. Your income was ${total_income:,.2f} and your expenses were ${total_expenses:,.2f}.")
+      print(f"You broke even last month. Your income was {income_msg} and your expenses were {expenses_msg}.")
     
     return True, metadata
 ```

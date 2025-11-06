@@ -337,3 +337,35 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
   
   return result
 
+
+def get_income_msg(amount: float) -> str:
+  """
+  Format income amount with inflow/outflow label.
+  
+  Args:
+    amount: Sum of income amounts (negative = inflow/income, positive = outflow/refunds)
+  
+  Returns:
+    Formatted string like "$100.00" or "$50.00 (outflow)"
+  """
+  if amount < 0:
+    return f"${abs(amount):,.2f}"
+  else:
+    return f"${amount:,.2f} (outflow)"
+
+
+def get_spending_msg(amount: float) -> str:
+  """
+  Format spending/expenses amount with inflow/outflow label.
+  
+  Args:
+    amount: Sum of expense amounts (negative = outflow/expenses, positive = inflow/refunds)
+  
+  Returns:
+    Formatted string like "$100.00" or "$50.00 (inflow)"
+  """
+  if amount < 0:
+    return f"${abs(amount):,.2f}"
+  else:
+    return f"${amount:,.2f} (inflow)"
+

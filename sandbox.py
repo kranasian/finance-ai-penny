@@ -13,7 +13,7 @@ import pandas as pd
 import traceback
 import json
 from penny.tool_funcs.retrieve_accounts import retrieve_accounts_function_code_gen, account_names_and_balances, utter_account_totals
-from penny.tool_funcs.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
+from penny.tool_funcs.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals, get_income_msg, get_spending_msg
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_forecasts
@@ -295,6 +295,12 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_transaction_totals_wrapper(df: pd.DataFrame, is_spending: bool, template: str):
     return utter_transaction_totals(df, is_spending, template)
   
+  def get_income_msg_wrapper(amount: float):
+    return get_income_msg(amount)
+  
+  def get_spending_msg_wrapper(amount: float):
+    return get_spending_msg(amount)
+  
   def utter_forecasts_wrapper(df: pd.DataFrame, template: str):
     return utter_forecasts(df, template)
   
@@ -344,6 +350,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "utter_subscription_totals": utter_subscription_totals_wrapper,
     "transaction_names_and_amounts": transaction_names_and_amounts_wrapper,
     "utter_transaction_totals": utter_transaction_totals_wrapper,
+    "get_income_msg": get_income_msg_wrapper,
+    "get_spending_msg": get_spending_msg_wrapper,
     "utter_forecasts": utter_forecasts_wrapper,
     "forecast_dates_and_amount": forecast_dates_and_amount_wrapper,
     "compare_spending": compare_spending_wrapper,
