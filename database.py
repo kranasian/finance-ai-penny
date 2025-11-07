@@ -41,7 +41,7 @@ class Database:
     # Create transactions table
     cursor.execute('''
       CREATE TABLE IF NOT EXISTS transactions (
-        transaction_id TEXT PRIMARY KEY UNIQUE,
+        transaction_id INTEGER PRIMARY KEY,
         user_id INTEGER NOT NULL,
         account_id INTEGER NOT NULL,
         date DATE NOT NULL,
@@ -264,8 +264,8 @@ class Database:
     return accounts
 
   # Transaction management methods
-  def create_transaction(self, user_id: int, account_id: int, transaction_id: str,
-                        date: str, transaction_name: str, amount: float, category: str) -> str:
+  def create_transaction(self, user_id: int, account_id: int, transaction_id: int,
+                        date: str, transaction_name: str, amount: float, category: str) -> int:
     """Create a new transaction and return transaction ID"""
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
@@ -279,7 +279,7 @@ class Database:
     
     return transaction_id
 
-  def get_transaction(self, transaction_id: str) -> Optional[Dict]:
+  def get_transaction(self, transaction_id: int) -> Optional[Dict]:
     """Get transaction by ID"""
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
@@ -610,3 +610,4 @@ class Database:
       })
     
     return subscriptions
+
