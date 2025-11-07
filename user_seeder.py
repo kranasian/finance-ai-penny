@@ -1,17 +1,26 @@
 import sqlite3
 import os
 import random
-import uuid
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from database import Database
 
+# Global transaction ID counters to ensure uniqueness across all users
+_transaction_id_counter = 10000
+_subscription_transaction_id_counter = 20000
+
 def reset_database(db_path: str = "chatbot.db"):
   """Reset the database by dropping and recreating all tables"""
+  global _transaction_id_counter, _subscription_transaction_id_counter
+  
   # Remove existing database file
   if os.path.exists(db_path):
     os.remove(db_path)
     print(f"Removed existing database: {db_path}")
+  
+  # Reset transaction ID counters
+  _transaction_id_counter = 10000
+  _subscription_transaction_id_counter = 20000
   
   # Initialize new database
   db = Database(db_path)
@@ -173,6 +182,7 @@ def create_sample_accounts(user_id: int, account_count: int) -> list:
 
 def create_sample_transactions(user_id: int, account_ids: list, transaction_count: int, months: int, start_date: datetime = None) -> list:
   """Create sample transactions for a user across their accounts"""
+  global _transaction_id_counter
   db = Database()
   transaction_ids = []
   
@@ -338,8 +348,9 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
     if transaction_date > end_date:
       transaction_date = end_date
     
-    # Generate unique transaction ID
-    transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
+    # Generate unique transaction ID (integer)
+    transaction_id = _transaction_id_counter
+    _transaction_id_counter += 1
     
     # Create merged transaction name
     transaction_name = f"{name} [{raw_name}]"
@@ -579,11 +590,11 @@ def create_sample_subscriptions(user_id: int) -> int:
 
 def create_subscription_transactions(user_id: int, account_ids: list, months: int = 6, start_date: datetime = None) -> int:
   """Create subscription transactions that match subscription names"""
+  global _subscription_transaction_id_counter
   from database import Database
   from datetime import datetime, timedelta
   from dateutil.relativedelta import relativedelta
   import random
-  import uuid
   
   db = Database()
   
@@ -652,8 +663,9 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
           # Select random account
           account_id = random.choice(account_ids)
           
-          # Generate unique transaction ID
-          transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
+          # Generate unique transaction ID (integer)
+          transaction_id = _subscription_transaction_id_counter
+          _subscription_transaction_id_counter += 1
           
           # Create transaction with exact subscription name (lowercase) so it matches
           db.create_transaction(
@@ -677,8 +689,9 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
         # Select random account
         account_id = random.choice(account_ids)
         
-        # Generate unique transaction ID
-        transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
+        # Generate unique transaction ID (integer)
+        transaction_id = _subscription_transaction_id_counter
+        _subscription_transaction_id_counter += 1
         
         # Create transaction
         db.create_transaction(
@@ -705,7 +718,9 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
         
         if transaction_date <= end_date and transaction_date >= start_date:
           account_id = random.choice(account_ids)
-          transaction_id = f"TXN_{uuid.uuid4().hex[:8].upper()}"
+          # Generate unique transaction ID (integer)
+          transaction_id = _subscription_transaction_id_counter
+          _subscription_transaction_id_counter += 1
           
           db.create_transaction(
             user_id=user_id,

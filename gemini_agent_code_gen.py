@@ -392,7 +392,7 @@ def process_input():
 input: User: check my checking account if i can afford paying my dining out last month
 output: ```python
 def process_input():
-    metadata = {"accounts": [], "transactions": []}
+    metadata = {"accounts": []}
     
     # Get checking account balance
     accounts_df = retrieve_accounts()
@@ -432,10 +432,7 @@ def process_input():
       print("You have no dining out transactions from last month.")
       return True, metadata
     
-    for_print, metadata["transactions"] = transaction_names_and_amounts(dining_out_df, 'On {date}, you spent ${amount} on "{transaction_name}".')
-    
-    # Calculate total dining out spending (use absolute value since spending is negative)
-    total_dining_out = abs(dining_out_df['amount'].sum())
+    total_dining_out = dining_out_df['amount'].sum()
     
     # Compare and determine affordability
     if total_available >= total_dining_out:
@@ -515,10 +512,8 @@ def process_input():
     # Filter for next week (sunday_date matches start of next week)
     if not income_df.empty:
       income_df = income_df[income_df['sunday_date'] == start_of_next_week]
-      for_print, metadata["income"] = forecast_dates_and_amount(income_df, 'On {date}, you are expected to earn ${amount}.')
     if not spending_df.empty:
       spending_df = spending_df[spending_df['sunday_date'] == start_of_next_week]
-      for_print, metadata["spending"] = forecast_dates_and_amount(spending_df, 'On {date}, you are expected to spend ${amount}.')
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next week.")
       return True, metadata
@@ -530,12 +525,17 @@ def process_input():
     # Calculate expected savings
     expected_savings = total_income - total_spending
     
+    # Get formatted income and spending messages
+    income_msg = get_income_msg(total_income)
+    expenses_msg = get_spending_msg(total_spending)
+    
+    # Format and print expected savings message
     if expected_savings > 0:
-      print(f"You are expected to save ${expected_savings:,.2f} next week. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+      print(f"You are expected to save ${expected_savings:,.2f} next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     elif expected_savings < 0:
-      print(f"You are expected to spend ${abs(expected_savings):,.2f} more than you earn next week. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+      print(f"You are expected to spend ${abs(expected_savings):,.2f} more than you earn next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     else:
-      print(f"You are expected to break even next week. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+      print(f"You are expected to break even next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     
     return True, metadata
 ```
@@ -561,10 +561,8 @@ def process_input():
     # Filter for next month
     if not income_df.empty:
       income_df = income_df[income_df['month_date'] == next_month_date]
-      for_print, metadata["income"] = forecast_dates_and_amount(income_df, 'On {date}, you are expected to earn ${amount}.')
     if not spending_df.empty:
       spending_df = spending_df[spending_df['month_date'] == next_month_date]
-      for_print, metadata["spending"] = forecast_dates_and_amount(spending_df, 'On {date}, you are expected to spend ${amount}.')
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next month.")
       return True, metadata
@@ -576,12 +574,17 @@ def process_input():
     # Calculate expected savings
     expected_savings = total_income - total_spending
     
+    # Get formatted income and spending messages
+    income_msg = get_income_msg(total_income)
+    expenses_msg = get_spending_msg(total_spending)
+    
+    # Format and print expected savings message
     if expected_savings > 0:
-      print(f"You are expected to save ${expected_savings:,.2f} next month. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+      print(f"You are expected to save ${expected_savings:,.2f} next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     elif expected_savings < 0:
-      print(f"You are expected to spend ${abs(expected_savings):,.2f} more than you earn next month. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+      print(f"You are expected to spend ${abs(expected_savings):,.2f} more than you earn next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     else:
-      print(f"You are expected to break even next month. Your forecasted income is ${total_income:,.2f} and your forecasted spending is ${total_spending:,.2f}.")
+      print(f"You are expected to break even next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     
     return True, metadata
 ```
@@ -589,7 +592,7 @@ def process_input():
 input: User: check my checking account if i can afford paying my rent next month
 output: ```python
 def process_input():
-    metadata = {"accounts": [], "transactions": []}
+    metadata = {}
     
     # Get checking account balance
     accounts_df = retrieve_accounts()
@@ -607,8 +610,6 @@ def process_input():
     
     # Get total available balance from checking accounts
     total_available = checking_df['balance_available'].sum()
-    
-    for_print, metadata["accounts"] = account_names_and_balances(checking_df, 'Your {account_name} ({account_type}) has ${balance_available:,.2f} available.')
     
     # Get next month date
     first_day_current_month = get_start_of_month(get_today_date())
@@ -637,8 +638,6 @@ def process_input():
     
     # Calculate total forecasted rent
     total_rent = rent_df['forecasted_amount'].sum()
-    
-    for_print, metadata["forecasts"] = forecast_dates_and_amount(rent_df, 'On {month_date}, you are expected to spend ${forecasted_amount:,.2f} on {category}.')
     
     # Compare and determine affordability
     if total_available >= total_rent:

@@ -4,6 +4,9 @@ import pandas as pd
 import re
 from sandbox_logging import log
 
+# Maximum number of transactions to return in transaction_names_and_amounts
+MAX_TRANSACTIONS = 30
+
 
 def retrieve_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   """Function to retrieve transactions from the database for a specific user"""
@@ -20,7 +23,14 @@ def retrieve_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
 
 
 def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
-  """Generate a formatted string describing transaction names and amounts using the provided template and return metadata"""
+  """Generate a formatted string describing transaction names and amounts using the provided template and return metadata.
+  
+  Returns:
+    tuple[str, list]: (formatted string, metadata list)
+      - formatted string: Newline-separated transaction descriptions (max MAX_TRANSACTIONS). 
+        If there are more transactions, appends a message like "n more transactions."
+      - metadata list: List of transaction metadata dictionaries (all transactions included)
+  """
   log(f"**Transaction Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -35,10 +45,14 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     log(error_msg)
     raise ValueError(error_msg)
   
+  # Process all transactions for metadata, but limit utterances to MAX_TRANSACTIONS
+  total_count = len(df)
+  has_more = total_count > MAX_TRANSACTIONS
+  
   utterances = []
   metadata = []
   
-  log(f"**Listing Individual Transactions**: Processing {len(df)} items.")
+  log(f"**Listing Individual Transactions**: Processing all {total_count} items for metadata, limiting utterances to {MAX_TRANSACTIONS}.")
   for i in range(len(df)):
     transaction = df.iloc[i]
     transaction_name = transaction.get('transaction_name', 'Unknown Transaction')
@@ -50,29 +64,64 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     amount_log = f"${abs(amount):,.2f}" if amount else "Unknown"
     log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`")
     
-    # Determine direction and preposition based on amount sign
-    # Negative amount = spending/outflow = "spent" / "on"
-    # Positive amount = receiving/inflow = "received" / "from"
-    if amount < 0:
-      direction = "spent"
-      preposition = "on"
+    # Determine direction and preposition based on amount sign and category
+    # For income categories: negative = earned (inflow), positive = refunded (outflow)
+    # For expense categories: negative = spent (outflow), positive = received/refunded (inflow)
+    income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
+    is_income = category in income_categories
+    
+    # Check if template already contains common verbs to avoid duplication
+    template_lower = template.lower()
+    has_received = 'received' in template_lower
+    has_earned = 'earned' in template_lower
+    has_spent = 'spent' in template_lower
+    
+    # Replace verbs in template if needed to avoid duplication
+    temp_template = template
+    
+    if is_income:
+      if amount < 0:
+        # For income, use "earned" instead of "received"
+        if has_received:
+          # Replace "received" with "earned" in template (case-insensitive)
+          temp_template = re.sub(r'\breceived\b', 'earned', temp_template, flags=re.IGNORECASE)
+          direction = ""  # Don't use {direction} since we replaced the verb
+        else:
+          direction = "earned"
+        preposition = "from"
+      else:
+        if has_received:
+          temp_template = re.sub(r'\breceived\b', 'refunded', temp_template, flags=re.IGNORECASE)
+          direction = ""
+        else:
+          direction = "refunded"
+        preposition = "from"
     else:
-      direction = "received"
-      preposition = "from"
+      if amount < 0:
+        if has_spent:
+          direction = ""  # Template already has "spent"
+        else:
+          direction = "spent"
+        preposition = "on"
+      else:
+        if has_received:
+          direction = ""  # Template already has "received"
+        else:
+          direction = "received"
+        preposition = "from"
     
     # Check if template has format specifiers for amount (like {amount:,.2f})
     amount_format_pattern = r'\{amount:([^}]+)\}'
-    has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
+    has_amount_format_specifier = bool(re.search(amount_format_pattern, temp_template))
     
     # Check if template has dollar sign - if it does, format amount without $, otherwise with $
-    has_dollar_sign = '$' in template
+    has_dollar_sign = '$' in temp_template
     
     # Check if template has date format specifiers (like {date:%%Y-%%m-%%d})
     # If so, replace them with simple {date} and format the date accordingly
     date_format_pattern = r'\{date:([^}]+)\}'
-    date_format_match = re.search(date_format_pattern, template)
+    date_format_match = re.search(date_format_pattern, temp_template)
     date_str = date
-    temp_template = template
     
     if date_format_match:
       # Extract the format specifier (e.g., "%%Y-%%m-%%d")
@@ -80,7 +129,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       # Replace %% with % for strftime format
       strftime_format = format_spec.replace('%%', '%')
       # Replace the format specifier in template with simple {date}
-      temp_template = re.sub(date_format_pattern, '{date}', template)
+      temp_template = re.sub(date_format_pattern, '{date}', temp_template)
       
       # Format the date if it's a datetime object, otherwise use as-is
       if hasattr(date, 'strftime'):
@@ -170,7 +219,6 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       else:
         # No format specifiers, so the error is unexpected - re-raise
         raise
-    utterances.append(utterance)
     
     # Convert date to string for JSON serialization
     date_for_metadata = date
@@ -181,18 +229,26 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       # Convert to string if not already
       date_for_metadata = str(date)
     
+    # Always add to metadata (process all transactions)
     metadata.append({
       "transaction_id": int(transaction_id),
-      "transaction_name": transaction_name,
-      "amount": float(amount),
-      "date": date_for_metadata,
-      "category": category
+      "transaction_name": transaction_name
     })
+    
+    # Only add to utterances if under the limit
+    if len(utterances) < MAX_TRANSACTIONS:
+      utterances.append(utterance)
   
-  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries.")
+  # Add message about remaining transactions if there are more
+  utterance_text = "\n".join(utterances)
+  if has_more:
+    remaining_count = total_count - MAX_TRANSACTIONS
+    utterance_text += f"\n{remaining_count} more transaction{'s' if remaining_count != 1 else ''}."
+  
+  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries. Has more: {has_more}")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
   log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
-  return "\n".join(utterances), metadata
+  return utterance_text, metadata
 
 
 def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str) -> str:

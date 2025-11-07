@@ -215,11 +215,7 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     
     metadata.append({
       "transaction_id": transaction_id,
-      "transaction_name": transaction_name,
-      "subscription_name": subscription_name,
-      "amount": amount,
-      "date": date_for_metadata,
-      "category": category
+      "transaction_name": transaction_name
     })
   
   log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries.")
