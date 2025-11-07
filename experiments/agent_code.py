@@ -629,6 +629,27 @@ def process_input_pay_200_weekly_on_all_my_credit_cards():
         metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
+  
+def process_input_whats_the_total_across_account_types():
+    df = retrieve_accounts()
+    metadata = {"accounts": []}
+    
+    if df.empty:
+      print("You have no accounts.")
+    else:
+      print("Here are all your account balances:")
+      for_print, metadata["accounts"] = account_names_and_balances(df, "Account \"{account_name}\" ({account_type}) has {balance_current} left with {balance_available} available now.")
+      print(for_print)
+      
+      # Calculate totals for different account types
+      account_types = df['account_type'].unique()
+      
+      for acc_type in account_types:
+        type_df = df[df['account_type'] == acc_type]
+        if not type_df.empty:
+          print(utter_account_totals(type_df, f"Total for {acc_type.replace('_', ' ')} accounts: ${{balance_current:,.2f}} left."))
+    
+    return True, metadata
 
 def main():
   """Main function that demonstrates the reminder tools"""
@@ -721,6 +742,11 @@ def main():
   
   print("\n💳 Testing pay all credit cards weekly...")
   success, metadata = process_input_pay_200_weekly_on_all_my_credit_cards()
+  print(f"Success: {success}")
+  print(f"Metadata: {metadata}")
+  
+  print("\n💰 Testing process input 2...")
+  success, metadata = process_input_2()
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
   

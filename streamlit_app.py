@@ -108,9 +108,10 @@ def process_prompt(prompt):
     "request_time": time.time()
   })
 
-def render_prompt_section(title: str, prompts: list, key_prefix: str):
+def render_prompt_section(prompts: list, key_prefix: str, title: str = None):
   """Render a section of example prompts with buttons"""
-  st.markdown(f"**{title}**")
+  if title:
+    st.markdown(f"**{title}**")
   cols = st.columns(4)
   for idx, prompt in enumerate(prompts):
     col = cols[idx % 4]
@@ -120,136 +121,134 @@ def render_prompt_section(title: str, prompts: list, key_prefix: str):
         st.rerun()
 
 def render_example_prompts():
-  """Render example prompts organized by type"""
+  """Render example prompts organized by type in tabs"""
   st.markdown("##### 💡 Example Prompts")
   
-  # Account balance questions
-  render_prompt_section(
-    "📊 Account Balance Questions",
-    [
-      "What is my account balance?",
-      "Show me all my account balances",
-      "What are my current balances?",
-      "Check my account balances",
-      "Do I have accounts with current balance over 5k?",
-      "How much is my credit limit?",
-      "What is the balance of my Amex accounts?",
-      "What is the balance of my BoF and Citibank accounts?",
-    ],
-    "account_balance"
-  )
+  # Create tabs for each category
+  tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    "📊 Account Balance",
+    "💳 Transactions",
+    "📈 Comparison",
+    "🔮 Forecast",
+    "🔗 Subscriptions",
+    "❓ App Inquiry",
+    "🎯 Create Goal",
+    "🔀 Combination"
+  ])
   
-  st.markdown("---")
+  with tab1:
+    # Account balance questions
+    render_prompt_section(
+      [
+        "What is my account balance?",
+        "Show me all my account balances",
+        "What are my current balances?",
+        "Check my account balances",
+        "Do I have accounts with current balance over 5k?",
+        "How much is my credit limit?",
+        "What is the balance of my Amex accounts?",
+        "What is the balance of my BoF and Citibank accounts?",
+      ],
+      "account_balance"
+    )
   
-  # Transaction questions
-  render_prompt_section(
-    "💳 Transaction Questions",
-    [
-      "What are my recent transactions?",
-      "What are my recent Amex transactions?",
-      "Do I have dining out transactions with amount over $40 last month?",
-      "List my dining out transactions last month.",
-      "List income past 2 weeks.",
-      "What was my total side gig income last quarter?"
-    ],
-    "transaction"
-  )
+  with tab2:
+    # Transaction questions
+    render_prompt_section(
+      [
+        "What are my recent transactions?",
+        "What are my recent Amex transactions?",
+        "Do I have dining out transactions with amount over $40 last month?",
+        "List my dining out transactions last month.",
+        "List income past 2 weeks.",
+        "What was my total side gig income last quarter?"
+      ],
+      "transaction"
+    )
   
-  st.markdown("---")
+  with tab3:
+    # Comparison questions
+    render_prompt_section(
+      [
+        "Compare my dining out and groceries spending last month.",
+        "Compare my dining out last sept 2025 vs oct 2025.",
+        "Compare my spending on entertainment and travel to my bills and medicines last month.",
+        "Compare how much I earned last month to September 2025.",
+      ],
+      "comparison"
+    )
   
-  # Comparison questions
-  render_prompt_section(
-    "📈 Comparison Questions",
-    [
-      "Compare my dining out and groceries spending last month.",
-      "Compare my dining out last sept 2025 vs oct 2025.",
-      "Compare my spending on entertainment and travel to my bills and medicines last month.",
-      "Compare how much I earned last month to September 2025.",
-    ],
-    "comparison"
-  )
+  with tab4:
+    # Forecast questions
+    render_prompt_section(
+      [
+        "How much am I expected to save in the next 3 months?",
+        "List my expected spending per category next month.",
+        "Am I expected to earn more next month compared to this month?",
+      ],
+      "forecast"
+    )
   
-  st.markdown("---")
+  with tab5:
+    # Subscription questions
+    render_prompt_section(
+      [
+        "List my streaming subscriptions",
+        "List my streaming subscriptions paid this month",
+        "List active streaming subscriptions",
+        "List netflix subscription payments in the last 2 months",
+        "Did I pay for any music subscriptions last month?",
+      ],
+      "subscription"
+    )
   
-  # Forecast questions
-  render_prompt_section(
-    "🔮 Forecast Questions",
-    [
-      "How much am I expected to save in the next 3 months?",
-      "List my expected spending per category next month.",
-      "Am I expected to earn more next month compared to this month?",
-    ],
-    "forecast"
-  )
+  with tab6:
+    # App Inquiry questions
+    render_prompt_section(
+      [
+        "What can you do?",
+        "Where should I categorize my rent?",
+        "What's the difference between upkeep and shelter?"
+      ],
+      "app_inquiry"
+    )
   
-  st.markdown("---")
+  with tab7:
+    # Create Goal requests
+    render_prompt_section(
+      [
+        "Set a goal of $100 monthly on dining out starting December.",
+        "Create a goal for $3500 car insurance every year by year end",
+        "Create a goal for $1000 savings every month for the next 3 months",
+        "Set a $100 limit on movies next month.",
+        "Save 10k this year.",
+        "Save $100 weekly on my checking account until end of year.",
+        "Pay my Amex by end of year.",
+        "Set a $50 weekly limit on groceries",
+        "Pay $200 weekly on my credit card",
+        "Pay $200 weekly on my Chase credit card",
+        "Pay $500 monthly on my Amex credit card",
+        "Save $5000 by next month for down payment",
+        "Pay my credit card down to $0 by next week",
+        "Pay my Amex credit card down to $0 by next week",
+        "Save 20% of my income to my Amex savings account weekly"
+      ],
+      "create_goal"
+    )
   
-  # Subscription questions
-  render_prompt_section(
-    "🔗 Subscription Questions",
-    [
-      "List my streaming subscriptions",
-      "List my streaming subscriptions paid this month",
-      "List active streaming subscriptions",
-      "List netflix subscription payments in the last 2 months",
-      "Did I pay for any music subscriptions last month?",
-    ],
-    "subscription"
-  )
-  
-  st.markdown("---")
-  
-  # App Inquiry questions
-  render_prompt_section(
-    "🔗 App Inquiry Questions",
-    [
-      "What can you do?",
-      "Where should I categorize my rent?",
-      "What's the difference between upkeep and shelter?"
-    ],
-    "app_inquiry"
-  )
-  
-  st.markdown("---")
-  
-  # Create Goal requests
-  render_prompt_section(
-    "🔗 Create Goal Requests",
-    [
-      "Set a goal of $100 monthly on dining out starting December.",
-      "Create a goal for $3500 car insurance every year by year end",
-      "Create a goal for $1000 savings every month for the next 3 months",
-      "Set a $100 limit on movies next month.",
-      "Save 10k this year.",
-      "Save $100 weekly on my checking account until end of year.",
-      "Pay my Amex by end of year.",
-      "Set a $50 weekly limit on groceries",
-      "Pay $200 weekly on my credit card",
-      "Pay $200 weekly on my Chase credit card",
-      "Pay $500 monthly on my Amex credit card",
-      "Save $5000 by next month for down payment",
-      "Pay my credit card down to $0 by next week",
-      "Pay my Amex credit card down to $0 by next week",
-      "Save 20% of my income to my Amex savings account weekly"
-    ],
-    "create_goal"
-  )
-  
-  st.markdown("---")
-  
-  # Combination questions
-  render_prompt_section(
-    "🔗 Combination Questions",
-    [
-      "Does my checking account have enough to pay for my rent next month?",
-      "Check my checking account if I can afford paying my dining out last month",
-      "Check my checking account if i can afford paying my rent next month",
-      "How much was my average monthly savings last year?",
-      "How long will it take me to save 100k?",
-      "How long will it take me to save 100k of new money?",
-    ],
-    "combination"
-  )
+  with tab8:
+    # Combination questions
+    render_prompt_section(
+      [
+        "Does my checking account have enough to pay for my rent next month?",
+        "Check my checking account if I can afford paying my dining out last month",
+        "Check my checking account if i can afford paying my rent next month",
+        "How much was my average monthly savings last year?",
+        "How long will it take me to save 100k?",
+        "How long will it take me to save 100k of new money?",
+      ],
+      "combination"
+    )
   
   # Process pending prompt if one exists
   if "pending_prompt" in st.session_state and st.session_state.pending_prompt:
