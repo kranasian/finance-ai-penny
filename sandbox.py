@@ -32,7 +32,7 @@ from penny.tool_funcs.date_utils import (
     get_after_periods,
     get_date_string
 )
-from sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
+from penny.tool_funcs.sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
 
 
 def _write_(obj):

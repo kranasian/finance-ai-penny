@@ -1,4 +1,4 @@
-from sandbox_logging import log
+from penny.tool_funcs.sandbox_logging import log
 import json
 
 def create_goal(goals: list[dict]) -> tuple[str, dict]:

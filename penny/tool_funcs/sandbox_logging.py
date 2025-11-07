@@ -47,3 +47,4 @@ def get_logs_count() -> int:
   """Get the count of captured logs"""
   return len(_get_log_list())
 
+

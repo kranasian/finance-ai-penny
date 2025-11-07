@@ -1,6 +1,6 @@
 import re
 import pandas as pd
-from sandbox_logging import log
+from penny.tool_funcs.sandbox_logging import log
 
 
 def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]:

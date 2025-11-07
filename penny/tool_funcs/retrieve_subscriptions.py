@@ -2,7 +2,7 @@ from database import Database
 import json
 import pandas as pd
 import re
-from sandbox_logging import log
+from penny.tool_funcs.sandbox_logging import log
 
 
 def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:

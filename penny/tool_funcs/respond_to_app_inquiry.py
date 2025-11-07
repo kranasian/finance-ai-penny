@@ -1,4 +1,4 @@
-from sandbox_logging import log
+from penny.tool_funcs.sandbox_logging import log
 
 
 def respond_to_app_inquiry(inquiry: str) -> str:

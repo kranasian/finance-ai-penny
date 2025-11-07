@@ -1,7 +1,7 @@
 import json
 import pandas as pd
 import re
-from sandbox_logging import log
+from penny.tool_funcs.sandbox_logging import log
 
 
 def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]:

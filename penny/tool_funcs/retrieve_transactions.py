@@ -2,7 +2,7 @@ from database import Database
 import json
 import pandas as pd
 import re
-from sandbox_logging import log
+from penny.tool_funcs.sandbox_logging import log
 
 # Maximum number of transactions to return in transaction_names_and_amounts
 MAX_TRANSACTIONS = 30

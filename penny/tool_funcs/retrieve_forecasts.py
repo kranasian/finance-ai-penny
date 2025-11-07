@@ -1,6 +1,6 @@
 from database import Database
 import pandas as pd
-from sandbox_logging import log
+from penny.tool_funcs.sandbox_logging import log
 
 # Category ID to name mapping (from categories.py)
 _CATEGORY_ID_TO_NAME = {
