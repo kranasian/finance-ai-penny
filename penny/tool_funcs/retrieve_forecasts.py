@@ -60,8 +60,8 @@ def retrieve_spending_forecasts_function_code_gen(user_id: int = 1, granularity:
     log(f"**Error**: Invalid granularity '{granularity}'. Must be 'monthly' or 'weekly'.")
     return pd.DataFrame()
   
-  # Income category IDs (36: salary, 37: sidegig, 38: business, 39: interest)
-  income_category_ids = [36, 37, 38, 39]
+  # Income category IDs (46: income, 47: income, 36: salary, 37: sidegig, 38: business, 39: interest)
+  income_category_ids = [46, 47, 36, 37, 38, 39]
   
   if granularity == 'monthly':
     forecasts = db.get_monthly_forecasts_by_user(user_id=user_id)
