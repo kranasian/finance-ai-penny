@@ -321,7 +321,7 @@ def process_input():
         print("You have no checking accounts.")
       else:
         print("Here are your checking account balances:")
-        for_print, metadata["accounts"] = account_names_and_balances(df, "Account \\"{name}\\" has {balance_current} left with {balance_available} available now.")
+        for_print, metadata["accounts"] = account_names_and_balances(df, "Account \\"{account_name}\\" has {balance_current} left with {balance_available} available now.")
         print(for_print)
         print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
     
@@ -366,7 +366,7 @@ def process_input():
       # Filter for last month
       first_day_current_month = get_start_of_month(get_today_date())
       first_day_last_month = get_after_periods(first_day_current_month, -1, "monthly")
-      last_day_last_month = get_after_periods(first_day_current_month, -1, "daily")
+      last_day_last_month = get_end_of_month(first_day_last_month)
       
       df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
       
@@ -402,7 +402,7 @@ def process_input():
       print("You have no checking accounts.")
       return True, metadata
     
-    for_print, metadata["accounts"] = account_names_and_balances(checking_df, "Account \"{name}\" has {balance_current} left with {balance_available} available now.")
+    for_print, metadata["accounts"] = account_names_and_balances(checking_df, "Account \\"{account_name}\\" has {balance_current} left with {balance_available} available now.")
     
     # Calculate total available balance in checking accounts
     total_available = checking_df['balance_available'].sum()
@@ -602,7 +602,7 @@ def process_input():
       return True, metadata
     
     # Filter for checking account
-    checking_df = accounts_df[accounts_df['account_type'] == 'checking']
+    checking_df = accounts_df[accounts_df['account_type'] == 'deposit_checking']
     
     if checking_df.empty:
       print("You have no checking account.")
