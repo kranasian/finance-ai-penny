@@ -255,6 +255,7 @@ def render_example_prompts():
     prompt_to_process = st.session_state.pending_prompt
     del st.session_state.pending_prompt
     process_prompt(prompt_to_process)
+    st.rerun()
 
 def render_chat_input():
   """Render the chat input"""
@@ -262,6 +263,7 @@ def render_chat_input():
   prompt = st.chat_input(placeholder_text)
   if prompt:
     process_prompt(prompt)
+    st.rerun()
 
 def main():
   
