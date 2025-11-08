@@ -503,11 +503,11 @@ def process_input():
     
     # Format and print savings message
     if savings < 0:
-      print(f"You saved ${abs(savings):,.2f} last month. Your income was {income_msg} and your expenses were {expenses_msg}.")
+      print(f"You saved ${abs(savings):,.2f} last month. Income: {income_msg} and expenses: {expenses_msg}.")
     elif savings > 0:
-      print(f"You spent ${savings:,.2f} more than you earned last month. Your income was {income_msg} and your expenses were {expenses_msg}.")
+      print(f"You spent ${savings:,.2f} more than you earned last month. Income: {income_msg} and expenses: {expenses_msg}.")
     else:
-      print(f"You broke even last month. Your income was {income_msg} and your expenses were {expenses_msg}.")
+      print(f"You broke even last month. Income: {income_msg} and expenses: {expenses_msg}.")
     
     return True, metadata
 ```
