@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import re
 from penny.tool_funcs.sandbox_logging import log
+from penny.tool_funcs.utils import convert_brackets_to_braces
 
 # Maximum number of transactions to return in transaction_names_and_amounts
 MAX_TRANSACTIONS = 30
@@ -31,6 +32,9 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
         If there are more transactions, appends a message like "n more transactions."
       - metadata list: List of transaction metadata dictionaries (all transactions included)
   """
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
+  
   log(f"**Transaction Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -66,7 +70,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     
     # Determine direction and preposition based on amount sign and category
     # For income categories: negative = earned (inflow), positive = refunded (outflow)
-    # For expense categories: negative = spent (outflow), positive = received/refunded (inflow)
+    # For expense categories: positive = spent (outflow), negative = received/refunded (inflow)
     income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
     is_income = category in income_categories
     
@@ -96,14 +100,16 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
         else:
           direction = "refunded"
         preposition = "from"
-    else:
-      if amount < 0:
+    else:  # expense categories
+      if amount > 0:
+        # Positive amount = spending (outflow)
         if has_spent:
           direction = ""  # Template already has "spent"
         else:
           direction = "spent"
         preposition = "on"
-      else:
+      else:  # amount < 0
+        # Negative amount = refund/inflow
         if has_received:
           direction = ""  # Template already has "received"
         else:
@@ -203,6 +209,24 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       'preposition': preposition
     }
     
+    # Check for any additional columns in the DataFrame that might be referenced in the template
+    # Extract all placeholder names from the template (e.g., {account_id}, {transaction_id})
+    template_placeholders = re.findall(r'\{([^}:]+)', temp_template)
+    for placeholder in template_placeholders:
+      # Remove any format specifiers (e.g., "amount:,.2f" -> "amount")
+      placeholder_name = placeholder.split(':')[0]
+      
+      # If the placeholder is not already in format_dict and exists as a column in the DataFrame
+      if placeholder_name not in format_dict and placeholder_name in df.columns:
+        value = transaction.get(placeholder_name, '')
+        # Convert to native Python type for JSON serialization
+        if pd.isna(value):
+          format_dict[placeholder_name] = None
+        elif isinstance(value, (pd.Timestamp, pd.DatetimeTZDtype)):
+          format_dict[placeholder_name] = value.strftime('%Y-%m-%d') if hasattr(value, 'strftime') else str(value)
+        else:
+          format_dict[placeholder_name] = value
+    
     try:
       utterance = temp_template.format(**format_dict)
     except (ValueError, KeyError) as e:
@@ -251,8 +275,11 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
   return utterance_text, metadata
 
 
-def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str) -> str:
+def utter_transaction_totals(df: pd.DataFrame, template: str) -> str:
   """Calculate total transaction amounts and return formatted string"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
+  
   log(f"**Transaction Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -270,24 +297,51 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
   total_amount = df['amount'].sum()
   log(f"**Calculated Total**: **Amount**: `${abs(total_amount):,.2f}`")
   
-  # Determine verb/phrase based on is_spending and sign of total_amount
+  # Determine if transactions are income or spending based on categories
+  # First try to use ai_category_id if available (more reliable)
+  is_income = False
+  if len(df) > 0:
+    if 'ai_category_id' in df.columns:
+      # Use category IDs to determine income categories
+      # Income category IDs: 47, 46, 36, 37, 38, 39
+      income_category_ids = [47, 46, 36, 37, 38, 39]
+      is_income = df['ai_category_id'].isin(income_category_ids).any()
+    elif 'category' in df.columns:
+      # Fallback to category name strings
+      income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
+      is_income = df['category'].isin(income_categories).any()
+  
+  # Determine verb/phrase and direction based on category and amount sign
   # Always use abs() for display amount
   display_amount = abs(total_amount)
   
-  if is_spending:
+  # Determine direction and verb based on category and amount sign
+  # For income categories: negative = earned (inflow), positive = refunded (outflow)
+  # For expense categories: positive = spent (outflow), negative = received (inflow/refund)
+  if is_income:
+    # Income categories
     if total_amount < 0:
-      verb = "spent"
-      amount_suffix = None
-    else:  # total_amount > 0
-      verb = "received"
-      amount_suffix = None
-  else:  # not spending (income)
-    if total_amount < 0:
+      # Income inflow (negative amount = money coming in)
       verb = "earned"
+      direction = "earned"
       amount_suffix = None
     else:  # total_amount > 0
+      # Income outflow (positive amount = money going out, refund)
       verb = "had a"
+      direction = "refunded"
       amount_suffix = "outflow"
+  else:
+    # Expense categories
+    if total_amount > 0:
+      # Spending outflow (positive amount = money going out)
+      verb = "spent"
+      direction = "spent"
+      amount_suffix = None
+    else:  # total_amount < 0
+      # Spending inflow (negative amount = money coming in, refund)
+      verb = "received"
+      direction = "received"
+      amount_suffix = None
   
   # Check if template has format specifiers for total_amount or amount (like {total_amount:,.2f} or {amount:,.2f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
@@ -345,10 +399,11 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
             target_category_value = target_category_value[len(prefix):]
             break
   
-  # Prepare format dictionary with verb, amount_suffix, total_amount, category, and target_category
+  # Prepare format dictionary with verb, direction, amount_suffix, total_amount, category, and target_category
   format_dict = {
     'total_amount': total_amount_str,
     'verb': verb,
+    'direction': direction,
   }
   if amount_suffix:
     format_dict['amount_suffix'] = amount_suffix
@@ -358,8 +413,8 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
     format_dict['target_category'] = target_category_value
   
   try:
-    # If template has {verb}, {amount_suffix}, {category}, or {target_category}, use them; otherwise use total_amount
-    if '{verb}' in temp_template or '{amount_suffix}' in temp_template or '{category}' in temp_template or '{target_category}' in temp_template:
+    # If template has {verb}, {direction}, {amount_suffix}, {category}, or {target_category}, use them; otherwise use total_amount
+    if '{verb}' in temp_template or '{direction}' in temp_template or '{amount_suffix}' in temp_template or '{category}' in temp_template or '{target_category}' in temp_template:
       result = temp_template.format(**format_dict)
     else:
       # Fall back to just total_amount for backward compatibility
@@ -369,8 +424,8 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
     if has_any_format_specifier:
       # Try with raw number (format specifier was already replaced)
       try:
-        if '{verb}' in temp_template or '{amount_suffix}' in temp_template or '{category}' in temp_template or '{target_category}' in temp_template:
-          format_dict_raw = {'total_amount': display_amount, 'verb': verb}
+        if '{verb}' in temp_template or '{direction}' in temp_template or '{amount_suffix}' in temp_template or '{category}' in temp_template or '{target_category}' in temp_template:
+          format_dict_raw = {'total_amount': display_amount, 'verb': verb, 'direction': direction}
           if amount_suffix:
             format_dict_raw['amount_suffix'] = amount_suffix
           if category_value is not None:
@@ -393,35 +448,4 @@ def utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str)
   
   return result
 
-
-def get_income_msg(amount: float) -> str:
-  """
-  Format income amount with inflow/outflow label.
-  
-  Args:
-    amount: Sum of income amounts (negative = inflow/income, positive = outflow/refunds)
-  
-  Returns:
-    Formatted string like "$100.00" or "$50.00 (outflow)"
-  """
-  if amount < 0:
-    return f"${abs(amount):,.2f}"
-  else:
-    return f"${amount:,.2f} (outflow)"
-
-
-def get_spending_msg(amount: float) -> str:
-  """
-  Format spending/expenses amount with inflow/outflow label.
-  
-  Args:
-    amount: Sum of expense amounts (negative = outflow/expenses, positive = inflow/refunds)
-  
-  Returns:
-    Formatted string like "$100.00" or "$50.00 (inflow)"
-  """
-  if amount < 0:
-    return f"${abs(amount):,.2f}"
-  else:
-    return f"${amount:,.2f} (inflow)"
 

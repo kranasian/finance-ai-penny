@@ -1,10 +1,14 @@
 import re
 import pandas as pd
 from penny.tool_funcs.sandbox_logging import log
+from penny.tool_funcs.utils import convert_brackets_to_braces
 
 
 def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Format forecast dates and amounts using the provided template"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
+  
   if df.empty:
     log(f"**Forecast Dates and Amounts**: Empty DataFrame")
     return "", []
@@ -34,11 +38,31 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
         temp_template
       )
   
+  # Income categories for determining direction
+  income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
+  
   # Process each forecast row
   for _, row in df.iterrows():
     forecasted_amount = row['forecasted_amount']
     ai_category_id = row.get('ai_category_id', 0)
     category_name = row['category']  # category is always available
+    
+    # Determine if this is an income category
+    is_income = category_name in income_categories
+    
+    # Determine direction based on category and amount sign
+    # For income categories: negative = earned (inflow), positive = refunded (outflow)
+    # For expense categories: positive = spent (outflow), negative = received (inflow)
+    if is_income:
+      if forecasted_amount < 0:
+        direction = "earned"
+      else:  # forecasted_amount > 0
+        direction = "refunded"
+    else:  # expense categories
+      if forecasted_amount > 0:
+        direction = "spent"
+      else:  # forecasted_amount < 0
+        direction = "received"
     
     # Get date based on forecast type (date is always available)
     if is_monthly:
@@ -83,6 +107,7 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
       'date': date_str,
       'forecasted_amount': amount_str,
       'amount': amount_str,
+      'direction': direction,
       'ai_category_id': str(int(ai_category_id)),
       'category': category_name,
     }
@@ -128,6 +153,9 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
 
 def utter_forecasts(df: pd.DataFrame, template: str) -> str:
   """Format forecast totals using the provided template"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
+  
   if df.empty:
     log(f"**Utter Forecasts**: Empty DataFrame")
     return ""
@@ -143,39 +171,77 @@ def utter_forecasts(df: pd.DataFrame, template: str) -> str:
   # Calculate total forecasted amount
   total_amount = df['forecasted_amount'].sum()
   
-  # Detect format specifiers in template
-  format_specifiers = re.findall(r'\{([^}]+):[^}]+\}', template)
-  has_format_specifiers = len(format_specifiers) > 0
+  # Determine if forecasts are income or spending based on categories
+  income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
+  if 'category' in df.columns:
+    # Check if any category is an income category
+    is_income = df['category'].isin(income_categories).any()
+  else:
+    # Fallback: assume spending if no category info
+    is_income = False
+  
+  # Determine direction based on category and total_amount sign
+  # For income categories: negative = earned (inflow), positive = refunded (outflow)
+  # For expense categories: positive = spent (outflow), negative = received (inflow)
+  if is_income:
+    if total_amount < 0:
+      direction = "earned"
+    else:  # total_amount > 0
+      direction = "outflow"
+  else:  # expense categories
+    if total_amount > 0:
+      direction = "spent"
+    else:  # total_amount < 0
+      direction = "inflow"
+  
+  # Only show direction for inflow/outflow, not for earned/spent
+  # If direction is "earned" or "spent", set to empty string so it won't appear in templates
+  if direction in ["earned", "spent"]:
+    direction_display = ""
+  else:
+    direction_display = direction
+  
+  # Check if template has format specifiers for total_amount or amount (like {total_amount:,.2f} or {amount:,.2f})
+  total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
+  amount_format_pattern = r'\{amount:([^}]+)\}'
+  has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
+  has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
   
   # Check if template has dollar sign
   has_dollar_sign = '$' in template
   
-  # Replace format specifiers with simple placeholders
+  # Handle format specifiers - replace with simple placeholders
   temp_template = template
-  if has_format_specifiers:
-    for placeholder in format_specifiers:
-      # Replace {amount:,.2f} with {amount}
-      temp_template = re.sub(
-        r'\{' + re.escape(placeholder) + r':[^}]+\}',
-        '{' + placeholder + '}',
-        temp_template
-      )
+  if has_total_amount_format_specifier:
+    # Template has format specifiers, replace them with simple {total_amount}
+    temp_template = re.sub(total_amount_format_pattern, '{total_amount}', temp_template)
+  if has_amount_format_specifier:
+    # Template uses {amount} instead of {total_amount}, replace format specifiers with {total_amount}
+    temp_template = re.sub(amount_format_pattern, '{total_amount}', temp_template)
   
-  # Format total amount
-  if has_format_specifiers:
-    # If template has format specifiers, format the number
+  # Also replace any plain {amount} with {total_amount}
+  temp_template = temp_template.replace('{amount}', '{total_amount}')
+  
+  # Format amount string based on template requirements
+  has_any_format_specifier = has_total_amount_format_specifier or has_amount_format_specifier
+  display_amount = abs(total_amount)
+  
+  if has_any_format_specifier:
+    # Template originally had format specifiers, format with $ if template doesn't have $
     if has_dollar_sign:
-      # Template has $, so format without $
-      total_amount_str = f"{abs(total_amount):,.2f}"
+      # Template has $, format without $ prefix
+      total_amount_str = f"{display_amount:,.2f}"
     else:
-      # Template doesn't have $, so format with $
-      total_amount_str = f"${abs(total_amount):,.2f}"
+      # Template has NO $, format WITH $ prefix
+      total_amount_str = f"${display_amount:,.2f}"
   else:
-    # No format specifiers, just format as string
+    # No format specifiers - check if template has dollar signs
     if has_dollar_sign:
-      total_amount_str = f"{abs(total_amount):,.2f}"
+      # Template has dollar signs, format without $ prefix
+      total_amount_str = f"{display_amount:,.2f}"
     else:
-      total_amount_str = f"${abs(total_amount):,.2f}"
+      # Template has NO dollar signs, format WITH $ prefix
+      total_amount_str = f"${display_amount:,.2f}"
   
   # Build format dictionary
   format_dict = {
@@ -183,6 +249,7 @@ def utter_forecasts(df: pd.DataFrame, template: str) -> str:
     'total': total_amount_str,
     'total_amount': total_amount_str,
     'amount': total_amount_str,
+    'direction': direction_display,  # Use direction_display which is empty for earned/spent
   }
   
   # Add date column based on type
@@ -208,10 +275,28 @@ def utter_forecasts(df: pd.DataFrame, template: str) -> str:
   
   # Format the template
   try:
-    result = temp_template.format(**format_dict)
-  except KeyError as e:
-    log(f"**Utter Forecasts**: Missing placeholder in template: {e}")
-    result = template
+    # If template has {direction} or {total_amount}, use them; otherwise use forecasted_amount for backward compatibility
+    if '{direction}' in temp_template or '{total_amount}' in temp_template:
+      result = temp_template.format(**format_dict)
+    else:
+      # Fall back to just forecasted_amount for backward compatibility
+      result = temp_template.format(forecasted_amount=total_amount_str)
+  except (ValueError, KeyError) as e:
+    # If formatting fails, try with raw numeric amount (only if template had format specifiers)
+    if has_any_format_specifier:
+      # Try with raw number (format specifier was already replaced)
+      try:
+        if '{direction}' in temp_template or '{total_amount}' in temp_template:
+          format_dict_raw = {'total_amount': display_amount, 'direction': direction_display}
+          result = temp_template.format(**format_dict_raw)
+        else:
+          result = temp_template.format(forecasted_amount=display_amount)
+      except Exception as e2:
+        # Fall back to formatted string
+        result = temp_template.format(forecasted_amount=total_amount_str)
+    else:
+      # No format specifiers, so the error is unexpected - re-raise
+      raise
   
   # Ensure dollar sign is present if needed
   if not has_dollar_sign and '$' not in result and total_amount != 0:

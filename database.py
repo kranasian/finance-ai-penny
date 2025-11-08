@@ -302,6 +302,50 @@ class Database:
 
   def get_transactions_by_user(self, user_id: int) -> List[Dict]:
     """Get all transactions for a specific user"""
+    # Category name to ID mapping
+    _CATEGORY_NAME_TO_ID = {
+      'meals': 1,
+      'meals_groceries': 4,
+      'meals_dining_out': 2,
+      'meals_delivered_food': 3,
+      'leisure': 5,
+      'leisure_entertainment': 6,
+      'leisure_travel': 7,
+      'bills': 9,
+      'bills_connectivity': 10,
+      'bills_insurance': 11,
+      'bills_tax': 12,
+      'bills_service_fees': 13,
+      'shelter': 14,
+      'shelter_home': 15,
+      'shelter_utilities': 16,
+      'shelter_upkeep': 17,
+      'education': 18,
+      'education_kids_activities': 19,
+      'education_tuition': 20,
+      'shopping': 21,
+      'shopping_clothing': 22,
+      'shopping_gadgets': 23,
+      'shopping_kids': 24,
+      'shopping_pets': 8,
+      'transportation': 25,
+      'transportation_public': 27,
+      'transportation_car': 26,
+      'health': 28,
+      'health_medical_pharmacy': 29,
+      'health_gym_wellness': 30,
+      'health_personal_care': 31,
+      'donations_gifts': 32,
+      'income': 47,
+      'income_salary': 36,
+      'income_sidegig': 37,
+      'income_business': 38,
+      'income_interest': 39,
+      'uncategorized': -1,
+      'transfers': 45,
+      'miscellaneous': 33,
+    }
+    
     conn = sqlite3.connect(self.db_path)
     cursor = conn.cursor()
     
@@ -311,6 +355,8 @@ class Database:
     
     transactions = []
     for result in results:
+      category_name = result[6]
+      ai_category_id = _CATEGORY_NAME_TO_ID.get(category_name, -1)  # Default to uncategorized if not found
       transactions.append({
         'transaction_id': result[0],
         'user_id': result[1],
@@ -318,7 +364,8 @@ class Database:
         'date': result[3],
         'transaction_name': result[4],
         'amount': result[5],
-        'category': result[6]
+        'category': category_name,
+        'ai_category_id': ai_category_id
       })
     
     return transactions

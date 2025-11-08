@@ -4,11 +4,6 @@ import calendar
 import pandas as pd
 
 
-def get_today_date() -> datetime:
-    """Returns today's date."""
-    return datetime.now()
-
-
 def get_date(year: int, month: int, day: int) -> datetime:
     """
     Returns a datetime object for the specified date.
@@ -64,14 +59,14 @@ def get_end_of_week(date: datetime) -> datetime:
     return datetime.combine(end.date(), datetime.min.time())
 
 
-def get_after_periods(date: datetime, count: int, granularity: str) -> datetime:
+def get_after_periods(date: datetime, granularity: str, count: int) -> datetime:
     """
     Adds periods and returns date.
     
     Args:
         date: The starting date
-        count: Number of periods to add (can be negative to subtract)
         granularity: One of "daily", "weekly", "monthly", "yearly"
+        count: Number of periods to add (can be negative to subtract)
     
     Returns:
         The date after adding the specified periods

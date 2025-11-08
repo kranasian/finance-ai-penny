@@ -61,23 +61,35 @@ Write a function `process_input` that takes no arguments and print()s what to te
         - retrieves all accounts and returns a pandas DataFrame.  It may be empty if no accounts exist.
         - Panda's dataframe columns: `account_id`, `account_type`, `account_name`, `balance_available`, `balance_current`, `balance_limit`
         - `account_id` is a integer type, `account_type` and `account_name` are str types, `balance_available`, `balance_current` and `balance_limit` are float types.
+        - **Note**: `account_id` is for metadata only (e.g., filtering, joining), not for display to users. Use `account_name` for user-facing output.
     - `account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
     - `utter_account_totals(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and calculates total balances and returns a formatted string based on `template`.
     - `retrieve_transactions() -> pd.DataFrame`
         - retrieves all transactions and returns a pandas DataFrame.  It may be empty if no transactions exist.
-        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`
-        - `transaction_id`, `account_id`, and `user_id` are integer types, `transaction_name` and `category` are str types, `amount` is a float type, `date` is a pandas datetime64 (pd.Timestamp) type.
-        - `amount` values are negative for spending/outflow, positive for receiving/inflow.
+        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`, `ai_category_id`
+        - `transaction_id`, `account_id`, `user_id`, and `ai_category_id` are integer types, `transaction_name` and `category` are str types, `amount` is a float type, `date` is a pandas datetime64 (pd.Timestamp) type.
+        - **Note**: `transaction_id` and `account_id` are for metadata only (e.g., filtering, joining, returning in metadata), not for display to users. Use `transaction_name` and `account_name` (from accounts DataFrame) for user-facing output.
+        - **Category definitions**: 
+          - "Spending" refers to all transactions with non-income categories (expense categories), regardless of whether the amount is positive or negative.
+          - "Earning" (or "Income") refers to all transactions with income categories, regardless of whether the amount is positive or negative.
+        - **Amount sign conventions**: 
+          - Income (money coming in): negative amounts
+          - Income outflow (refunds/returns): positive amounts
+          - Spending (money going out): positive amounts
+          - Spending inflow (refunds/returns): negative amounts
     - `transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-    - `utter_transaction_totals(df: pd.DataFrame, is_spending: bool, template: str) -> str`
-        - takes filtered `df`, `is_spending` flag (True for spending categories, False for income), and `template` string, calculates total transaction amounts and returns a formatted string.
-    - `get_income_msg(amount: float) -> str`
-        - formats income amount with inflow/outflow label (negative = inflow/income, positive = outflow/refunds).
-    - `get_spending_msg(amount: float) -> str`
-        - formats spending/expenses amount with inflow/outflow label (negative = outflow/expenses, positive = inflow/refunds).
+        - Template placeholders: `[transaction_name]`, `[amount]`, `[date]`, `[category]`, `[direction]`, `[account_name]`, and any other column from the DataFrame
+        - `[direction]` already contains the verb: "earned" or "refunded" for income, "spent" or "received" for expenses.
+        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
+    - `utter_transaction_totals(df: pd.DataFrame, template: str) -> str`
+        - takes filtered `df` and `template` string, calculates total transaction amounts and returns a formatted string.
+        - The function automatically determines if transactions are income or spending based on the `category` column in the DataFrame.
+        - Template placeholders: `[total_amount]`, `[direction]`
+        - `[direction]` already contains the verb: "earned" or "refunded" for income, "spent" or "received" for expenses.
+        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]`
         - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
     - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
@@ -97,16 +109,29 @@ Write a function `process_input` that takes no arguments and print()s what to te
         - `sunday_date` is the Sunday (start) date of the week.
     - `forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
+        - Template placeholders: `[date]`, `[amount]`, `[forecasted_amount]`, `[direction]`, `[category]`, `[ai_category_id]`, `[month_date]`, `[sunday_date]`
+        - `[direction]` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `[direction]` in templates.
+        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `utter_forecasts(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and calculates total forecasted amounts and returns a formatted string based on `template`.
+        - Template placeholders: `[total_amount]`, `[amount]`, `[forecasted_amount]`, `[direction]`, `[month_date]`, `[sunday_date]`, `[category_count]`, `[categories]`
+        - `[direction]` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `[direction]` in templates.
+        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `retrieve_subscriptions() -> pd.DataFrame`
         - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
-        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`, `output_category`, `subscription_name`, `confidence_score_bills`, `reviewer_bills`.
-        - `amount` values: **Negative** values are **inflows/earnings/refunds**, **Positive** values are **outflows/spending**.
+        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`, `subscription_name`, `confidence_score_bills`, `reviewer_bills`.
+        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
+        - Template placeholders: `[subscription_name]`, `[transaction_name]`, `[amount]`, `[date]`, `[category]`, `[direction]`, and any other column from the DataFrame
+        - `[direction]` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories.
+        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `utter_subscription_totals(df: pd.DataFrame, template: str) -> str`
-        - takes filtered `df` and `template` string, calculates total subscription transaction amounts (sum of `amount`) and returns a formatted string.
+        - takes filtered `df` and `template` string, calculates total subscription transaction amounts and returns a formatted string.
+        - The function automatically determines if transactions are income or spending based on the `category` column in the DataFrame.
+        - Template placeholders: `[total_amount]`, `[direction]`
+        - `[direction]` will be blank (empty string) for "earned" or "spent", and will show "(inflow)" or "(outflow)" for refunds/returns.
+        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "outflow", Spending inflow (negative) = "inflow", Spending outflow (positive) = "spent"
     - `respond_to_app_inquiry(inquiry: str) -> str`
         - accepts a string `inquiry` on how to categorize transactions, Penny's capabilities, or other app questions and returns a string response.
     - `create_goal(goals: list[dict]) -> tuple[str, dict]`
@@ -131,7 +156,6 @@ Write a function `process_input` that takes no arguments and print()s what to te
 
 <IMPLEMENTED_DATE_FUNCTIONS>
   These functions are already implemented:
-    - `get_today_date() -> datetime`: Returns today's date.
     - `get_date(year: int, month: int, day: int) -> datetime`: Returns a datetime object for the specified date.
     - `get_start_of_month(date: datetime) -> datetime`: Returns the start of the month for a given date.
     - `get_end_of_month(date: datetime) -> datetime`: Returns the end of the month for a given date.
@@ -139,7 +163,7 @@ Write a function `process_input` that takes no arguments and print()s what to te
     - `get_end_of_year(date: datetime) -> datetime`: Returns the end of the year for a given date.
     - `get_start_of_week(date: datetime) -> datetime`: Returns the start of the week for a given date.
     - `get_end_of_week(date: datetime) -> datetime`: Returns the end of the week for a given date.
-    - `get_after_periods(date: datetime, count: int, granularity: str) -> datetime`: Adds periods ("daily" | "weekly" | "monthly" | "yearly") and returns date.
+    - `get_after_periods(date: datetime, granularity: str, count: int) -> datetime`: Adds periods ("daily" | "weekly" | "monthly" | "yearly") and returns date.
     - `get_date_string(date: datetime) -> str`: Returns date in "YYYY-MM-DD" format.
 </IMPLEMENTED_DATE_FUNCTIONS>
 
@@ -321,9 +345,25 @@ def process_input():
         print("You have no checking accounts.")
       else:
         print("Here are your checking account balances:")
-        for_print, metadata["accounts"] = account_names_and_balances(df, "Account \\"{account_name}\\" has {balance_current} left with {balance_available} available now.")
+        for_print, metadata["accounts"] = account_names_and_balances(df, "Account '[account_name]' has [balance_current] left with [balance_available] available now.")
         print(for_print)
-        print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
+        print(utter_account_totals(df, "Across all checking accounts, you have [balance_current] left."))
+    
+    return True, metadata
+```
+
+input: User: What is my account balance?
+output: ```python
+def process_input():
+    df = retrieve_accounts()
+    metadata = {"accounts": []}
+    
+    if df.empty:
+      print("You have no accounts.")
+    else:
+      print("Here are your account balances:")
+      for_print, metadata["accounts"] = account_names_and_balances(df, "Account '[account_name]' ([account_type]) has [balance_current] left with [balance_available] available now.")
+      print(for_print)
     
     return True, metadata
 ```
@@ -364,8 +404,8 @@ def process_input():
       print("You have no transactions.")
     else:
       # Filter for last month
-      first_day_current_month = get_start_of_month(get_today_date())
-      first_day_last_month = get_after_periods(first_day_current_month, -1, "monthly")
+      first_day_current_month = get_start_of_month(datetime.now())
+      first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
       last_day_last_month = get_end_of_month(first_day_last_month)
       
       df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
@@ -384,10 +424,55 @@ def process_input():
             print(f"You only have transactions in one category: {categories[0]}")
           else:
             # Compare spending between categories
-            result, metadata = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+            result, metadata = compare_spending(df, 'You spent $[difference] more on [more_label] ($[more_amount], [more_count] transactions) over [less_label] ($[less_amount], [less_count] transactions).')
             print(result)
     
     return True, metadata
+```
+
+input: User: Compare my dining out last sept 2025 vs oct 2025.
+output: ```python
+def process_input():
+    df = retrieve_transactions()
+    metadata = {}
+    
+    if df.empty:
+      print("You have no transactions.")
+    else:
+      # Filter for dining out category
+      df = df[df['category'] == 'meals_dining_out']
+      
+      if df.empty:
+        print("You have no dining out transactions.")
+      else:
+        # Filter for September 2025
+        sept_start = get_start_of_month(get_date(2025, 9, 1))
+        sept_end = get_end_of_month(sept_start)
+        sept_df = df[(df['date'] >= sept_start) & (df['date'] <= sept_end)].copy()
+        sept_df['group'] = 'September 2025'
+        
+        # Filter for October 2025
+        oct_start = get_start_of_month(get_date(2025, 10, 1))
+        oct_end = get_end_of_month(oct_start)
+        oct_df = df[(df['date'] >= oct_start) & (df['date'] <= oct_end)].copy()
+        oct_df['group'] = 'October 2025'
+        
+        # Combine both months
+        combined_df = pd.concat([sept_df, oct_df])
+        
+        if combined_df.empty:
+          print("You have no dining out transactions in September or October 2025.")
+        else:
+          groups = combined_df['group'].unique()
+          if len(groups) < 2:
+            print(f"You only have dining out transactions in {groups[0]}.")
+          else:
+            # Compare spending between the two months
+            result, metadata = compare_spending(combined_df, 'You spent $[difference] more on [more_label] ($[more_amount], [more_count] transactions) over [less_label] ($[less_amount], [less_count] transactions).')
+            print(result)
+    
+    return True, metadata
+```
 
 input: User: check my checking account if i can afford paying my dining out last month
 output: ```python
@@ -402,7 +487,7 @@ def process_input():
       print("You have no checking accounts.")
       return True, metadata
     
-    for_print, metadata["accounts"] = account_names_and_balances(checking_df, "Account \\"{account_name}\\" has {balance_current} left with {balance_available} available now.")
+    for_print, metadata["accounts"] = account_names_and_balances(checking_df, "Account '[account_name]' has [balance_current] left with [balance_available] available now.")
     
     # Calculate total available balance in checking accounts
     total_available = checking_df['balance_available'].sum()
@@ -415,8 +500,8 @@ def process_input():
       return True, metadata
     
     # Filter for last month
-    first_day_current_month = get_start_of_month(get_today_date())
-    first_day_last_month = get_after_periods(first_day_current_month, -1, "monthly")
+    first_day_current_month = get_start_of_month(datetime.now())
+    first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
     last_day_last_month = get_end_of_month(first_day_last_month)
     
     transactions_df = transactions_df[(transactions_df['date'] >= first_day_last_month) & (transactions_df['date'] <= last_day_last_month)]
@@ -456,8 +541,8 @@ def process_input():
       return True, metadata
     
     # Filter for last month
-    first_day_current_month = get_start_of_month(get_today_date())
-    first_day_last_month = get_after_periods(first_day_current_month, -1, "monthly")
+    first_day_current_month = get_start_of_month(datetime.now())
+    first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
     last_day_last_month = get_end_of_month(first_day_last_month)
     
     transactions_df = transactions_df[(transactions_df['date'] >= first_day_last_month) & (transactions_df['date'] <= last_day_last_month)]
@@ -478,9 +563,9 @@ def process_input():
     # Calculate savings
     savings = total_income - total_expenses
     
-    # Get formatted income and spending messages
-    income_msg = get_income_msg(total_income)
-    expenses_msg = get_spending_msg(total_expenses)
+    # Get formatted income and spending messages using utter_transaction_totals
+    income_msg = utter_transaction_totals(income_df, "[direction] [total_amount:,.2f]") if not income_df.empty else "$0.00"
+    expenses_msg = utter_transaction_totals(expenses_df, "[direction] [total_amount:,.2f]") if not expenses_df.empty else "$0.00"
     
     # Format and print savings message
     if savings < 0:
@@ -493,13 +578,50 @@ def process_input():
     return True, metadata
 ```
 
+input: User: list income past 2 weeks
+output: ```python
+def process_input():
+    metadata = {"transactions": []}
+    
+    # Get transactions
+    df = retrieve_transactions()
+    
+    if df.empty:
+      print("You have no transactions.")
+      return True, metadata
+    
+    # Filter for income categories
+    income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
+    df = df[df['category'].isin(income_categories)]
+    
+    if df.empty:
+      print("You have no income transactions.")
+      return True, metadata
+    
+    # Filter for past 2 weeks (from 2 weeks ago to now)
+    start_of_current_week = get_start_of_week(datetime.now())
+    start_of_two_weeks_ago = get_after_periods(start_of_current_week, granularity="weekly", count=-2)
+    df = df[(df['date'] >= start_of_two_weeks_ago) & (df['date'] < start_of_current_week)]
+    
+    if df.empty:
+      print("You have no income transactions from the past 2 weeks.")
+      return True, metadata
+    
+    print("Here are your income transactions from the past 2 weeks:")
+    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "[transaction_name]: [direction] $[amount:,.2f] on [date]")
+    print(for_print)
+    print(utter_transaction_totals(df, "In total, you [direction] [total_amount] from the past 2 weeks."))
+    
+    return True, metadata
+```
+
 input: User: how much am i expected to save next week?
 output: ```python
 def process_input():
     metadata = {}
     
     # Get next week dates
-    start_of_next_week = get_after_periods(get_today_date(), 1, "weekly")
+    start_of_next_week = get_after_periods(datetime.now(), granularity="weekly", count=1)
     
     # Retrieve income and spending forecasts for next week
     income_df = retrieve_income_forecasts('weekly')
@@ -518,16 +640,14 @@ def process_input():
       print("You have no forecasts for next week.")
       return True, metadata
     
-    # Calculate totals
-    total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
-    total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    
     # Calculate expected savings
-    expected_savings = total_income - total_spending
+    income_total = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
+    spending_total = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
+    expected_savings = income_total - spending_total
     
-    # Get formatted income and spending messages
-    income_msg = get_income_msg(total_income)
-    expenses_msg = get_spending_msg(total_spending)
+    # Get formatted income and spending messages using utter_forecasts
+    income_msg = utter_forecasts(income_df, "[total_amount:,.2f]") if not income_df.empty else "$0.00"
+    expenses_msg = utter_forecasts(spending_df, "[total_amount:,.2f]") if not spending_df.empty else "$0.00"
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -546,8 +666,8 @@ def process_input():
     metadata = {}
     
     # Get next month date
-    first_day_current_month = get_start_of_month(get_today_date())
-    first_day_next_month = get_after_periods(first_day_current_month, 1, "monthly")
+    first_day_current_month = get_start_of_month(datetime.now())
+    first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
     next_month_date = first_day_next_month.replace(day=1)
     
     # Retrieve income and spending forecasts for next month
@@ -567,16 +687,14 @@ def process_input():
       print("You have no forecasts for next month.")
       return True, metadata
     
-    # Calculate totals
-    total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
-    total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    
     # Calculate expected savings
-    expected_savings = total_income - total_spending
+    income_total = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
+    spending_total = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
+    expected_savings = income_total - spending_total
     
-    # Get formatted income and spending messages
-    income_msg = get_income_msg(total_income)
-    expenses_msg = get_spending_msg(total_spending)
+    # Get formatted income and spending messages using utter_forecasts
+    income_msg = utter_forecasts(income_df, "[total_amount:,.2f]") if not income_df.empty else "$0.00"
+    expenses_msg = utter_forecasts(spending_df, "[total_amount:,.2f]") if not spending_df.empty else "$0.00"
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -612,8 +730,8 @@ def process_input():
     total_available = checking_df['balance_available'].sum()
     
     # Get next month date
-    first_day_current_month = get_start_of_month(get_today_date())
-    first_day_next_month = get_after_periods(first_day_current_month, 1, "monthly")
+    first_day_current_month = get_start_of_month(datetime.now())
+    first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
     next_month_date = first_day_next_month.replace(day=1)
     
     # Retrieve spending forecasts for next month
@@ -659,12 +777,12 @@ def process_input():
       print("You have no subscriptions.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{subscription_name}: {direction} ${amount:,.2f} on {date}')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '[subscription_name]: [direction] $[amount:,.2f] on [date]')
     transaction_count = len(subscriptions_df)
     print(f"Your subscriptions ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
     
-    print(utter_subscription_totals(subscriptions_df, 'Total subscription transactions: ${total_amount:,.2f}'))
+    print(utter_subscription_totals(subscriptions_df, 'Total subscription transactions: $[total_amount:,.2f] [direction]'))
     
     return True, metadata
 ```
@@ -694,9 +812,8 @@ def process_input():
       return True, metadata
       
     # Filter for last month
-    today = get_today_date()
-    first_day_current_month = get_start_of_month(today)
-    first_day_last_month = get_after_periods(first_day_current_month, -1, "monthly")
+    first_day_current_month = get_start_of_month(datetime.now())
+    first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
     last_day_last_month = get_end_of_month(first_day_last_month)
     
     streaming_df = streaming_df[(streaming_df['date'] >= first_day_last_month) & (streaming_df['date'] <= last_day_last_month)]
@@ -705,12 +822,12 @@ def process_input():
       print("You have no streaming subscription payments last month.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{subscription_name}: {direction} ${amount:,.2f} on {date}')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '[subscription_name]: [direction] $[amount:,.2f] on [date]')
     transaction_count = len(streaming_df)
     print(f"Your streaming subscription payments last month ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
     
-    print(utter_subscription_totals(streaming_df, 'Total streaming subscription spending last month: ${total_amount:,.2f}'))
+    print(utter_subscription_totals(streaming_df, 'Total streaming subscription spending last month: $[total_amount:,.2f] [direction]'))
     
     return True, metadata
 ```
@@ -721,10 +838,10 @@ def process_input():
     metadata = {"goals": []}
     
     # Get start of week today
-    start_date = get_start_of_week(get_today_date())
+    start_date = get_start_of_week(datetime.now())
     
     # Calculate end date: 6 months from start, then get Saturday of that week
-    end_date = get_after_periods(start_date, 6, "monthly")
+    end_date = get_after_periods(start_date, granularity="monthly", count=6)
     end_date = get_end_of_week(end_date)
     
     goals = [{
@@ -786,7 +903,7 @@ def process_input():
             "granularity": "weekly",
             "title": "Weekly Credit Card Payment",
             "amount": 200.0,
-            "start_date": get_date_string(get_start_of_week(get_today_date())),
+            "start_date": get_date_string(get_start_of_week(datetime.now())),
             "end_date": "2099-12-31",
             "account_id": None,
             "clarification_needed": f"You have multiple BoFa credit cards: {', '.join(card_names)}. Which BoFa credit card would you like to pay $200 weekly on?",
@@ -799,7 +916,7 @@ def process_input():
     
     # Single BoFa credit card found
     card = bofa_cards_df.iloc[0]
-    start_date = get_start_of_week(get_today_date())
+    start_date = get_start_of_week(datetime.now())
     title = f"Weekly Payment - {card['account_name']}"
     amount = 200.0
     
@@ -840,7 +957,7 @@ def process_input():
     
     # Create goals for all credit cards
     goals = []
-    start_date = get_start_of_week(get_today_date())
+    start_date = get_start_of_week(datetime.now())
     
     for _, card in credit_cards_df.iterrows():
         title = f"Weekly Payment - {card['account_name']}"
@@ -950,7 +1067,8 @@ output:""")
       contents=contents,
       config=generate_content_config,
     ):
-      output_text += chunk.text
+      if chunk.text is not None:
+        output_text += chunk.text
       last_chunk = chunk
     
     # Extract usage metadata from the last chunk if available

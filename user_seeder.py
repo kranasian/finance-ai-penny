@@ -191,7 +191,8 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
     'income_salary': [
       ('Direct Deposit - Salary', 'PAYROLL DEPOSIT COMPANY INC', -3500.00),
       ('Monthly Bonus', 'BONUS PAYMENT COMPANY CORP', -500.00),
-      ('Overtime Pay', 'OVERTIME PAYMENT COMPANY', -200.00)
+      ('Overtime Pay', 'OVERTIME PAYMENT COMPANY', -200.00),
+      ('Salary Refund', 'PAYROLL REFUND COMPANY INC', 150.00)  # Outflow: positive amount for income category
     ],
     'income_sidegig': [
       ('Uber Earnings', 'UBER TECHNOLOGIES INC', -150.00),
@@ -202,7 +203,8 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
       ('Whole Foods', 'WHOLE FOODS MARKET', 85.50),
       ('Safeway', 'SAFEWAY STORE', 120.30),
       ('Trader Joes', 'TRADER JOES', 65.75),
-      ('Costco', 'COSTCO WHOLESALE', 180.00)
+      ('Costco', 'COSTCO WHOLESALE', 180.00),
+      ('Grocery Refund', 'WHOLE FOODS MARKET REFUND', -45.00)  # Inflow: negative amount for expense category
     ],
     'meals_dining_out': [
       ('McDonalds', 'MCDONALDS RESTAURANT', 12.50),

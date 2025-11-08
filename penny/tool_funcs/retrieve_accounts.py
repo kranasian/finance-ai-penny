@@ -3,6 +3,7 @@ import re
 from database import Database
 import pandas as pd
 from penny.tool_funcs.sandbox_logging import log
+from penny.tool_funcs.utils import convert_brackets_to_braces
 
 
 ACCOUNT_TYPE_TO_STRING = {
@@ -29,6 +30,8 @@ def retrieve_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
 
 def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Generate a formatted string describing account names and balances using the provided template and return metadata"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
   log(f"**Account Names/Balances**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -248,6 +251,8 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
 
 def utter_account_totals(df: pd.DataFrame, template: str) -> str:
   """Calculate total balances and return formatted string"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
   log(f"**Account Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:

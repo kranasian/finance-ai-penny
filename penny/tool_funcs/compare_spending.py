@@ -2,10 +2,13 @@ import json
 import pandas as pd
 import re
 from penny.tool_funcs.sandbox_logging import log
+from penny.tool_funcs.utils import convert_brackets_to_braces
 
 
 def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]:
   """Compare spending data between categories or time periods and return formatted string with metadata"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
   log(f"**Compare Spending**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   # Initialize metadata dict if not provided

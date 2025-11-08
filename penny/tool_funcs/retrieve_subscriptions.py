@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import re
 from penny.tool_funcs.sandbox_logging import log
+from penny.tool_funcs.utils import convert_brackets_to_braces
 
 
 def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
@@ -42,6 +43,8 @@ def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
 
 def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Generate a formatted string describing subscription transaction names and amounts using the provided template and return metadata"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
   log(f"**Subscription Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -72,15 +75,29 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     amount_log = f"${abs(amount):,.2f}" if amount else "Unknown"
     log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Subscription**: `{subscription_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`")
     
-    # Determine direction and preposition based on amount sign
-    # Negative amount = spending/outflow = "Spent" / "on"
-    # Positive amount = receiving/inflow = "Received" / "from"
-    if amount < 0:
-      direction = "Spent"
-      preposition = "on"
+    # Determine direction and preposition based on category and amount sign
+    # First check if category is income category
+    income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
+    is_income = category in income_categories if category else False
+    
+    # Determine direction based on category and amount sign
+    # For income categories: negative = earned (inflow), positive = refunded (outflow)
+    # For expense categories: positive = spent (outflow), negative = received (inflow/refund)
+    if is_income:
+      if amount < 0:
+        direction = "earned"
+        preposition = "from"
+      else:  # amount > 0
+        direction = "refunded"
+        preposition = "to"
     else:
-      direction = "Received"
-      preposition = "from"
+      # Expense categories (most subscriptions)
+      if amount > 0:
+        direction = "spent"
+        preposition = "on"
+      else:  # amount < 0
+        direction = "received"
+        preposition = "from"
     
     # Check if template has format specifiers for amount (like {amount:,.2f})
     amount_format_pattern = r'\{amount:([^}]+)\}'
@@ -226,6 +243,8 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
 
 def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   """Calculate total subscription transaction amounts and return formatted string"""
+  # Convert bracket placeholders to braces for Python format() compatibility
+  template = convert_brackets_to_braces(template)
   log(f"**Subscription Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -244,6 +263,45 @@ def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   total_amount = df['amount'].dropna().sum()
   transaction_count = len(df)
   log(f"**Calculated Total**: **Amount**: `${abs(total_amount):,.2f}` | **Count**: `{transaction_count}`")
+  
+  # Determine if transactions are income or spending based on categories
+  is_income = False
+  if len(df) > 0:
+    if 'category' in df.columns:
+      income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
+      is_income = df['category'].isin(income_categories).any()
+  
+  # Determine direction and verb based on category and amount sign
+  # Always use abs() for display amount
+  display_amount = abs(total_amount)
+  
+  # Determine direction based on category and amount sign
+  # For income categories: negative = earned (inflow), positive = refunded (outflow)
+  # For expense categories: positive = spent (outflow), negative = received (inflow/refund)
+  if is_income:
+    # Income categories
+    if total_amount < 0:
+      # Income inflow (negative amount = money coming in)
+      direction = "earned"
+    else:  # total_amount > 0
+      # Income outflow (positive amount = money going out, refund)
+      direction = "outflow"
+  else:
+    # Expense categories (most subscriptions)
+    if total_amount > 0:
+      # Spending outflow (positive amount = money going out)
+      direction = "spent"
+    else:  # total_amount < 0
+      # Spending inflow (negative amount = money coming in, refund)
+      direction = "inflow"
+  
+  # Only show direction for inflow/outflow, not for earned/spent
+  # If direction is "earned" or "spent", set to empty string so it won't appear in templates
+  # Otherwise, format as "(inflow)" or "(outflow)"
+  if direction in ["earned", "spent"]:
+    direction_display = ""
+  else:
+    direction_display = f"({direction})"
   
   # Check if template has format specifiers for total_amount or amount (like {total_amount:,.2f} or {amount:,.2f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
@@ -266,8 +324,6 @@ def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   
   # Format amount string based on template requirements
   has_any_format_specifier = has_total_amount_format_specifier or has_amount_format_specifier
-  # Use absolute value for display (subscriptions are spending, so amounts are negative)
-  display_amount = abs(total_amount)
   
   if has_any_format_specifier:
     if has_dollar_sign:
@@ -282,6 +338,7 @@ def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   
   format_dict = {
     'total_amount': total_amount_str,
+    'direction': direction_display,  # Use direction_display which is empty for earned/spent
   }
   
   try:
@@ -292,12 +349,16 @@ def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
       try:
         format_dict_raw = {
           'total_amount': display_amount,
+          'direction': direction_display,
         }
         result = temp_template.format(**format_dict_raw)
       except Exception as e2:
         result = temp_template.format(total_amount=total_amount_str)
     else:
       raise
+  
+  # Clean up empty parentheses if direction was empty (e.g., "$100.00 ()" -> "$100.00")
+  result = re.sub(r'\s*\(\)', '', result)
   
   log(f"**Subscription Totals**: Template formatted successfully")
   return result
