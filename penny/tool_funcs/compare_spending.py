@@ -21,14 +21,28 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
     return "", metadata
   
   # Check if required columns exist
-  if 'category' not in df.columns:
-    error_msg = f"- **`df` is missing required 'category' column**. Available columns: `{', '.join(df.columns)}`"
+  # If 'group' column exists, we can work with aggregated data (no category needed)
+  # Otherwise, we need 'category' column for raw transaction data
+  has_group = 'group' in df.columns
+  has_category = 'category' in df.columns
+  
+  if not has_group and not has_category:
+    error_msg = f"- **`df` must have either 'category' or 'group' column**. Available columns: `{', '.join(df.columns)}`"
     log(error_msg)
     raise ValueError(error_msg)
   
-  # If 'group' column exists, use it for grouping (allows grouping multiple categories)
+  # Check if data is aggregated (has total_amount and transaction_count) or raw (has amount)
+  is_aggregated = 'total_amount' in df.columns and 'transaction_count' in df.columns
+  has_amount = 'amount' in df.columns
+  
+  if not is_aggregated and not has_amount:
+    error_msg = f"- **`df` must have either 'amount' (for raw data) or 'total_amount'/'transaction_count' (for aggregated data)**. Available columns: `{', '.join(df.columns)}`"
+    log(error_msg)
+    raise ValueError(error_msg)
+  
+  # If 'group' column exists, use it for grouping (allows grouping multiple categories or time periods)
   # Otherwise, group by category
-  if 'group' in df.columns:
+  if has_group:
     groups = df['group'].dropna().unique()
     if len(groups) == 0:
       error_msg = f"- **`df` has 'group' column but no groups found after filtering**. Available columns: `{', '.join(df.columns)}`"
@@ -39,8 +53,12 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       group_name = str(groups[0])
       group_df = df[df['group'] == groups[0]]
       # Use absolute value to handle both spending (negative) and earnings (positive)
-      total = abs(group_df['amount'].sum())
-      count = len(group_df)
+      if is_aggregated:
+        total = abs(group_df['total_amount'].sum())
+        count = int(group_df['transaction_count'].sum())
+      else:
+        total = abs(group_df['amount'].sum())
+        count = len(group_df)
       
       # Format category name for display
       def format_category_name(cat: str) -> str:
@@ -103,7 +121,11 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
     df1 = df[df['group'] == groups[0]]
     df2 = df[df['group'] == groups[1]]
   else:
-    # Group by category
+    # Group by category (requires category column)
+    if not has_category:
+      error_msg = f"- **`df` must have 'category' column when 'group' column is not present**. Available columns: `{', '.join(df.columns)}`"
+      log(error_msg)
+      raise ValueError(error_msg)
     categories = df['category'].dropna().unique()
     if len(categories) == 0:
       error_msg = f"- **`df` has no categories found after filtering**. Available columns: `{', '.join(df.columns)}`"
@@ -114,8 +136,12 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       category_name = str(categories[0])
       category_df = df[df['category'] == categories[0]]
       # Use absolute value to handle both spending (negative) and earnings (positive)
-      total = abs(category_df['amount'].sum())
-      count = len(category_df)
+      if is_aggregated:
+        total = abs(category_df['total_amount'].sum())
+        count = int(category_df['transaction_count'].sum())
+      else:
+        total = abs(category_df['amount'].sum())
+        count = len(category_df)
       
       # Format category name for display
       def format_category_name(cat: str) -> str:
@@ -186,8 +212,12 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
     raise ValueError(error_msg)
   
   # Calculate totals for each group (using absolute value for spending)
-  total1 = abs(df1['amount'].sum())
-  total2 = abs(df2['amount'].sum())
+  if is_aggregated:
+    total1 = abs(df1['total_amount'].sum())
+    total2 = abs(df2['total_amount'].sum())
+  else:
+    total1 = abs(df1['amount'].sum())
+    total2 = abs(df2['amount'].sum())
   
   log(f"**Comparison**: Group 1 (`{group1_name}`): `${total1:,.2f}` | Group 2 (`{group2_name}`): `${total2:,.2f}`")
   
@@ -231,8 +261,12 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
     difference_str = f"{difference_abs:,.2f}"
   
   # Calculate difference in counts
-  count1 = len(df1)
-  count2 = len(df2)
+  if is_aggregated:
+    count1 = int(df1['transaction_count'].sum())
+    count2 = int(df2['transaction_count'].sum())
+  else:
+    count1 = len(df1)
+    count2 = len(df2)
   count_difference = count1 - count2
   count_difference_abs = abs(count_difference)
   

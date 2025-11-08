@@ -55,83 +55,77 @@ Write a function `process_input` that takes no arguments and print()s what to te
   - If only one account of that type exists, use that account's `account_id`.
 - Today's date is {today_date}.
 
+<AMOUNT_SIGN_CONVENTIONS>
+  **Amount sign conventions** (applies to all transaction, forecast, and subscription functions):
+  - Income (money coming in): negative amounts = "earned"
+  - Income outflow (refunds/returns): positive amounts = "outflow" (for subscriptions) or "refunded" (for transactions/forecasts)
+  - Spending (money going out): positive amounts = "spent"
+  - Spending inflow (refunds/returns): negative amounts = "inflow" (for subscriptions) or "received" (for transactions/forecasts)
+</AMOUNT_SIGN_CONVENTIONS>
+
 <IMPLEMENTED_FUNCTIONS>
   These functions are already implemented:
     - `retrieve_accounts(): pd.DataFrame`
         - retrieves all accounts and returns a pandas DataFrame.  It may be empty if no accounts exist.
-        - Panda's dataframe columns: `account_id`, `account_type`, `account_name`, `balance_available`, `balance_current`, `balance_limit`
-        - `account_id` is a integer type, `account_type` and `account_name` are str types, `balance_available`, `balance_current` and `balance_limit` are float types.
+        - DataFrame columns: `account_id` (int), `account_type` (str), `account_name` (str), `balance_available` (float), `balance_current` (float), `balance_limit` (float)
         - **Note**: `account_id` is for metadata only (e.g., filtering, joining), not for display to users. Use `account_name` for user-facing output.
     - `account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
+        - Template placeholders: any column from the DataFrame (e.g., `[account_name]`, `[balance_current]`, `[balance_available]`, `[account_type]`)
     - `utter_account_totals(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and calculates total balances and returns a formatted string based on `template`.
+        - Template placeholders: any column from the DataFrame (e.g., `[balance_current]`, `[balance_available]`)
     - `retrieve_transactions() -> pd.DataFrame`
         - retrieves all transactions and returns a pandas DataFrame.  It may be empty if no transactions exist.
-        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`, `ai_category_id`
-        - `transaction_id`, `account_id`, `user_id`, and `ai_category_id` are integer types, `transaction_name` and `category` are str types, `amount` is a float type, `date` is a pandas datetime64 (pd.Timestamp) type.
+        - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `ai_category_id` (int)
         - **Note**: `transaction_id` and `account_id` are for metadata only (e.g., filtering, joining, returning in metadata), not for display to users. Use `transaction_name` and `account_name` (from accounts DataFrame) for user-facing output.
         - **Category definitions**: 
           - "Spending" refers to all transactions with non-income categories (expense categories), regardless of whether the amount is positive or negative.
           - "Earning" (or "Income") refers to all transactions with income categories, regardless of whether the amount is positive or negative.
-        - **Amount sign conventions**: 
-          - Income (money coming in): negative amounts
-          - Income outflow (refunds/returns): positive amounts
-          - Spending (money going out): positive amounts
-          - Spending inflow (refunds/returns): negative amounts
     - `transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-        - Template placeholders: `[transaction_name]`, `[amount]`, `[date]`, `[category]`, `[direction]`, `[account_name]`, and any other column from the DataFrame
+        - Template placeholders: any column from the DataFrame (e.g., `[transaction_name]`, `[amount]`, `[date]`, `[category]`, `[direction]`, `[account_name]`)
         - `[direction]` already contains the verb: "earned" or "refunded" for income, "spent" or "received" for expenses.
-        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `utter_transaction_totals(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and `template` string, calculates total transaction amounts and returns a formatted string.
         - The function automatically determines if transactions are income or spending based on the `category` column in the DataFrame.
         - Template placeholders: `[total_amount]`, `[direction]`
         - `[direction]` already contains the verb: "earned" or "refunded" for income, "spent" or "received" for expenses.
-        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]`
         - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
     - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
         - retrieves spending forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
         - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-        - Panda's dataframe columns: `user_id`, `ai_category_id`, `month_date` (if monthly) or `sunday_date` (if weekly), `forecasted_amount`, `category`
-        - `user_id` and `ai_category_id` are integer types, `forecasted_amount` is a float type, date column is a pandas datetime64 (pd.Timestamp) type, `category` is a string type with the category name.
+        - DataFrame columns: `user_id` (int), `ai_category_id` (int), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
         - `month_date` is in YYYY-MM-DD format with day always 01 (first day of the month).
         - `sunday_date` is the Sunday (start) date of the week.
         - Returns only spending forecasts (excludes income category IDs: 36, 37, 38, 39).
     - `retrieve_income_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
         - retrieves income forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
         - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-        - Panda's dataframe columns: `user_id`, `ai_category_id`, `month_date` (if monthly) or `sunday_date` (if weekly), `forecasted_amount`, `category`
-        - `user_id` and `ai_category_id` are integer types, `forecasted_amount` is a float type, date column is a pandas datetime64 (pd.Timestamp) type, `category` is a string type with the category name.
+        - DataFrame columns: `user_id` (int), `ai_category_id` (int), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
         - `month_date` is in YYYY-MM-DD format with day always 01 (first day of the month).
         - `sunday_date` is the Sunday (start) date of the week.
     - `forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-        - Template placeholders: `[date]`, `[amount]`, `[forecasted_amount]`, `[direction]`, `[category]`, `[ai_category_id]`, `[month_date]`, `[sunday_date]`
+        - Template placeholders: any column from the DataFrame (e.g., `[date]`, `[amount]`, `[forecasted_amount]`, `[direction]`, `[category]`, `[ai_category_id]`, `[month_date]`, `[sunday_date]`)
         - `[direction]` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `[direction]` in templates.
-        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `utter_forecasts(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and calculates total forecasted amounts and returns a formatted string based on `template`.
         - Template placeholders: `[total_amount]`, `[amount]`, `[forecasted_amount]`, `[direction]`, `[month_date]`, `[sunday_date]`, `[category_count]`, `[categories]`
         - `[direction]` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `[direction]` in templates.
-        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `retrieve_subscriptions() -> pd.DataFrame`
         - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
-        - Panda's dataframe columns: `transaction_id`, `user_id`, `account_id`, `date`, `transaction_name`, `amount`, `category`, `subscription_name`, `confidence_score_bills`, `reviewer_bills`.
-        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
+        - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `subscription_name` (str), `confidence_score_bills` (float), `reviewer_bills` (str)
     - `subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-        - Template placeholders: `[subscription_name]`, `[transaction_name]`, `[amount]`, `[date]`, `[category]`, `[direction]`, and any other column from the DataFrame
+        - Template placeholders: any column from the DataFrame (e.g., `[subscription_name]`, `[transaction_name]`, `[amount]`, `[date]`, `[category]`, `[direction]`)
         - `[direction]` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories.
-        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "refunded", Spending inflow (negative) = "received", Spending outflow (positive) = "spent"
     - `utter_subscription_totals(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and `template` string, calculates total subscription transaction amounts and returns a formatted string.
         - The function automatically determines if transactions are income or spending based on the `category` column in the DataFrame.
         - Template placeholders: `[total_amount]`, `[direction]`
         - `[direction]` will be blank (empty string) for "earned" or "spent", and will show "(inflow)" or "(outflow)" for refunds/returns.
-        - **Amount sign conventions**: Income (negative) = "earned", Income outflow (positive) = "outflow", Spending inflow (negative) = "inflow", Spending outflow (positive) = "spent"
     - `respond_to_app_inquiry(inquiry: str) -> str`
         - accepts a string `inquiry` on how to categorize transactions, Penny's capabilities, or other app questions and returns a string response.
     - `create_goal(goals: list[dict]) -> tuple[str, dict]`
@@ -352,22 +346,6 @@ def process_input():
     return True, metadata
 ```
 
-input: User: What is my account balance?
-output: ```python
-def process_input():
-    df = retrieve_accounts()
-    metadata = {"accounts": []}
-    
-    if df.empty:
-      print("You have no accounts.")
-    else:
-      print("Here are your account balances:")
-      for_print, metadata["accounts"] = account_names_and_balances(df, "Account '[account_name]' ([account_type]) has [balance_current] left with [balance_available] available now.")
-      print(for_print)
-    
-    return True, metadata
-```
-
 input: User: what is my net worth
 output: ```python
 def process_input():
@@ -425,50 +403,6 @@ def process_input():
           else:
             # Compare spending between categories
             result, metadata = compare_spending(df, 'You spent $[difference] more on [more_label] ($[more_amount], [more_count] transactions) over [less_label] ($[less_amount], [less_count] transactions).')
-            print(result)
-    
-    return True, metadata
-```
-
-input: User: Compare my dining out last sept 2025 vs oct 2025.
-output: ```python
-def process_input():
-    df = retrieve_transactions()
-    metadata = {}
-    
-    if df.empty:
-      print("You have no transactions.")
-    else:
-      # Filter for dining out category
-      df = df[df['category'] == 'meals_dining_out']
-      
-      if df.empty:
-        print("You have no dining out transactions.")
-      else:
-        # Filter for September 2025
-        sept_start = get_start_of_month(get_date(2025, 9, 1))
-        sept_end = get_end_of_month(sept_start)
-        sept_df = df[(df['date'] >= sept_start) & (df['date'] <= sept_end)].copy()
-        sept_df['group'] = 'September 2025'
-        
-        # Filter for October 2025
-        oct_start = get_start_of_month(get_date(2025, 10, 1))
-        oct_end = get_end_of_month(oct_start)
-        oct_df = df[(df['date'] >= oct_start) & (df['date'] <= oct_end)].copy()
-        oct_df['group'] = 'October 2025'
-        
-        # Combine both months
-        combined_df = pd.concat([sept_df, oct_df])
-        
-        if combined_df.empty:
-          print("You have no dining out transactions in September or October 2025.")
-        else:
-          groups = combined_df['group'].unique()
-          if len(groups) < 2:
-            print(f"You only have dining out transactions in {groups[0]}.")
-          else:
-            # Compare spending between the two months
-            result, metadata = compare_spending(combined_df, 'You spent $[difference] more on [more_label] ($[more_amount], [more_count] transactions) over [less_label] ($[less_amount], [less_count] transactions).')
             print(result)
     
     return True, metadata
