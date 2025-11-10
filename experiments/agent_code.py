@@ -22,7 +22,7 @@ from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
 from penny.tool_funcs.forecast_utils import utter_forecasts
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
-from penny.tool_funcs.create_goal import create_goal
+from penny.tool_funcs.create_goal import create_goal_function_code_gen
 from penny.tool_funcs.date_utils import get_start_of_month, get_end_of_month, get_start_of_week, get_end_of_week, get_after_periods, get_date_string
 user_id = 1
 
@@ -49,6 +49,11 @@ def retrieve_income_forecasts(granularity: str = 'monthly') -> pd.DataFrame:
 def retrieve_subscriptions() -> pd.DataFrame:
   global user_id
   return retrieve_subscriptions_function_code_gen(user_id=user_id)
+
+
+def create_goal(goals: list[dict]) -> tuple[str, dict]:
+  global user_id
+  return create_goal_function_code_gen(goals, user_id=user_id)
 
 
 def utter_delta_from_now(future_time: datetime) -> str:

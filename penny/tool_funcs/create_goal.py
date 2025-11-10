@@ -1,7 +1,7 @@
 from penny.tool_funcs.sandbox_logging import log
 import json
 
-def create_goal(goals: list[dict]) -> tuple[str, dict]:
+def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[str, dict]:
   """
   Creates spending budgets or goals for financial categories.
   Supports creating single or multiple budgets/goals with weekly, monthly, or yearly frequencies.
@@ -21,6 +21,7 @@ def create_goal(goals: list[dict]) -> tuple[str, dict]:
       - description: str - Goal description string (required)
       - account_id: int - Account ID for credit_X_amount/save_X_amount/credit_0/save_0 types (optional)
       - percent: float - Target percent (0-100) for credit_X_amount/save_X_amount types (optional)
+    user_id: The user ID for the goals (default: 1)
   
   Returns:
     tuple[str, dict]: 
@@ -29,19 +30,8 @@ def create_goal(goals: list[dict]) -> tuple[str, dict]:
         {
           "goals": [
             {
-              "title": str,           # Goal title
-              "amount": float,        # Target amount
-              "start_date": str,      # Start date in YYYY-MM-DD format
-              "end_date": str,        # End date in YYYY-MM-DD format
-              "category": str,        # Raw category from user input
-              "matched_category": str, # Official category name
-              "granularity": str,     # "weekly", "monthly", or "yearly"
-              "type": str,            # "category", "credit_X_amount", "save_X_amount", "credit_0", or "save_0"
-              "match_caveats": str or None,  # Matching caveats if any
-              "clarification_needed": str or None,  # Clarification needed if any
-              "description": str,    # Goal description
-              "account_id": int or None,  # Account ID if applicable
-              "percent": float or None   # Target percent if applicable
+              "goal_id": int,  # Goal ID
+              "title": str     # Goal title
             },
             ...
           ]
@@ -71,9 +61,10 @@ def create_goal(goals: list[dict]) -> tuple[str, dict]:
     return response_message, metadata
   
   try:
-    created_goals = []
     caveats = []
+    goals_to_persist = []  # Collect all goals for batch persistence
     
+    # First pass: validate all goals
     for i, goal_data in enumerate(goals):
       # Extract goal data
       goal_type = goal_data.get("type", "category")
@@ -146,8 +137,10 @@ def create_goal(goals: list[dict]) -> tuple[str, dict]:
       if not end_date:
         end_date = "2099-12-31"
       
-      # Create goal object
-      goal = {
+      # Prepare goal data for persistence
+      # Note: category_id would need to be mapped from match_category name to ID
+      # For now, we'll pass None and let the database handle it
+      persist_data = {
         "title": title,
         "amount": float(amount),
         "start_date": start_date,
@@ -163,11 +156,23 @@ def create_goal(goals: list[dict]) -> tuple[str, dict]:
         "percent": float(percent) if percent is not None else None
       }
       
-      created_goals.append(goal)
+      goals_to_persist.append(persist_data)
       
       # Collect caveats
       if match_caveats:
         caveats.append(match_caveats)
+    
+    # Batch persist all goals
+    goal_ids = _persist_goals_batch(user_id, goals_to_persist)
+    
+    # Create simplified goal objects for return (only goal_id and title)
+    created_goals = []
+    for i, persist_data in enumerate(goals_to_persist):
+      goal_simplified = {
+        "goal_id": goal_ids[i],
+        "title": persist_data["title"]
+      }
+      created_goals.append(goal_simplified)
     
     # Build success message
     response_parts = []
@@ -179,12 +184,13 @@ def create_goal(goals: list[dict]) -> tuple[str, dict]:
     # Success message
     response_parts.append(f"Successfully created {len(created_goals)} budget(s) or goal(s).")
     
-    # Add goal descriptions from the description field
+    # Add goal descriptions from the input goal data
     descriptions = []
-    for goal in created_goals:
-      if goal.get("description"):
-        descriptions.append(goal["description"])
-        response_parts.append(goal["description"])
+    for i, goal_data in enumerate(goals):
+      description = goal_data.get("description", "")
+      if description:
+        descriptions.append(description)
+        response_parts.append(description)
     
     # Join with newlines
     response_message = "\n\n".join(response_parts)
@@ -203,4 +209,42 @@ def create_goal(goals: list[dict]) -> tuple[str, dict]:
     response_message = f"I encountered an error while creating your goal: {str(e)}. Please check your parameters and try again."
     metadata = {"goals": []}
     return response_message, metadata
+
+
+def _persist_goals_batch(user_id: int, goals_data: list[dict]) -> list[int]:
+  """
+  Dummy implementation that simulates batch persisting goals to the database and returns dummy goal_ids.
+  
+  Args:
+    user_id: The user ID for the goals
+    goals_data: List of dictionaries, each containing goal data with keys:
+      - title: str - Goal title
+      - type: str - Goal type
+      - granularity: str - "weekly", "monthly", or "yearly"
+      - start_date: str - Start date in YYYY-MM-DD format
+      - end_date: str - End date in YYYY-MM-DD format
+      - amount: float - Target amount
+      - category_id: int or None - Category ID (optional)
+      - account_id: int or None - Account ID (optional)
+      - percent: float or None - Target percent (optional)
+  
+  Returns:
+    list[int]: List of dummy goal_ids (simulated batch insert)
+  """
+  import time
+  
+  # Dummy batch database insert - return simulated goal_ids
+  # In a real implementation, this would batch insert into the database
+  goal_ids = []
+  base_id = int(time.time() * 1000) % 1000000
+  
+  for i, goal_data in enumerate(goals_data):
+    title = goal_data.get("title", "")
+    goal_id = base_id + i  # Generate sequential dummy goal_ids
+    goal_ids.append(goal_id)
+    log(f"**Dummy Persisted Goal {i+1}**: user_id={user_id}, goal_id={goal_id}, title={title}")
+  
+  log(f"**Dummy Batch Persisted**: user_id={user_id}, {len(goal_ids)} goal(s)")
+  
+  return goal_ids
 

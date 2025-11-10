@@ -19,7 +19,7 @@ from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_funct
 from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_forecasts
 from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.respond_to_app_inquiry import respond_to_app_inquiry
-from penny.tool_funcs.create_goal import create_goal
+from penny.tool_funcs.create_goal import create_goal_function_code_gen
 from penny.tool_funcs.date_utils import (
     get_date,
     get_start_of_month,
@@ -307,7 +307,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     return respond_to_app_inquiry(inquiry)
   
   def create_goal_wrapper(goals: list[dict]):
-    return create_goal(goals)
+    return create_goal_function_code_gen(goals)
   
   safe_globals_dict = {
     "__builtins__": all_builtins,
