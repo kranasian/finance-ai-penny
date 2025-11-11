@@ -697,6 +697,64 @@ def process_input_whats_the_total_across_account_types():
     
     return True, metadata
 
+def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_month():
+    metadata = {}
+
+    # Get checking account balance
+    accounts_df = retrieve_accounts()
+
+    if accounts_df.empty:
+      print("You have no accounts.")
+      return True, metadata
+
+    # Filter for checking account
+    checking_df = accounts_df[accounts_df['account_type'] == 'deposit_checking']
+
+    if checking_df.empty:
+      print("You have no checking account.")
+      return True, metadata
+
+    # Get total available balance from checking accounts
+    total_available = checking_df['balance_available'].sum()
+
+    # Get next month date
+    first_day_current_month = get_start_of_month(datetime(2025, 11, 8))
+    first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
+    next_month_date = first_day_next_month.replace(day=1)
+
+    # Retrieve spending forecasts for next month
+    spending_df = retrieve_spending_forecasts('monthly')
+
+    if spending_df.empty:
+      print("You have no spending forecasts for next month.")
+      return True, metadata
+
+    # Filter for next month
+    spending_df = spending_df[spending_df['month_date'] == next_month_date]
+
+    if spending_df.empty:
+      print("You have no spending forecasts for next month.")
+      return True, metadata
+
+    # Rent category ID is 14
+    rent_df = spending_df[spending_df['ai_category_id'] == 14]
+
+    if rent_df.empty:
+      print("You have no rent forecast for next month.")
+      return True, metadata
+
+    # Calculate total forecasted rent
+    total_rent = rent_df['forecasted_amount'].sum()
+
+    # Compare and determine affordability
+    if total_available >= total_rent:
+      print(f"You can afford your rent next month. Your checking account has ${total_available:,.2f} available, and your forecasted rent is ${total_rent:,.2f}. You would have ${total_available - total_rent:,.2f} remaining.")
+    else:
+      print(f"You cannot afford your rent next month. Your checking account has ${total_available:,.2f} available, but your forecasted rent is ${total_rent:,.2f}. You would need ${total_rent - total_available:,.2f} more.")
+
+    return True, metadata
+
+
 def main():
   """Main function that demonstrates the reminder tools"""
   global user_id
@@ -793,6 +851,11 @@ def main():
   
   print("\n💳 Testing pay all credit cards weekly...")
   success, metadata = process_input_pay_200_weekly_on_all_my_credit_cards()
+  print(f"Success: {success}")
+  print(f"Metadata: {metadata}")
+
+  print("\n💰 Testing checking account affordability for rent next month...")
+  success, metadata = process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_month()
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
 

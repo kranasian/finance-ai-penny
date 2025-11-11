@@ -46,7 +46,7 @@ class GeminiAgentCodeGen:
 Write a function `process_input` that takes no arguments and print()s what to tell the user and returns a tuple:
   - The first element the boolean success or failure of the function.
   - The second element is the metadata for the entities created or retrieved.
-- Compute for dates using `datetime` package.  Assume `import datetime` is already included.
+- Assume `import datetime` is already included.  Use IMPLEMENTED_DATE_FUNCTIONS to compute for dates.
 - When looking for `account_name` and `==`, look for other relevant variations to find more matches. Refer to <ACCOUNT_NAMES> for the list of account names.
 - When looking for `subscription_name` and `==`, look for other relevant variations to find more matches. Refer to <SUBSCRIPTION_NAMES> for the list of subscription names.
 - When creating goals that require an `account_id` (credit_X_amount, save_X_amount, credit_0, save_0), if multiple accounts of the same type exist and the user didn't specify which account or said "all", handle as follows:
@@ -77,7 +77,7 @@ Write a function `process_input` that takes no arguments and print()s what to te
         - Template placeholders: any column from the DataFrame (e.g., `[balance_current]`, `[balance_available]`)
     - `retrieve_transactions() -> pd.DataFrame`
         - retrieves all transactions and returns a pandas DataFrame.  It may be empty if no transactions exist.
-        - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `ai_category_id` (int)
+        - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str)
         - **Note**: `transaction_id` and `account_id` are for metadata only (e.g., filtering, joining, returning in metadata), not for display to users. Use `transaction_name` and `account_name` (from accounts DataFrame) for user-facing output.
         - **Category definitions**: 
           - "Spending" refers to all transactions with non-income categories (expense categories), regardless of whether the amount is positive or negative.
@@ -96,19 +96,19 @@ Write a function `process_input` that takes no arguments and print()s what to te
     - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
         - retrieves spending forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
         - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-        - DataFrame columns: `user_id` (int), `ai_category_id` (int), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
+        - DataFrame columns: `user_id` (int), `category` (str), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
         - `month_date` is in YYYY-MM-DD format with day always 01 (first day of the month).
         - `sunday_date` is the Sunday (start) date of the week.
         - Returns only spending forecasts (excludes income category IDs: 36, 37, 38, 39).
     - `retrieve_income_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
         - retrieves income forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
         - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-        - DataFrame columns: `user_id` (int), `ai_category_id` (int), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
+        - DataFrame columns: `user_id` (int), `category` (str), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
         - `month_date` is in YYYY-MM-DD format with day always 01 (first day of the month).
         - `sunday_date` is the Sunday (start) date of the week.
     - `forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]`
         - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-        - Template placeholders: any column from the DataFrame (e.g., `[date]`, `[amount]`, `[forecasted_amount]`, `[direction]`, `[category]`, `[ai_category_id]`, `[month_date]`, `[sunday_date]`)
+        - Template placeholders: any column from the DataFrame (e.g., `[date]`, `[amount]`, `[forecasted_amount]`, `[direction]`, `[category]`, `[month_date]`, `[sunday_date]`)
         - `[direction]` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `[direction]` in templates.
     - `utter_forecasts(df: pd.DataFrame, template: str) -> str`
         - takes filtered `df` and calculates total forecasted amounts and returns a formatted string based on `template`.
