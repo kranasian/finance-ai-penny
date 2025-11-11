@@ -365,7 +365,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
 
 def _check_code_for_full_datetime(code_str: str) -> bool:
   """Check if the code contains datetime.timedelta"""
-  return " datetime.date(" in code_str or " datetime.time(" in code_str or "datetime.datetime(" in code_str
+  return "datetime.date" in code_str or "datetime.time" in code_str
 
 # Global PrintCollector instance for capturing print outputs
 _print_collector = None
