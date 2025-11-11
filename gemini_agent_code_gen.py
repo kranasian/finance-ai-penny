@@ -145,7 +145,7 @@ Write a function `process_input` that takes no arguments and print()s what to te
           - `match_caveats`: Matching constraints explanation
           - `clarification_needed`: Clarification prompt if needed
         - Goal types: "category" (requires match_category), "credit_X_amount"/"save_X_amount" (requires account_id), "credit_0"/"save_0" (requires account_id).
-        - Returns tuple: (str response message with caveats, success message, and goal descriptions, dict metadata with goals list).
+        - Returns tuple: (str response message with caveats, success message, and goal descriptions, list of goals).
 </IMPLEMENTED_FUNCTIONS>
 
 <IMPLEMENTED_DATE_FUNCTIONS>
