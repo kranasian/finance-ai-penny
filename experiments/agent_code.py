@@ -86,17 +86,19 @@ def process_input_how_much_left_in_checking():
     
     if df.empty:
       print("You have no accounts.")
-    else:
-      # Filter for checking accounts
-      df = df[df['account_type'] == 'deposit_checking']
-      
-      if df.empty:
-        print("You have no checking accounts.")
-      else:
-        print("Here are your checking account balances:")
-        for_print, metadata["accounts"] = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
-        print(for_print)
-        print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
+      return True, metadata
+    
+    # Filter for checking accounts
+    df = df[df['account_type'] == 'deposit_checking']
+    
+    if df.empty:
+      print("You have no checking accounts.")
+      return True, metadata
+    
+    print("Here are your checking account balances:")
+    for_print, metadata["accounts"] = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
+    print(for_print)
+    print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
     
     return True, metadata
 
@@ -107,20 +109,21 @@ def process_input_what_is_my_net_worth():
 
     if accounts_df.empty:
         print("You have no accounts to calculate net worth.")
-    else:
-        # List of asset account types for net worth calculation
-        asset_types = ['deposit_savings', 'deposit_money_market', 'deposit_checking']
-        liability_types = ['credit_card', 'loan_home_equity', 'loan_line_of_credit', 'loan_mortgage', 'loan_auto']
+        return True, metadata
 
-        # Filter for assets and liabilities
-        assets_df = accounts_df[accounts_df['account_type'].isin(asset_types)]
-        liabilities_df = accounts_df[accounts_df['account_type'].isin(liability_types)]
+    # List of asset account types for net worth calculation
+    asset_types = ['deposit_savings', 'deposit_money_market', 'deposit_checking']
+    liability_types = ['credit_card', 'loan_home_equity', 'loan_line_of_credit', 'loan_mortgage', 'loan_auto']
 
-        total_assets = assets_df['balance_current'].sum()
-        total_liabilities = liabilities_df['balance_current'].sum()
-        # net worth is the sum of assets minus liabilities
-        net_worth = total_assets - total_liabilities
-        print(f"You have a net worth of ${net_worth:,.0f} with assets of ${total_assets:,.0f} and liabilities of ${total_liabilities:,.0f}.")
+    # Filter for assets and liabilities
+    assets_df = accounts_df[accounts_df['account_type'].isin(asset_types)]
+    liabilities_df = accounts_df[accounts_df['account_type'].isin(liability_types)]
+
+    total_assets = assets_df['balance_current'].sum()
+    total_liabilities = liabilities_df['balance_current'].sum()
+    # net worth is the sum of assets minus liabilities
+    net_worth = total_assets - total_liabilities
+    print(f"You have a net worth of ${net_worth:,.0f} with assets of ${total_assets:,.0f} and liabilities of ${total_liabilities:,.0f}.")
 
     return True, metadata
 
@@ -131,18 +134,20 @@ def process_input_how_much_eating_out_have_I_done():
     
     if df.empty:
       print("You have no transactions.")
-    else:
-      # Filter for eating out categories
-      eating_out_categories = ['meals_dining_out', 'meals_delivered_food']
-      df = df[df['category'].isin(eating_out_categories)]
-      
-      if df.empty:
-        print("You have no eating out transactions.")
-      else:
-        print("Here are your eating out transactions:")
-        for_print, metadata["transactions"] = transaction_names_and_amounts(df, "[transaction_name] on [date]: [amount]")
-        print(for_print)
-        print(utter_transaction_totals(df, "In total, you have spent [total_amount] on eating out."))
+      return True, metadata
+    
+    # Filter for eating out categories
+    eating_out_categories = ['meals_dining_out', 'meals_delivered_food']
+    df = df[df['category'].isin(eating_out_categories)]
+    
+    if df.empty:
+      print("You have no eating out transactions.")
+      return True, metadata
+    
+    print("Here are your eating out transactions:")
+    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "[transaction_name] on [date]: [amount]")
+    print(for_print)
+    print(utter_transaction_totals(df, "In total, you have spent [total_amount] on eating out."))
     
     return True, metadata
 
@@ -153,30 +158,34 @@ def process_input_did_i_spend_more_on_dining_out_over_groceries_last_month():
     
     if df.empty:
       print("You have no transactions.")
-    else:
-      # Filter for last month
-      first_day_current_month = get_start_of_month(datetime.now())
-      first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
-      last_day_last_month = get_end_of_month(first_day_last_month)
-      
-      df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
-      
-      if df.empty:
-        print("You have no transactions from last month.")
-      else:
-        # Filter for dining out and groceries categories
-        df = df[df['category'].isin(['meals_dining_out', 'meals_groceries'])]
-        
-        if df.empty:
-          print("You have no dining out or groceries transactions from last month.")
-        else:
-          categories = df['category'].unique()
-          if len(categories) < 2:
-            print(f"You only have transactions in one category: {categories[0]}")
-          else:
-            # Compare spending between categories
-            result, metadata = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
-            print(result)
+      return True, metadata
+    
+    # Filter for last month
+    first_day_current_month = get_start_of_month(datetime.now())
+    first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
+    last_day_last_month = get_end_of_month(first_day_last_month)
+    
+    df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
+    
+    if df.empty:
+      print("You have no transactions from last month.")
+      return True, metadata
+    
+    # Filter for dining out and groceries categories
+    df = df[df['category'].isin(['meals_dining_out', 'meals_groceries'])]
+    
+    if df.empty:
+      print("You have no dining out or groceries transactions from last month.")
+      return True, metadata
+    
+    categories = df['category'].unique()
+    if len(categories) < 2:
+      print(f"You only have transactions in one category: {categories[0]}")
+      return True, metadata
+    
+    # Compare spending between categories
+    result, metadata = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+    print(result)
     
     return True, metadata
 
@@ -193,6 +202,7 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_dining_out
       return True, metadata
     
     for_print, metadata["accounts"] = account_names_and_balances(checking_df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
+    print(for_print)
     
     # Calculate total available balance in checking accounts
     total_available = checking_df['balance_available'].sum()
@@ -671,18 +681,19 @@ def process_input_whats_the_total_across_account_types():
     
     if df.empty:
       print("You have no accounts.")
-    else:
-      print("Here are all your account balances:")
-      for_print, metadata["accounts"] = account_names_and_balances(df, "Account \"{account_name}\" ({account_type}) has {balance_current} left with {balance_available} available now.")
-      print(for_print)
-      
-      # Calculate totals for different account types
-      account_types = df['account_type'].unique()
-      
-      for acc_type in account_types:
-        type_df = df[df['account_type'] == acc_type]
-        if not type_df.empty:
-          print(utter_account_totals(type_df, f"Total for {acc_type.replace('_', ' ')} accounts: ${{balance_current:,.2f}} left."))
+      return True, metadata
+    
+    print("Here are all your account balances:")
+    for_print, metadata["accounts"] = account_names_and_balances(df, "Account \"{account_name}\" ({account_type}) has {balance_current} left with {balance_available} available now.")
+    print(for_print)
+    
+    # Calculate totals for different account types
+    account_types = df['account_type'].unique()
+    
+    for acc_type in account_types:
+      type_df = df[df['account_type'] == acc_type]
+      if not type_df.empty:
+        print(utter_account_totals(type_df, f"Total for {acc_type.replace('_', ' ')} accounts: ${{balance_current:,.2f}} left."))
     
     return True, metadata
 

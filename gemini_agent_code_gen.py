@@ -327,21 +327,23 @@ Write a function `process_input` that takes no arguments and print()s what to te
 output: ```python
 def process_input():
     df = retrieve_accounts()
-    metadata = {"accounts": []}
+    metadata = {}
     
     if df.empty:
       print("You have no accounts.")
-    else:
-      # Filter for checking accounts
-      df = df[df['account_type'] == 'deposit_checking']
-      
-      if df.empty:
-        print("You have no checking accounts.")
-      else:
-        print("Here are your checking account balances:")
-        for_print, metadata["accounts"] = account_names_and_balances(df, "Account '[account_name]' has [balance_current] left with [balance_available] available now.")
-        print(for_print)
-        print(utter_account_totals(df, "Across all checking accounts, you have [balance_current] left."))
+      return True, metadata
+    
+    # Filter for checking accounts
+    df = df[df['account_type'] == 'deposit_checking']
+    
+    if df.empty:
+      print("You have no checking accounts.")
+      return True, metadata
+    
+    print("Here are your checking account balances:")
+    for_print, metadata["accounts"] = account_names_and_balances(df, "Account '[account_name]' has [balance_current] left with [balance_available] available now.")
+    print(for_print)
+    print(utter_account_totals(df, "Across all checking accounts, you have [balance_current] left."))
     
     return True, metadata
 ```
@@ -354,20 +356,21 @@ def process_input():
 
     if accounts_df.empty:
         print("You have no accounts to calculate net worth.")
-    else:
-        # List of asset account types for net worth calculation
-        asset_types = ['deposit_savings', 'deposit_money_market', 'deposit_checking']
-        liability_types = ['credit_card', 'loan_home_equity', 'loan_line_of_credit', 'loan_mortgage', 'loan_auto']
+        return True, metadata
 
-        # Filter for assets and liabilities
-        assets_df = accounts_df[accounts_df['account_type'].isin(asset_types)]
-        liabilities_df = accounts_df[accounts_df['account_type'].isin(liability_types)]
+    # List of asset account types for net worth calculation
+    asset_types = ['deposit_savings', 'deposit_money_market', 'deposit_checking']
+    liability_types = ['credit_card', 'loan_home_equity', 'loan_line_of_credit', 'loan_mortgage', 'loan_auto']
 
-        total_assets = assets_df['balance_current'].sum()
-        total_liabilities = liabilities_df['balance_current'].sum()
-        # net worth is the sum of assets minus liabilities
-        net_worth = total_assets - total_liabilities
-        print(f"You have a net worth of ${net_worth:,.0f} with assets of ${total_assets:,.0f} and liabilities of ${total_liabilities:,.0f}.")
+    # Filter for assets and liabilities
+    assets_df = accounts_df[accounts_df['account_type'].isin(asset_types)]
+    liabilities_df = accounts_df[accounts_df['account_type'].isin(liability_types)]
+
+    total_assets = assets_df['balance_current'].sum()
+    total_liabilities = liabilities_df['balance_current'].sum()
+    # net worth is the sum of assets minus liabilities
+    net_worth = total_assets - total_liabilities
+    print(f"You have a net worth of ${net_worth:,.0f} with assets of ${total_assets:,.0f} and liabilities of ${total_liabilities:,.0f}.")
 
     return True, metadata
 ```
@@ -380,30 +383,34 @@ def process_input():
     
     if df.empty:
       print("You have no transactions.")
-    else:
-      # Filter for last month
-      first_day_current_month = get_start_of_month(datetime.now())
-      first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
-      last_day_last_month = get_end_of_month(first_day_last_month)
-      
-      df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
-      
-      if df.empty:
-        print("You have no transactions from last month.")
-      else:
-        # Filter for dining out and groceries categories
-        df = df[df['category'].isin(['meals_dining_out', 'meals_groceries'])]
-        
-        if df.empty:
-          print("You have no dining out or groceries transactions from last month.")
-        else:
-          categories = df['category'].unique()
-          if len(categories) < 2:
-            print(f"You only have transactions in one category: {categories[0]}")
-          else:
-            # Compare spending between categories
-            result, metadata = compare_spending(df, 'You spent $[difference] more on [more_label] ($[more_amount], [more_count] transactions) over [less_label] ($[less_amount], [less_count] transactions).')
-            print(result)
+      return True, metadata
+    
+    # Filter for last month
+    first_day_current_month = get_start_of_month(datetime.now())
+    first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
+    last_day_last_month = get_end_of_month(first_day_last_month)
+    
+    df = df[(df['date'] >= first_day_last_month) & (df['date'] <= last_day_last_month)]
+    
+    if df.empty:
+      print("You have no transactions from last month.")
+      return True, metadata
+    
+    # Filter for dining out and groceries categories
+    df = df[df['category'].isin(['meals_dining_out', 'meals_groceries'])]
+    
+    if df.empty:
+      print("You have no dining out or groceries transactions from last month.")
+      return True, metadata
+    
+    categories = df['category'].unique()
+    if len(categories) < 2:
+      print(f"You only have transactions in one category: {categories[0]}")
+      return True, metadata
+    
+    # Compare spending between categories
+    result, metadata = compare_spending(df, 'You spent $[difference] more on [more_label] ($[more_amount], [more_count] transactions) over [less_label] ($[less_amount], [less_count] transactions).')
+    print(result)
     
     return True, metadata
 ```
@@ -422,6 +429,7 @@ def process_input():
       return True, metadata
     
     for_print, metadata["accounts"] = account_names_and_balances(checking_df, "Account '[account_name]' has [balance_current] left with [balance_available] available now.")
+    print(for_print)
     
     # Calculate total available balance in checking accounts
     total_available = checking_df['balance_available'].sum()
@@ -574,14 +582,16 @@ def process_input():
       print("You have no forecasts for next week.")
       return True, metadata
     
+    # Calculate totals
+    total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
+    total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
+    
     # Calculate expected savings
-    income_total = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
-    spending_total = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    expected_savings = income_total - spending_total
+    expected_savings = total_income - total_spending
     
     # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "[total_amount:,.2f]") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "[total_amount:,.2f]") if not spending_df.empty else "$0.00"
+    income_msg = utter_forecasts(income_df, "[direction] [total_amount:,.2f]") if not income_df.empty else "$0.00"
+    expenses_msg = utter_forecasts(spending_df, "[direction] [total_amount:,.2f]") if not spending_df.empty else "$0.00"
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -621,14 +631,16 @@ def process_input():
       print("You have no forecasts for next month.")
       return True, metadata
     
+    # Calculate totals
+    total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
+    total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
+    
     # Calculate expected savings
-    income_total = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
-    spending_total = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    expected_savings = income_total - spending_total
+    expected_savings = total_income - total_spending
     
     # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "[total_amount:,.2f]") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "[total_amount:,.2f]") if not spending_df.empty else "$0.00"
+    income_msg = utter_forecasts(income_df, "[direction] [total_amount:,.2f]") if not income_df.empty else "$0.00"
+    expenses_msg = utter_forecasts(spending_df, "[direction] [total_amount:,.2f]") if not spending_df.empty else "$0.00"
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -789,7 +801,7 @@ def process_input():
         "match_category": "transportation_car",
         "match_caveats": "Matching gas to overall car expenses.",
         "clarification_needed": None,
-        "description": "Created $60 Weekly Gas ⛽ from 2025-01-05 to 2025-07-05."
+        "description": f"Created $60 Weekly Gas ⛽ from {get_date_string(start_date)} to {get_date_string(end_date)}."
     }]
     
     response, metadata["goals"] = create_goal(goals)
