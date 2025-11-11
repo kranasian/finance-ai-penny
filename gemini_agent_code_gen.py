@@ -601,9 +601,9 @@ def process_input():
     
     # Filter for next week (sunday_date matches start of next week)
     if not income_df.empty:
-      income_df = income_df[income_df['sunday_date'] == start_of_next_week]
+      income_df = income_df[income_df['sunday_date'] == start_of_next_week.strftime('%Y-%m-%d')]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['sunday_date'] == start_of_next_week]
+      spending_df = spending_df[spending_df['sunday_date'] == start_of_next_week.strftime('%Y-%m-%d')]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next week.")
       return True, metadata
@@ -649,9 +649,9 @@ def process_input():
     
     # Filter for next month
     if not income_df.empty:
-      income_df = income_df[income_df['month_date'] == next_month_start_date]
+      income_df = income_df[income_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['month_date'] == next_month_start_date]
+      spending_df = spending_df[spending_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next month.")
       return True, metadata
@@ -712,7 +712,7 @@ def process_input():
       return True, metadata
     
     # Filter for next month
-    spending_df = spending_df[spending_df['month_date'] == next_month_start_date]
+    spending_df = spending_df[spending_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
     
     if spending_df.empty:
       print("You have no spending forecasts for next month.")
