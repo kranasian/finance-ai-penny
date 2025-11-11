@@ -376,8 +376,7 @@ def process_input_how_much_am_i_expected_to_save_next_month():
     
     # Get next month date
     first_day_current_month = get_start_of_month(datetime.now())
-    first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
-    next_month_date = first_day_next_month.replace(day=1)
+    next_month_start_date = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
     
     # Retrieve income and spending forecasts for next month
     income_df = retrieve_income_forecasts('monthly')
@@ -389,9 +388,9 @@ def process_input_how_much_am_i_expected_to_save_next_month():
     
     # Filter for next month
     if not income_df.empty:
-      income_df = income_df[income_df['month_date'] == next_month_date]
+      income_df = income_df[income_df['month_date'] == next_month_start_date]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['month_date'] == next_month_date]
+      spending_df = spending_df[spending_df['month_date'] == next_month_start_date]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next month.")
       return True, metadata
@@ -441,7 +440,7 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_
     # Get next month date
     first_day_current_month = get_start_of_month(datetime.now())
     first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
-    next_month_date = first_day_next_month.replace(day=1)
+    next_month_start_date = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
     
     # Retrieve spending forecasts for next month
     spending_df = retrieve_spending_forecasts('monthly')
@@ -451,7 +450,7 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_
       return True, metadata
     
     # Filter for next month
-    spending_df = spending_df[spending_df['month_date'] == next_month_date]
+    spending_df = spending_df[spending_df['month_date'] == next_month_start_date]
     
     if spending_df.empty:
       print("You have no spending forecasts for next month.")
@@ -696,64 +695,6 @@ def process_input_whats_the_total_across_account_types():
         print(utter_account_totals(type_df, f"Total for {acc_type.replace('_', ' ')} accounts: ${{balance_current:,.2f}} left."))
     
     return True, metadata
-
-def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_month():
-    metadata = {}
-
-    # Get checking account balance
-    accounts_df = retrieve_accounts()
-
-    if accounts_df.empty:
-      print("You have no accounts.")
-      return True, metadata
-
-    # Filter for checking account
-    checking_df = accounts_df[accounts_df['account_type'] == 'deposit_checking']
-
-    if checking_df.empty:
-      print("You have no checking account.")
-      return True, metadata
-
-    # Get total available balance from checking accounts
-    total_available = checking_df['balance_available'].sum()
-
-    # Get next month date
-    first_day_current_month = get_start_of_month(datetime(2025, 11, 8))
-    first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
-    next_month_date = first_day_next_month.replace(day=1)
-
-    # Retrieve spending forecasts for next month
-    spending_df = retrieve_spending_forecasts('monthly')
-
-    if spending_df.empty:
-      print("You have no spending forecasts for next month.")
-      return True, metadata
-
-    # Filter for next month
-    spending_df = spending_df[spending_df['month_date'] == next_month_date]
-
-    if spending_df.empty:
-      print("You have no spending forecasts for next month.")
-      return True, metadata
-
-    # Rent category ID is 14
-    rent_df = spending_df[spending_df['ai_category_id'] == 14]
-
-    if rent_df.empty:
-      print("You have no rent forecast for next month.")
-      return True, metadata
-
-    # Calculate total forecasted rent
-    total_rent = rent_df['forecasted_amount'].sum()
-
-    # Compare and determine affordability
-    if total_available >= total_rent:
-      print(f"You can afford your rent next month. Your checking account has ${total_available:,.2f} available, and your forecasted rent is ${total_rent:,.2f}. You would have ${total_available - total_rent:,.2f} remaining.")
-    else:
-      print(f"You cannot afford your rent next month. Your checking account has ${total_available:,.2f} available, but your forecasted rent is ${total_rent:,.2f}. You would need ${total_rent - total_available:,.2f} more.")
-
-    return True, metadata
-
 
 def main():
   """Main function that demonstrates the reminder tools"""

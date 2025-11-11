@@ -611,8 +611,7 @@ def process_input():
     
     # Get next month date
     first_day_current_month = get_start_of_month(datetime.now())
-    first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
-    next_month_date = first_day_next_month.replace(day=1)
+    next_month_start_date = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
     
     # Retrieve income and spending forecasts for next month
     income_df = retrieve_income_forecasts('monthly')
@@ -624,9 +623,9 @@ def process_input():
     
     # Filter for next month
     if not income_df.empty:
-      income_df = income_df[income_df['month_date'] == next_month_date]
+      income_df = income_df[income_df['month_date'] == next_month_start_date]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['month_date'] == next_month_date]
+      spending_df = spending_df[spending_df['month_date'] == next_month_start_date]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next month.")
       return True, metadata
@@ -677,8 +676,7 @@ def process_input():
     
     # Get next month date
     first_day_current_month = get_start_of_month(datetime.now())
-    first_day_next_month = get_after_periods(first_day_current_month, granularity="monthly", count=1)
-    next_month_date = first_day_next_month.replace(day=1)
+    next_month_start_date = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
     
     # Retrieve spending forecasts for next month
     spending_df = retrieve_spending_forecasts('monthly')
@@ -688,7 +686,7 @@ def process_input():
       return True, metadata
     
     # Filter for next month
-    spending_df = spending_df[spending_df['month_date'] == next_month_date]
+    spending_df = spending_df[spending_df['month_date'] == next_month_start_date]
     
     if spending_df.empty:
       print("You have no spending forecasts for next month.")
