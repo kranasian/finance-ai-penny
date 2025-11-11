@@ -103,23 +103,19 @@ These functions are already implemented:
 - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
   - retrieves spending forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
   - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-  - DataFrame columns: `user_id` (int), `category` (str), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
-  - `month_date` is in YYYY-MM-DD format with day always 01 (first day of the month).
-  - `sunday_date` is the Sunday (start) date of the week.
-  - Returns only spending forecasts (excludes income category IDs: 36, 37, 38, 39).
+  - DataFrame columns: `user_id` (int), `start_date` (datetime), `forecasted_amount` (float), `category` (str)
+  - Returns only spending forecasts.
 - `retrieve_income_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
   - retrieves income forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
   - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-  - DataFrame columns: `user_id` (int), `category` (str), `month_date` (datetime, if monthly) or `sunday_date` (datetime, if weekly), `forecasted_amount` (float), `category` (str)
-  - `month_date` is in YYYY-MM-DD format with day always 01 (first day of the month).
-  - `sunday_date` is the Sunday (start) date of the week.
+  - DataFrame columns: `user_id` (int), `start_date` (datetime), `forecasted_amount` (float), `category` (str)
 - `forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-  - Template placeholders: any column from the DataFrame (e.g., `{date}`, `{amount}`, `{forecasted_amount}`, `{direction}`, `{category}`, `{month_date}`, `{sunday_date}`)
+  - Template placeholders: any column from the DataFrame (e.g., `{date}`, `{amount}`, `{forecasted_amount}`, `{direction}`, `{category}`, `{start_date}`)
   - `{direction}` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `{direction}` in templates.
 - `utter_forecasts(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and calculates total forecasted amounts and returns a formatted string based on `template`.
-  - Template placeholders: `{total_amount}`, `{amount}`, `{forecasted_amount}`, `{direction}`, `{month_date}`, `{sunday_date}`, `{categories}`
+  - Template placeholders: `{total_amount}`, `{amount}`, `{forecasted_amount}`, `{direction}`, `{start_date}`, `{categories}`
   - `{direction}` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `{direction}` in templates.
 - `retrieve_subscriptions() -> pd.DataFrame`
   - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
@@ -599,11 +595,11 @@ def process_input():
       print("You have no forecasts for next week.")
       return True, metadata
     
-    # Filter for next week (sunday_date matches start of next week)
+    # Filter for next week (start_date matches start of next week)
     if not income_df.empty:
-      income_df = income_df[income_df['sunday_date'] == start_of_next_week.strftime('%Y-%m-%d')]
+      income_df = income_df[income_df['start_date'] == start_of_next_week]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['sunday_date'] == start_of_next_week.strftime('%Y-%m-%d')]
+      spending_df = spending_df[spending_df['start_date'] == start_of_next_week]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next week.")
       return True, metadata
@@ -649,9 +645,9 @@ def process_input():
     
     # Filter for next month
     if not income_df.empty:
-      income_df = income_df[income_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
+      income_df = income_df[income_df['start_date'] == next_month_start_date]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
+      spending_df = spending_df[spending_df['start_date'] == next_month_start_date]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next month.")
       return True, metadata
@@ -712,7 +708,7 @@ def process_input():
       return True, metadata
     
     # Filter for next month
-    spending_df = spending_df[spending_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
+    spending_df = spending_df[spending_df['start_date'] == next_month_start_date]
     
     if spending_df.empty:
       print("You have no spending forecasts for next month.")

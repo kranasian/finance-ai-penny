@@ -10,9 +10,10 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
     log(f"**Forecast Dates and Amounts**: Empty DataFrame")
     return "", []
   
-  # Check if this is monthly or weekly forecasts (date columns are optional)
-  is_monthly = 'month_date' in df.columns
-  is_weekly = 'sunday_date' in df.columns
+  # Check if DataFrame has start_date column
+  if 'start_date' not in df.columns:
+    log(f"**Forecast Dates and Amounts**: DataFrame must have 'start_date' column")
+    return "", []
   
   utterances = []
   metadata = []
@@ -61,13 +62,8 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
       else:  # forecasted_amount < 0
         direction = "received"
     
-    # Get date based on forecast type (date is always available)
-    if is_monthly:
-      date_value = row['month_date']
-      date_col = 'month_date'
-    else:  # is_weekly
-      date_value = row['sunday_date']
-      date_col = 'sunday_date'
+    # Get date from start_date column
+    date_value = row['start_date']
     
     # Format date - check if template has date format specifier
     date_format_pattern = r'\{date:([^}]+)\}'
@@ -109,10 +105,7 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
       'category': category_name,
     }
     
-    if is_monthly:
-      format_dict['month_date'] = date_str
-    elif is_weekly:
-      format_dict['sunday_date'] = date_str
+    format_dict['start_date'] = date_str
     
     # Format the template
     try:
@@ -133,10 +126,7 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
       'ai_category_id': int(ai_category_id),
       'forecasted_amount': float(forecasted_amount),
     }
-    if is_monthly:
-      metadata_entry['month_date'] = date_str
-    elif is_weekly:
-      metadata_entry['sunday_date'] = date_str
+    metadata_entry['start_date'] = date_str
     
     metadata.append(metadata_entry)
   
@@ -155,12 +145,9 @@ def utter_forecasts(df: pd.DataFrame, template: str) -> str:
     log(f"**Utter Forecasts**: Empty DataFrame")
     return ""
   
-  # Check if this is monthly or weekly forecasts
-  is_monthly = 'month_date' in df.columns
-  is_weekly = 'sunday_date' in df.columns
-  
-  if not is_monthly and not is_weekly:
-    log(f"**Utter Forecasts**: DataFrame must have 'month_date' or 'sunday_date' column")
+  # Check if DataFrame has start_date column
+  if 'start_date' not in df.columns:
+    log(f"**Utter Forecasts**: DataFrame must have 'start_date' column")
     return ""
   
   # Calculate total forecasted amount
@@ -247,21 +234,12 @@ def utter_forecasts(df: pd.DataFrame, template: str) -> str:
     'direction': direction_display,  # Use direction_display which is empty for earned/spent
   }
   
-  # Add date column based on type
-  if is_monthly:
-    # Get unique month dates
-    month_dates = df['month_date'].unique()
-    if len(month_dates) == 1:
-      format_dict['month_date'] = pd.to_datetime(month_dates[0]).strftime('%Y-%m-%d')
-    else:
-      format_dict['month_date'] = f"{len(month_dates)} months"
-  elif is_weekly:
-    # Get unique Sunday dates
-    sunday_dates = df['sunday_date'].unique()
-    if len(sunday_dates) == 1:
-      format_dict['sunday_date'] = pd.to_datetime(sunday_dates[0]).strftime('%Y-%m-%d')
-    else:
-      format_dict['sunday_date'] = f"{len(sunday_dates)} weeks"
+  # Add start_date to format_dict
+  start_dates = df['start_date'].unique()
+  if len(start_dates) == 1:
+    format_dict['start_date'] = pd.to_datetime(start_dates[0]).strftime('%Y-%m-%d')
+  else:
+    format_dict['start_date'] = f"{len(start_dates)} periods"
   
   # Add category count
   unique_categories = df['ai_category_id'].nunique()

@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -429,50 +430,32 @@ class Database:
     conn.commit()
     conn.close()
 
-  def get_monthly_forecasts_by_user(self, user_id: int) -> List[Dict]:
+  def get_monthly_forecasts_by_user(self, user_id: int) -> pd.DataFrame:
     """Get all monthly forecasts for a specific user"""
     conn = sqlite3.connect(self.db_path)
-    cursor = conn.cursor()
     
-    cursor.execute(
-      "SELECT user_id, ai_category_id, month_date, forecasted_amount FROM ai_monthly_forecasts WHERE user_id = ? ORDER BY month_date ASC, ai_category_id ASC",
-      (user_id,)
+    df = pd.read_sql_query(
+      "SELECT user_id, ai_category_id, month_date AS start_date, forecasted_amount FROM ai_monthly_forecasts WHERE user_id = ? ORDER BY month_date ASC, ai_category_id ASC",
+      conn,
+      params=(user_id,),
+      parse_dates=['start_date']
     )
-    results = cursor.fetchall()
     conn.close()
     
-    forecasts = []
-    for result in results:
-      forecasts.append({
-        'user_id': result[0],
-        'ai_category_id': result[1],
-        'month_date': result[2],
-        'forecasted_amount': result[3]
-      })
-    
-    return forecasts
+    return df
 
-  def get_all_monthly_forecasts(self) -> List[Dict]:
+  def get_all_monthly_forecasts(self) -> pd.DataFrame:
     """Get all monthly forecasts from the database"""
     conn = sqlite3.connect(self.db_path)
-    cursor = conn.cursor()
     
-    cursor.execute(
-      "SELECT user_id, ai_category_id, month_date, forecasted_amount FROM ai_monthly_forecasts ORDER BY month_date ASC, ai_category_id ASC"
+    df = pd.read_sql_query(
+      "SELECT user_id, ai_category_id, month_date AS start_date, forecasted_amount FROM ai_monthly_forecasts ORDER BY month_date ASC, ai_category_id ASC",
+      conn,
+      parse_dates=['start_date']
     )
-    results = cursor.fetchall()
     conn.close()
     
-    forecasts = []
-    for result in results:
-      forecasts.append({
-        'user_id': result[0],
-        'ai_category_id': result[1],
-        'month_date': result[2],
-        'forecasted_amount': result[3]
-      })
-    
-    return forecasts
+    return df
 
   # AI Weekly Forecasts management methods
   def create_weekly_forecast(self, user_id: int, ai_category_id: int, sunday_date: str, forecasted_amount: float) -> None:
@@ -487,50 +470,32 @@ class Database:
     conn.commit()
     conn.close()
 
-  def get_weekly_forecasts_by_user(self, user_id: int) -> List[Dict]:
+  def get_weekly_forecasts_by_user(self, user_id: int) -> pd.DataFrame:
     """Get all weekly forecasts for a specific user"""
     conn = sqlite3.connect(self.db_path)
-    cursor = conn.cursor()
     
-    cursor.execute(
-      "SELECT user_id, ai_category_id, sunday_date, forecasted_amount FROM ai_weekly_forecasts WHERE user_id = ? ORDER BY sunday_date ASC, ai_category_id ASC",
-      (user_id,)
+    df = pd.read_sql_query(
+      "SELECT user_id, ai_category_id, sunday_date AS start_date, forecasted_amount FROM ai_weekly_forecasts WHERE user_id = ? ORDER BY sunday_date ASC, ai_category_id ASC",
+      conn,
+      params=(user_id,),
+      parse_dates=['start_date']
     )
-    results = cursor.fetchall()
     conn.close()
     
-    forecasts = []
-    for result in results:
-      forecasts.append({
-        'user_id': result[0],
-        'ai_category_id': result[1],
-        'sunday_date': result[2],
-        'forecasted_amount': result[3]
-      })
-    
-    return forecasts
+    return df
 
-  def get_all_weekly_forecasts(self) -> List[Dict]:
+  def get_all_weekly_forecasts(self) -> pd.DataFrame:
     """Get all weekly forecasts from the database"""
     conn = sqlite3.connect(self.db_path)
-    cursor = conn.cursor()
     
-    cursor.execute(
-      "SELECT user_id, ai_category_id, sunday_date, forecasted_amount FROM ai_weekly_forecasts ORDER BY sunday_date ASC, ai_category_id ASC"
+    df = pd.read_sql_query(
+      "SELECT user_id, ai_category_id, sunday_date AS start_date, forecasted_amount FROM ai_weekly_forecasts ORDER BY sunday_date ASC, ai_category_id ASC",
+      conn,
+      parse_dates=['start_date']
     )
-    results = cursor.fetchall()
     conn.close()
     
-    forecasts = []
-    for result in results:
-      forecasts.append({
-        'user_id': result[0],
-        'ai_category_id': result[1],
-        'sunday_date': result[2],
-        'forecasted_amount': result[3]
-      })
-    
-    return forecasts
+    return df
 
   # Subscription management methods
   def create_subscription(self, user_id: int, name: str, recurrence_json: dict,

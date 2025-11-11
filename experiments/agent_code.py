@@ -340,11 +340,11 @@ def process_input_how_much_am_i_expected_to_save_next_week():
       print("You have no forecasts for next week.")
       return True, metadata
     
-    # Filter for next week (sunday_date matches start of next week)
+    # Filter for next week (start_date matches start of next week)
     if not income_df.empty:
-      income_df = income_df[income_df['sunday_date'] == start_of_next_week.strftime('%Y-%m-%d')]
+      income_df = income_df[income_df['start_date'] == start_of_next_week]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['sunday_date'] == start_of_next_week.strftime('%Y-%m-%d')]
+      spending_df = spending_df[spending_df['start_date'] == start_of_next_week]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next week.")
       return True, metadata
@@ -388,9 +388,9 @@ def process_input_how_much_am_i_expected_to_save_next_month():
     
     # Filter for next month
     if not income_df.empty:
-      income_df = income_df[income_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
+      income_df = income_df[income_df['start_date'] == next_month_start_date]
     if not spending_df.empty:
-      spending_df = spending_df[spending_df['month_date'] == next_month_start_date.strftime('%Y-%m-%d')]
+      spending_df = spending_df[spending_df['start_date'] == next_month_start_date]
     if income_df.empty and spending_df.empty:
       print("You have no forecasts for next month.")
       return True, metadata
@@ -450,7 +450,7 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_
       return True, metadata
     
     # Filter for next month
-    spending_df = spending_df[spending_df['month_date'] == next_month_start_date]
+    spending_df = spending_df[spending_df['start_date'] == next_month_start_date]
     
     if spending_df.empty:
       print("You have no spending forecasts for next month.")
