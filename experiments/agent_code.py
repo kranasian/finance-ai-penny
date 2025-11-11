@@ -457,7 +457,7 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_
       print("You have no spending forecasts for next month.")
       return True, metadata
     
-    rent_df = spending_df[spending_df['ai_category_id'] == 14]
+    rent_df = spending_df[spending_df['category'] == 'shelter_home']
     
     if rent_df.empty:
       print("You have no rent forecast for next month.")
