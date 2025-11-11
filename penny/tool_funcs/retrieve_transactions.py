@@ -60,6 +60,8 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
   for i in range(len(df)):
     transaction = df.iloc[i]
     transaction_name = transaction.get('transaction_name', 'Unknown Transaction')
+    # Clean up transaction name by removing text inside brackets (e.g., "Local Restaurant [DOWNTOWN BISTRO]" -> "Local Restaurant")
+    transaction_name_cleaned = re.sub(r'\s*\[.*?\]\s*', '', transaction_name).strip()
     amount = transaction.get('amount', 0.0)
     date = transaction.get('date', 'Unknown Date')
     category = transaction.get('category', 'Unknown Category')
@@ -201,7 +203,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     # Build format dictionary with available columns
     format_dict = {
       'name': transaction_name,
-      'transaction_name': transaction_name,
+      'transaction_name': transaction_name_cleaned,
       'amount': amount_str,
       'date': date_str,
       'category': category,
@@ -256,7 +258,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     # Always add to metadata (process all transactions)
     metadata.append({
       "transaction_id": int(transaction_id),
-      "transaction_name": transaction_name
+      "transaction_name": transaction_name_cleaned
     })
     
     # Only add to utterances if under the limit
