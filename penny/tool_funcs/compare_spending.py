@@ -2,13 +2,10 @@ import json
 import pandas as pd
 import re
 from penny.tool_funcs.sandbox_logging import log
-from penny.tool_funcs.utils import convert_brackets_to_braces
 
 
 def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]:
   """Compare spending data between categories or time periods and return formatted string with metadata"""
-  # Convert bracket placeholders to braces for Python format() compatibility
-  template = convert_brackets_to_braces(template)
   log(f"**Compare Spending**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   # Initialize metadata dict if not provided
@@ -68,7 +65,7 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       
       group_label = format_category_name(group_name)
       
-      # Handle format specifiers in template (e.g., {amount:,.2f})
+      # Handle format specifiers in template (e.g., {amount:,.0f})
       temp_template = template
       temp_template = re.sub(r'\{amount:[^}]+\}', '{amount}', temp_template)
       temp_template = re.sub(r'\{total:[^}]+\}', '{total}', temp_template)
@@ -77,9 +74,9 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       # Check if template has dollar sign
       has_dollar_sign = '$' in template
       if has_dollar_sign:
-        amount_str = f"{total:,.2f}"
+        amount_str = f"{total:,.0f}"
       else:
-        amount_str = f"${total:,.2f}"
+        amount_str = f"${total:,.0f}"
       
       # Try to use template, fallback to default message
       try:
@@ -151,7 +148,7 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       
       category_label = format_category_name(category_name)
       
-      # Handle format specifiers in template (e.g., {amount:,.2f})
+      # Handle format specifiers in template (e.g., {amount:,.0f})
       temp_template = template
       temp_template = re.sub(r'\{amount:[^}]+\}', '{amount}', temp_template)
       temp_template = re.sub(r'\{total:[^}]+\}', '{total}', temp_template)
@@ -160,9 +157,9 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       # Check if template has dollar sign
       has_dollar_sign = '$' in template
       if has_dollar_sign:
-        amount_str = f"{total:,.2f}"
+        amount_str = f"{total:,.0f}"
       else:
-        amount_str = f"${total:,.2f}"
+        amount_str = f"${total:,.0f}"
       
       # Try to use template, fallback to default message
       try:
@@ -219,7 +216,7 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
     total1 = abs(df1['amount'].sum())
     total2 = abs(df2['amount'].sum())
   
-  log(f"**Comparison**: Group 1 (`{group1_name}`): `${total1:,.2f}` | Group 2 (`{group2_name}`): `${total2:,.2f}`")
+  log(f"**Comparison**: Group 1 (`{group1_name}`): `${total1:,.0f}` | Group 2 (`{group2_name}`): `${total2:,.0f}`")
   
   # Format amounts based on template
   # Check if template has format specifiers for any placeholders
@@ -247,18 +244,18 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
   
   # Format amounts as strings (always format as strings, not numbers)
   if has_dollar_sign:
-    first_amount_str = f"{total1:,.2f}"
-    second_amount_str = f"{total2:,.2f}"
+    first_amount_str = f"{total1:,.0f}"
+    second_amount_str = f"{total2:,.0f}"
   else:
-    first_amount_str = f"${total1:,.2f}"
-    second_amount_str = f"${total2:,.2f}"
+    first_amount_str = f"${total1:,.0f}"
+    second_amount_str = f"${total2:,.0f}"
   
   # Calculate difference in amounts
   difference = total1 - total2
   difference_abs = abs(difference)
-  difference_str = f"${difference_abs:,.2f}"
+  difference_str = f"${difference_abs:,.0f}"
   if has_dollar_sign:
-    difference_str = f"{difference_abs:,.2f}"
+    difference_str = f"{difference_abs:,.0f}"
   
   # Calculate difference in counts
   if is_aggregated:

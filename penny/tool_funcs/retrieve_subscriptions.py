@@ -3,7 +3,6 @@ import json
 import pandas as pd
 import re
 from penny.tool_funcs.sandbox_logging import log
-from penny.tool_funcs.utils import convert_brackets_to_braces
 
 
 def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
@@ -43,8 +42,6 @@ def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
 
 def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Generate a formatted string describing subscription transaction names and amounts using the provided template and return metadata"""
-  # Convert bracket placeholders to braces for Python format() compatibility
-  template = convert_brackets_to_braces(template)
   log(f"**Subscription Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -72,7 +69,7 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     category = transaction.get('category', 'Unknown Category')
     transaction_id = transaction.get('transaction_id', None)
     
-    amount_log = f"${abs(amount):,.2f}" if amount else "Unknown"
+    amount_log = f"${abs(amount):,.0f}" if amount else "Unknown"
     log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Subscription**: `{subscription_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`")
     
     # Determine direction and preposition based on category and amount sign
@@ -99,7 +96,7 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
         direction = "received"
         preposition = "from"
     
-    # Check if template has format specifiers for amount (like {amount:,.2f})
+    # Check if template has format specifiers for amount (like {amount:,.0f})
     amount_format_pattern = r'\{amount:([^}]+)\}'
     has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
     
@@ -167,18 +164,18 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
       # Template originally had format specifiers, format with $ if template doesn't have $
       if has_dollar_sign:
         # Template has $, format without $ prefix
-        amount_str = f"{abs(amount):,.2f}"
+        amount_str = f"{abs(amount):,.0f}"
       else:
         # Template has NO $, format WITH $ prefix
-        amount_str = f"${abs(amount):,.2f}"
+        amount_str = f"${abs(amount):,.0f}"
     else:
       # No format specifiers - check if template has dollar signs
       if has_dollar_sign:
         # Template has dollar signs, format without $ prefix
-        amount_str = f"{abs(amount):,.2f}"
+        amount_str = f"{abs(amount):,.0f}"
       else:
         # Template has NO dollar signs, format WITH $ prefix
-        amount_str = f"${abs(amount):,.2f}"
+        amount_str = f"${abs(amount):,.0f}"
     
     # Build format dictionary with subscription transaction fields
     format_dict = {
@@ -196,7 +193,7 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     # Extract all placeholder names from the template (e.g., {direction_amount}, {custom_column})
     template_placeholders = re.findall(r'\{([^}:]+)', temp_template)
     for placeholder in template_placeholders:
-      # Remove any format specifiers (e.g., "amount:,.2f" -> "amount")
+      # Remove any format specifiers (e.g., "amount:,.0f" -> "amount")
       placeholder_name = placeholder.split(':')[0]
       # If the placeholder is not already in format_dict and exists as a column in the DataFrame
       if placeholder_name not in format_dict and placeholder_name in df.columns:
@@ -243,8 +240,6 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
 
 def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   """Calculate total subscription transaction amounts and return formatted string"""
-  # Convert bracket placeholders to braces for Python format() compatibility
-  template = convert_brackets_to_braces(template)
   log(f"**Subscription Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -262,7 +257,7 @@ def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   # Calculate total, excluding None values
   total_amount = df['amount'].dropna().sum()
   transaction_count = len(df)
-  log(f"**Calculated Total**: **Amount**: `${abs(total_amount):,.2f}` | **Count**: `{transaction_count}`")
+  log(f"**Calculated Total**: **Amount**: `${abs(total_amount):,.0f}` | **Count**: `{transaction_count}`")
   
   # Determine if transactions are income or spending based on categories
   is_income = False
@@ -303,7 +298,7 @@ def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   else:
     direction_display = f"({direction})"
   
-  # Check if template has format specifiers for total_amount or amount (like {total_amount:,.2f} or {amount:,.2f})
+  # Check if template has format specifiers for total_amount or amount (like {total_amount:,.0f} or {amount:,.0f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
   amount_format_pattern = r'\{amount:([^}]+)\}'
   has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
@@ -327,14 +322,14 @@ def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   
   if has_any_format_specifier:
     if has_dollar_sign:
-      total_amount_str = f"{display_amount:,.2f}"
+      total_amount_str = f"{display_amount:,.0f}"
     else:
-      total_amount_str = f"${display_amount:,.2f}"
+      total_amount_str = f"${display_amount:,.0f}"
   else:
     if has_dollar_sign:
-      total_amount_str = f"{display_amount:,.2f}"
+      total_amount_str = f"{display_amount:,.0f}"
     else:
-      total_amount_str = f"${display_amount:,.2f}"
+      total_amount_str = f"${display_amount:,.0f}"
   
   format_dict = {
     'total_amount': total_amount_str,

@@ -145,9 +145,9 @@ def process_input_how_much_eating_out_have_I_done():
       return True, metadata
     
     print("Here are your eating out transactions:")
-    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "[transaction_name] on [date]: [amount]")
+    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{transaction_name} on {date}: {amount}")
     print(for_print)
-    print(utter_transaction_totals(df, "In total, you have spent [total_amount] on eating out."))
+    print(utter_transaction_totals(df, "In total, you have spent {total_amount} on eating out."))
     
     return True, metadata
 
@@ -236,9 +236,9 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_dining_out
     
     # Compare and determine affordability
     if total_available >= total_dining_out:
-      print(f"You can afford your dining out expenses from last month. Your checking account has ${total_available:,.2f} available, and your dining out spending was ${total_dining_out:,.2f}. You would have ${total_available - total_dining_out:,.2f} remaining.")
+      print(f"You can afford your dining out expenses from last month. Your checking account has ${total_available:,.0f} available, and your dining out spending was ${total_dining_out:,.0f}. You would have ${total_available - total_dining_out:,.0f} remaining.")
     else:
-      print(f"You cannot afford your dining out expenses from last month. Your checking account has ${total_available:,.2f} available, but your dining out spending was ${total_dining_out:,.2f}. You would need ${total_dining_out - total_available:,.2f} more.")
+      print(f"You cannot afford your dining out expenses from last month. Your checking account has ${total_available:,.0f} available, but your dining out spending was ${total_dining_out:,.0f}. You would need ${total_dining_out - total_available:,.0f} more.")
     
     return True, metadata
 
@@ -277,14 +277,14 @@ def process_input_how_much_did_i_save_last_month():
     savings = total_income - total_expenses
     
     # Get formatted income and spending messages using utter_transaction_totals
-    income_msg = utter_transaction_totals(income_df, "[direction] [total_amount:,.2f]") if not income_df.empty else "$0.00"
-    expenses_msg = utter_transaction_totals(expenses_df, "[direction] [total_amount:,.2f]") if not expenses_df.empty else "$0.00"
+    income_msg = utter_transaction_totals(income_df, "{direction} {total_amount:,.0f}") if not income_df.empty else "$0.00"
+    expenses_msg = utter_transaction_totals(expenses_df, "{direction} {total_amount:,.0f}") if not expenses_df.empty else "$0.00"
     
     # Format and print savings message
     if savings < 0:
-      print(f"You saved ${abs(savings):,.2f} last month. Income: {income_msg} and expenses: {expenses_msg}.")
+      print(f"You saved ${abs(savings):,.0f} last month. Income: {income_msg} and expenses: {expenses_msg}.")
     elif savings > 0:
-      print(f"You spent ${savings:,.2f} more than you earned last month. Income: {income_msg} and expenses: {expenses_msg}.")
+      print(f"You spent ${savings:,.0f} more than you earned last month. Income: {income_msg} and expenses: {expenses_msg}.")
     else:
       print(f"You broke even last month. Income: {income_msg} and expenses: {expenses_msg}.")
     
@@ -319,9 +319,9 @@ def process_input_list_income_past_2_weeks():
       return True, metadata
     
     print("Here are your income transactions from the past 2 weeks:")
-    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "[transaction_name]: [direction] $[amount:,.2f] on [date]")
+    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{transaction_name}: {direction} ${amount:,.0f} on {date}")
     print(for_print)
-    print(utter_transaction_totals(df, "In total, you [direction] [total_amount] from the past 2 weeks."))
+    print(utter_transaction_totals(df, "In total, you {direction} {total_amount} from the past 2 weeks."))
     
     return True, metadata
 
@@ -357,14 +357,14 @@ def process_input_how_much_am_i_expected_to_save_next_week():
     expected_savings = total_income - total_spending
     
     # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "[direction] [total_amount:,.2f]") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "[direction] [total_amount:,.2f]") if not spending_df.empty else "$0.00"
+    income_msg = utter_forecasts(income_df, "{direction} {total_amount:,.0f}") if not income_df.empty else "$0.00"
+    expenses_msg = utter_forecasts(spending_df, "{direction} {total_amount:,.0f}") if not spending_df.empty else "$0.00"
     
     # Format and print expected savings message
     if expected_savings > 0:
-      print(f"You are expected to save ${expected_savings:,.2f} next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
+      print(f"You are expected to save ${expected_savings:,.0f} next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     elif expected_savings < 0:
-      print(f"You are expected to spend ${abs(expected_savings):,.2f} more than you earn next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
+      print(f"You are expected to spend ${abs(expected_savings):,.0f} more than you earn next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     else:
       print(f"You are expected to break even next week. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     
@@ -403,14 +403,14 @@ def process_input_how_much_am_i_expected_to_save_next_month():
     expected_savings = total_income - total_spending
     
     # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "[direction] [total_amount:,.2f]") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "[direction] [total_amount:,.2f]") if not spending_df.empty else "$0.00"
+    income_msg = utter_forecasts(income_df, "{direction} {total_amount:,.0f}") if not income_df.empty else "$0.00"
+    expenses_msg = utter_forecasts(spending_df, "{direction} {total_amount:,.0f}") if not spending_df.empty else "$0.00"
     
     # Format and print expected savings message
     if expected_savings > 0:
-      print(f"You are expected to save ${expected_savings:,.2f} next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
+      print(f"You are expected to save ${expected_savings:,.0f} next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     elif expected_savings < 0:
-      print(f"You are expected to spend ${abs(expected_savings):,.2f} more than you earn next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
+      print(f"You are expected to spend ${abs(expected_savings):,.0f} more than you earn next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     else:
       print(f"You are expected to break even next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     
@@ -467,9 +467,9 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_
     
     # Compare and determine affordability
     if total_available >= total_rent:
-      print(f"You can afford your rent next month. Your checking account has ${total_available:,.2f} available, and your forecasted rent is ${total_rent:,.2f}. You would have ${total_available - total_rent:,.2f} remaining.")
+      print(f"You can afford your rent next month. Your checking account has ${total_available:,.0f} available, and your forecasted rent is ${total_rent:,.0f}. You would have ${total_available - total_rent:,.0f} remaining.")
     else:
-      print(f"You cannot afford your rent next month. Your checking account has ${total_available:,.2f} available, but your forecasted rent is ${total_rent:,.2f}. You would need ${total_rent - total_available:,.2f} more.")
+      print(f"You cannot afford your rent next month. Your checking account has ${total_available:,.0f} available, but your forecasted rent is ${total_rent:,.0f}. You would need ${total_rent - total_available:,.0f} more.")
     
     return True, metadata
 
@@ -483,12 +483,12 @@ def process_input_list_my_subscriptions():
       print("You have no subscriptions.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '[subscription_name]: [direction] $[amount:,.2f] on [date]')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{subscription_name}: {direction} ${amount:,.0f} on {date}')
     transaction_count = len(subscriptions_df)
     print(f"Your subscriptions ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
     
-    print(utter_subscription_totals(subscriptions_df, 'Total subscription transactions: $[total_amount:,.2f] [direction]'))
+    print(utter_subscription_totals(subscriptions_df, 'Total subscription transactions: ${total_amount:,.0f} {direction}'))
     
     return True, metadata
 
@@ -527,12 +527,12 @@ def process_input_list_streaming_subscriptions_paid_last_month():
       print("You have no streaming subscription payments last month.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '[subscription_name]: [direction] $[amount:,.2f] on [date]')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{subscription_name}: {direction} ${amount:,.0f} on {date}')
     transaction_count = len(streaming_df)
     print(f"Your streaming subscription payments last month ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
     
-    print(utter_subscription_totals(streaming_df, 'Total streaming subscription spending last month: $[total_amount:,.2f] [direction]'))
+    print(utter_subscription_totals(streaming_df, 'Total streaming subscription spending last month: ${total_amount:,.0f} {direction}'))
     
     return True, metadata
 
