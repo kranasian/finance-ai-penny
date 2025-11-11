@@ -5,7 +5,7 @@ import re
 from penny.tool_funcs.sandbox_logging import log
 
 # Maximum number of transactions to return in transaction_names_and_amounts
-MAX_TRANSACTIONS = 30
+MAX_TRANSACTIONS = 10
 
 
 def retrieve_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
@@ -29,7 +29,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     tuple[str, list]: (formatted string, metadata list)
       - formatted string: Newline-separated transaction descriptions (max MAX_TRANSACTIONS). 
         If there are more transactions, appends a message like "n more transactions."
-      - metadata list: List of transaction metadata dictionaries (all transactions included)
+      - metadata list: List of transaction metadata dictionaries (only MAX_TRANSACTIONS transactions included)
   """
   
   log(f"**Transaction Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
@@ -46,14 +46,14 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     log(error_msg)
     raise ValueError(error_msg)
   
-  # Process all transactions for metadata, but limit utterances to MAX_TRANSACTIONS
+  # Limit both utterances and metadata to MAX_TRANSACTIONS
   total_count = len(df)
   has_more = total_count > MAX_TRANSACTIONS
   
   utterances = []
   metadata = []
   
-  log(f"**Listing Individual Transactions**: Processing all {total_count} items for metadata, limiting utterances to {MAX_TRANSACTIONS}.")
+  log(f"**Listing Individual Transactions**: Processing up to {MAX_TRANSACTIONS} items (out of {total_count} total).")
   for i in range(len(df)):
     transaction = df.iloc[i]
     transaction_name = transaction.get('transaction_name', 'Unknown Transaction')
@@ -252,15 +252,20 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       # Convert to string if not already
       date_for_metadata = str(date)
     
-    # Always add to metadata (process all transactions)
-    metadata.append({
-      "transaction_id": int(transaction_id),
-      "transaction_name": transaction_name_cleaned
-    })
+    # Add to metadata only if under the limit (max MAX_TRANSACTIONS)
+    if len(metadata) < MAX_TRANSACTIONS:
+      metadata.append({
+        "transaction_id": int(transaction_id),
+        "transaction_name": transaction_name_cleaned
+      })
     
-    # Only add to utterances if under the limit
+    # Add to utterances only if under the limit (max MAX_TRANSACTIONS)
     if len(utterances) < MAX_TRANSACTIONS:
       utterances.append(utterance)
+    
+    # Break early if we've reached both limits
+    if len(metadata) >= MAX_TRANSACTIONS and len(utterances) >= MAX_TRANSACTIONS:
+      break
   
   # Add message about remaining transactions if there are more
   utterance_text = "\n".join(utterances)

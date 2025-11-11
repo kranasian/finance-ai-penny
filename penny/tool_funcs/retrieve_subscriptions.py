@@ -4,6 +4,9 @@ import pandas as pd
 import re
 from penny.tool_funcs.sandbox_logging import log
 
+# Maximum number of subscriptions to return in subscription_names_and_amounts
+MAX_SUBSCRIPTIONS = 10
+
 
 def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   """Function to retrieve subscription transactions by joining transactions with user_recurring_transactions"""
@@ -41,7 +44,14 @@ def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
 
 
 def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
-  """Generate a formatted string describing subscription transaction names and amounts using the provided template and return metadata"""
+  """Generate a formatted string describing subscription transaction names and amounts using the provided template and return metadata.
+  
+  Returns:
+    tuple[str, list]: (formatted string, metadata list)
+      - formatted string: Newline-separated subscription descriptions (max MAX_SUBSCRIPTIONS). 
+        If there are more subscriptions, appends a message like "n more subscriptions."
+      - metadata list: List of subscription metadata dictionaries (only MAX_SUBSCRIPTIONS subscriptions included)
+  """
   log(f"**Subscription Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
@@ -56,10 +66,14 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     log(error_msg)
     raise ValueError(error_msg)
   
+  # Limit both utterances and metadata to MAX_SUBSCRIPTIONS
+  total_count = len(df)
+  has_more = total_count > MAX_SUBSCRIPTIONS
+  
   utterances = []
   metadata = []
   
-  log(f"**Listing Individual Subscription Transactions**: Processing {len(df)} items.")
+  log(f"**Listing Individual Subscription Transactions**: Processing up to {MAX_SUBSCRIPTIONS} items (out of {total_count} total).")
   for i in range(len(df)):
     transaction = df.iloc[i]
     transaction_name = transaction.get('transaction_name', 'Unknown Transaction')
@@ -216,8 +230,6 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
         # No format specifiers, so the error is unexpected - re-raise
         raise
     
-    utterances.append(utterance)
-    
     # Convert date to string for JSON serialization
     date_for_metadata = date
     if hasattr(date, 'strftime'):
@@ -227,15 +239,31 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
       # Convert to string if not already
       date_for_metadata = str(date)
     
-    metadata.append({
-      "transaction_id": int(transaction_id),
-      "transaction_name": transaction_name
-    })
+    # Add to metadata only if under the limit (max MAX_SUBSCRIPTIONS)
+    if len(metadata) < MAX_SUBSCRIPTIONS:
+      metadata.append({
+        "transaction_id": int(transaction_id),
+        "transaction_name": transaction_name
+      })
+    
+    # Add to utterances only if under the limit (max MAX_SUBSCRIPTIONS)
+    if len(utterances) < MAX_SUBSCRIPTIONS:
+      utterances.append(utterance)
+    
+    # Break early if we've reached both limits
+    if len(metadata) >= MAX_SUBSCRIPTIONS and len(utterances) >= MAX_SUBSCRIPTIONS:
+      break
   
-  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries.")
+  # Add message about remaining subscriptions if there are more
+  utterance_text = "\n".join(utterances)
+  if has_more:
+    remaining_count = total_count - MAX_SUBSCRIPTIONS
+    utterance_text += f"\n{remaining_count} more subscription{'s' if remaining_count != 1 else ''}."
+  
+  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries. Has more: {has_more}")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
   log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
-  return "\n".join(utterances), metadata
+  return utterance_text, metadata
 
 
 def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
