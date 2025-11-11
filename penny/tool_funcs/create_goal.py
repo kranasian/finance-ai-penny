@@ -1,7 +1,7 @@
 from penny.tool_funcs.sandbox_logging import log
 import json
 
-def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[str, dict]:
+def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[str, list]:
   """
   Creates spending budgets or goals for financial categories.
   Supports creating single or multiple budgets/goals with weekly, monthly, or yearly frequencies.
@@ -24,17 +24,12 @@ def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[
     user_id: The user ID for the goals (default: 1)
   
   Returns:
-    tuple[str, dict]: 
+    tuple[str, list]: 
       - str: A natural language string confirming the creation of the budget/goal or requesting further clarification from the user.
-      - dict: Metadata containing the goals created, with the following structure:
+      - list: List of goals created, each containing:
         {
-          "goals": [
-            {
-              "goal_id": int,  # Goal ID
-              "title": str     # Goal title
-            },
-            ...
-          ]
+          "goal_id": int,  # Goal ID
+          "title": str     # Goal title
         }
     
   Note:
@@ -56,9 +51,8 @@ def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[
   
   if not goals:
     response_message = "No goals provided."
-    metadata = {"goals": []}
     log(f"**Goal Creation Failed**: No goals provided")
-    return response_message, metadata
+    return response_message, []
   
   try:
     caveats = []
@@ -86,52 +80,45 @@ def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[
       # Check for clarification needed
       if clarification_needed:
         response_message = clarification_needed
-        metadata = {"goals": []}
         log(f"**Goal Creation Skipped**: Clarification needed - {clarification_needed}")
-        return response_message, metadata
+        return response_message, []
       
       # Validate required fields
       if not granularity or granularity not in ["weekly", "monthly", "yearly"]:
         response_message = f"Goal {i+1}: Please specify the granularity (weekly, monthly, or yearly) for this goal."
-        metadata = {"goals": []}
         log(f"**Goal Creation Failed**: Missing granularity for goal {i+1}")
-        return response_message, metadata
+        return response_message, []
       
       if amount is None or amount < 0:
         response_message = f"Goal {i+1}: Please specify a valid target amount (greater than or equal to 0) for this goal."
-        metadata = {"goals": []}
         log(f"**Goal Creation Failed**: Invalid amount for goal {i+1}")
-        return response_message, metadata
+        return response_message, []
       
       # Validate goal type
       valid_types = ["category", "credit_X_amount", "save_X_amount", "credit_0", "save_0"]
       if goal_type not in valid_types:
         response_message = f"Goal {i+1}: Invalid goal type '{goal_type}'. Must be one of: {', '.join(valid_types)}."
-        metadata = {"goals": []}
         log(f"**Goal Creation Failed**: Invalid type for goal {i+1}")
-        return response_message, metadata
+        return response_message, []
       
       # Validate type-specific requirements
       if goal_type == "category":
         if not match_category:
           response_message = f"Goal {i+1}: Could you clarify the category for {category if category else 'this goal'}? Please specify a valid category name."
-          metadata = {"goals": []}
           log(f"**Goal Creation Failed**: Missing match_category for category type goal {i+1}")
-          return response_message, metadata
+          return response_message, []
       elif goal_type in ["credit_X_amount", "save_X_amount", "credit_0", "save_0"]:
         if account_id is None:
           response_message = f"Goal {i+1}: Please specify an account_id for {goal_type} type goals."
-          metadata = {"goals": []}
           log(f"**Goal Creation Failed**: Missing account_id for {goal_type} type goal {i+1}")
-          return response_message, metadata
+          return response_message, []
         
         # Validate percent for credit_X_amount/save_X_amount
         if goal_type in ["credit_X_amount", "save_X_amount"] and percent is not None:
           if percent < 0 or percent > 100:
             response_message = f"Goal {i+1}: Percent must be between 0 and 100."
-            metadata = {"goals": []}
             log(f"**Goal Creation Failed**: Invalid percent for goal {i+1}")
-            return response_message, metadata
+            return response_message, []
       
       # Set defaults
       if not end_date:
@@ -167,10 +154,10 @@ def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[
     
     # Create simplified goal objects for return (only goal_id and title)
     created_goals = []
-    for i, persist_data in enumerate(goals_to_persist):
+    for i, goal_data in enumerate(goals):
       goal_simplified = {
         "goal_id": goal_ids[i],
-        "title": persist_data["title"]
+        "title": goal_data.get("title", "")
       }
       created_goals.append(goal_simplified)
     
@@ -195,20 +182,17 @@ def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[
     # Join with newlines
     response_message = "\n\n".join(response_parts)
     
-    metadata = {"goals": created_goals}
-    
     log(f"**Returning** {len(created_goals)} goal(s) created")
     if descriptions:
       log(f"**Goal Descriptions**:\n  - `{'`\n  - `'.join(descriptions)}`")
-    log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
+    log(f"**Goals**:\n```json\n{json.dumps(created_goals, indent=2)}\n```")
     
-    return response_message, metadata
+    return response_message, created_goals
     
   except Exception as e:
     log(f"**Error creating goal**: {str(e)}")
     response_message = f"I encountered an error while creating your goal: {str(e)}. Please check your parameters and try again."
-    metadata = {"goals": []}
-    return response_message, metadata
+    return response_message, []
 
 
 def _persist_goals_batch(user_id: int, goals_data: list[dict]) -> list[int]:

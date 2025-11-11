@@ -792,12 +792,9 @@ def process_input():
         "description": "Created $60 Weekly Gas ⛽ from 2025-01-05 to 2025-07-05."
     }]
     
-    response, goal_metadata = create_goal(goals)
+    response, metadata["goals"] = create_goal(goals)
     
     print(response)
-    
-    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
-        metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
 ```
@@ -844,7 +841,7 @@ def process_input():
             "description": None
         }]
         
-        response, goal_metadata = create_goal(goals)
+        response, metadata["goals"] = create_goal(goals)
         print(response)
         return True, metadata
     
@@ -865,11 +862,8 @@ def process_input():
         "description": f"Created ${amount:.0f} {title} from {get_date_string(start_date)} to 2099-12-31."
     }]
     
-    response, goal_metadata = create_goal(goals)
+    response, metadata["goals"] = create_goal(goals)
     print(response)
-    
-    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
-        metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
 ```
@@ -907,11 +901,8 @@ def process_input():
             "description": f"Created ${amount:.0f} {title} from {get_date_string(start_date)} to 2099-12-31."
         })
     
-    response, goal_metadata = create_goal(goals)
+    response, metadata["goals"] = create_goal(goals)
     print(response)
-    
-    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
-        metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
 ```

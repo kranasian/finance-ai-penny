@@ -51,7 +51,7 @@ def retrieve_subscriptions() -> pd.DataFrame:
   return retrieve_subscriptions_function_code_gen(user_id=user_id)
 
 
-def create_goal(goals: list[dict]) -> tuple[str, dict]:
+def create_goal(goals: list[dict]) -> tuple[str, list]:
   global user_id
   return create_goal_function_code_gen(goals, user_id=user_id)
 
@@ -552,12 +552,10 @@ def process_input_create_a_budget_for_60_gas_every_week_for_the_next_6_months():
         "description": f"Created $60 Weekly Gas ⛽ from {get_date_string(start_date)} to {get_date_string(end_date)}."
     }]
     
-    response, goal_metadata = create_goal(goals)
+    response, goals_list = create_goal(goals)
+    metadata["goals"] = goals_list
     
     print(response)
-    
-    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
-        metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
 
@@ -602,7 +600,8 @@ def process_input_pay_200_weekly_on_my_bofa_credit_card():
             "description": None
         }]
         
-        response, goal_metadata = create_goal(goals)
+        response, goals_list = create_goal(goals)
+        metadata["goals"] = goals_list
         print(response)
         return True, metadata
     
@@ -623,11 +622,8 @@ def process_input_pay_200_weekly_on_my_bofa_credit_card():
         "description": f"Created ${amount:.0f} {title} from {get_date_string(start_date)} to 2099-12-31."
     }]
     
-    response, goal_metadata = create_goal(goals)
+    response, metadata["goals"] = create_goal(goals)
     print(response)
-    
-    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
-        metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
 
@@ -663,11 +659,9 @@ def process_input_pay_200_weekly_on_all_my_credit_cards():
             "description": f"Created ${amount:.0f} {title} from {get_date_string(start_date)} to 2099-12-31."
         })
     
-    response, goal_metadata = create_goal(goals)
+    response, goals_list = create_goal(goals)
+    metadata["goals"] = goals_list
     print(response)
-    
-    if goal_metadata and isinstance(goal_metadata, dict) and "goals" in goal_metadata:
-        metadata["goals"] = goal_metadata["goals"]
     
     return True, metadata
   
