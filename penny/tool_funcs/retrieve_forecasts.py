@@ -1,55 +1,7 @@
 from database import Database
 import pandas as pd
 from penny.tool_funcs.sandbox_logging import log
-
-# Category ID to name mapping (from categories.py)
-_CATEGORY_ID_TO_NAME = {
-    -1: 'Uncategorized',
-    1: 'Meals',
-    2: 'Dining Out',
-    3: 'Delivered Food',
-    4: 'Groceries',
-    5: 'Leisure',
-    6: 'Entertainment',
-    7: 'Travel & Vacations',
-    8: 'Pets',
-    9: 'Bills',
-    10: 'Connectivity',
-    11: 'Insurance',
-    12: 'Taxes',
-    13: 'Service Fees',
-    14: 'Shelter',
-    15: 'Home',
-    16: 'Utilities',
-    17: 'Upkeep',
-    18: 'Education',
-    19: 'Kids Activities',
-    20: 'Tuition',
-    21: 'Shopping',
-    22: 'Clothing',
-    23: 'Gadgets',
-    24: 'Kids',
-    25: 'Transport',
-    26: 'Car & Fuel',
-    27: 'Public Transit',
-    28: 'Health',
-    29: 'Medical & Pharmacy',
-    30: 'Gym & Wellness',
-    31: 'Personal Care',
-    32: 'Donations & Gifts',
-    33: 'Miscellaneous',
-    36: 'Salary',
-    37: 'Side-Gig',
-    38: 'Business',
-    39: 'Interest',
-    41: 'Food',
-    42: 'Others',
-    43: 'Bills',
-    44: 'Shopping',
-    45: 'Transfer',
-    46: 'Income',
-    47: 'Income',
-}
+from penny.tools.utils import to_all_category_name
 
 
 def retrieve_spending_forecasts_function_code_gen(user_id: int = 1, granularity: str = 'monthly') -> pd.DataFrame:
@@ -89,8 +41,9 @@ def retrieve_spending_forecasts_function_code_gen(user_id: int = 1, granularity:
     else:
       return pd.DataFrame(columns=['user_id', 'ai_category_id', 'sunday_date', 'forecasted_amount', 'category'])
   
-  # Add category names by mapping ai_category_id
-  df['category'] = df['ai_category_id'].map(_CATEGORY_ID_TO_NAME).fillna('Unknown')
+  df["category"] = df["ai_category_id"].apply(to_all_category_name)
+  # Change category of top_income to income and top_bills to bills, etc
+  df["category"] = df["category"].apply(lambda x: x.replace("top_", "") if x.startswith("top_") else x)
   
   # Convert date column to datetime for proper comparisons
   if date_col in df.columns and len(df) > 0:
@@ -137,8 +90,9 @@ def retrieve_income_forecasts_function_code_gen(user_id: int = 1, granularity: s
     else:
       return pd.DataFrame(columns=['user_id', 'ai_category_id', 'sunday_date', 'forecasted_amount', 'category'])
   
-  # Add category names by mapping ai_category_id
-  df['category'] = df['ai_category_id'].map(_CATEGORY_ID_TO_NAME).fillna('Unknown')
+  df["category"] = df["ai_category_id"].apply(to_all_category_name)
+  # Change category of top_income to income and top_bills to bills, etc
+  df["category"] = df["category"].apply(lambda x: x.replace("top_", "") if x.startswith("top_") else x)
   
   # Convert date column to datetime for proper comparisons
   if date_col in df.columns and len(df) > 0:
