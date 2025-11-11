@@ -23,6 +23,29 @@ def retrieve_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   db = Database()
   accounts = db.get_accounts_by_user(user_id=user_id)
   df = pd.DataFrame(accounts)
+  
+  if 'account_type' in df.columns and 'account_subtype' in df.columns:
+    # Mapping dictionary: (account_type, account_subtype) -> standardized_account_type
+    ACCOUNT_TYPE_MAPPING = {
+      ('loan', 'home equity'): 'loan_home_equity',
+      ('depository', 'savings'): 'deposit_savings',
+      ('depository', 'depository'): 'deposit_savings',
+      ('loan', 'line of credit'): 'loan_line_of_credit',
+      ('credit', 'credit card'): 'credit_card',
+      ('loan', 'mortgage'): 'loan_mortgage',
+      ('depository', 'money market'): 'deposit_money_market',
+      ('loan', 'loan'): 'loan_home_equity',
+      ('loan', 'auto'): 'loan_auto',
+      ('depository', 'checking'): 'deposit_checking',
+    }
+    
+    def map_account_type(row):
+      """Map account_type and account_subtype to standardized format"""
+      key = (row['account_type'], row['account_subtype'])
+      return ACCOUNT_TYPE_MAPPING.get(key, f"{row['account_type']}_{row['account_subtype']}")
+    
+    df['account_type'] = df.apply(map_account_type, axis=1)
+  
   log(f"**Retrieved All Accounts** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   return df
 
