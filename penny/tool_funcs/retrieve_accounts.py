@@ -64,9 +64,9 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
       balance_limit = account.get('balance_limit', None)
       
       # Handle None values for logging
-      balance_available_log = "None" if balance_available is None else f"${balance_available:,.0f}"
-      balance_current_log = "None" if balance_current is None else f"${balance_current:,.0f}"
-      balance_limit_log = "None" if balance_limit is None else f"${balance_limit:,.0f}"
+      balance_available_log = "None" if balance_available is None else f"${balance_available:.0f}"
+      balance_current_log = "None" if balance_current is None else f"${balance_current:.0f}"
+      balance_limit_log = "None" if balance_limit is None else f"${balance_limit:.0f}"
       log(f"  - `A-{account_id}`]  **Name**: `{account_name}`  |  **A**: `{balance_available_log}`  |  **C**: `{balance_current_log}`  |  **L**: `{balance_limit_log}`")
       
       # Check if template has format specifiers - if so, use numeric values
@@ -95,9 +95,9 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
           )
         elif has_format_specifiers and not has_dollar_sign:
           # Template has format specifiers but NO $ sign, format with $ included
-          available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
-          current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
-          limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+          available_balance_str = "Unknown" if balance_available is None else f"${balance_available:.0f}"
+          current_balance_str = "Unknown" if balance_current is None else f"${balance_current:.0f}"
+          limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:.0f}"
           # Replace ALL format specifiers with simple placeholders for formatting
           temp_template = re.sub(r'\{balance_(available|current|limit):[^}]+\}', r'{\1}', template)
           temp_template = temp_template.replace('{available}', '{balance_available}')
@@ -121,17 +121,17 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
           # This is a safety net in case format() does something unexpected
           if balance_current is not None:
             # Look for numbers like "2,500" without dollar sign and add it
-            current_num = f"{balance_current:,.0f}"
+            current_num = f"{balance_current:.0f}"
             if current_num in utterance and f"${current_num}" not in utterance:
               utterance = utterance.replace(f" {current_num}", f" ${current_num}", 1)
               log(f"**Fixed current balance**: Added $ to {current_num}")
           if balance_available is not None:
-            available_num = f"{balance_available:,.0f}"
+            available_num = f"{balance_available:.0f}"
             if available_num in utterance and f"${available_num}" not in utterance:
               utterance = utterance.replace(f" {available_num}", f" ${available_num}", 1)
               log(f"**Fixed available balance**: Added $ to {available_num}")
           if balance_limit is not None:
-            limit_num = f"{balance_limit:,.0f}"
+            limit_num = f"{balance_limit:.0f}"
             if limit_num in utterance and f"${limit_num}" not in utterance:
               utterance = utterance.replace(f" {limit_num}", f" ${limit_num}", 1)
               log(f"**Fixed limit balance**: Added $ to {limit_num}")
@@ -140,14 +140,14 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
           # No format specifiers - check if template has dollar signs
           if has_dollar_sign_anywhere:
             # Template has dollar signs, format without $ prefix
-            available_balance_str = "Unknown" if balance_available is None else f"{balance_available:,.0f}"
-            current_balance_str = "Unknown" if balance_current is None else f"{balance_current:,.0f}"
-            limit_balance_str = "Unknown" if balance_limit is None else f"{balance_limit:,.0f}"
+            available_balance_str = "Unknown" if balance_available is None else f"{balance_available:.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"{balance_current:.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"{balance_limit:.0f}"
           else:
             # Template has NO dollar signs, format WITH $ prefix
-            available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
-            current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
-            limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+            available_balance_str = "Unknown" if balance_available is None else f"${balance_available:.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"${balance_current:.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:.0f}"
           utterance = template.format(
             name=account_name,
             account_name=account_name,
@@ -165,9 +165,9 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
         has_format_specifiers = bool(re.search(r'\{balance_(available|current|limit):[^}]+\}', template))
         if has_format_specifiers:
           # Format with $ signs and replace format specifiers
-          available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
-          current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
-          limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+          available_balance_str = "Unknown" if balance_available is None else f"${balance_available:.0f}"
+          current_balance_str = "Unknown" if balance_current is None else f"${balance_current:.0f}"
+          limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:.0f}"
           temp_template = re.sub(r'\{balance_(available|current|limit):[^}]+\}', r'{\1}', template)
           temp_template = temp_template.replace('{available}', '{balance_available}')
           temp_template = temp_template.replace('{current}', '{balance_current}')
@@ -188,14 +188,14 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
           has_dollar_sign_anywhere = '$' in template
           if has_dollar_sign_anywhere:
             # Template has dollar signs, format without $ prefix
-            available_balance_str = "Unknown" if balance_available is None else f"{balance_available:,.0f}"
-            current_balance_str = "Unknown" if balance_current is None else f"{balance_current:,.0f}"
-            limit_balance_str = "Unknown" if balance_limit is None else f"{balance_limit:,.0f}"
+            available_balance_str = "Unknown" if balance_available is None else f"{balance_available:.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"{balance_current:.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"{balance_limit:.0f}"
           else:
             # Template has NO dollar signs, format WITH $ prefix
-            available_balance_str = "Unknown" if balance_available is None else f"${balance_available:,.0f}"
-            current_balance_str = "Unknown" if balance_current is None else f"${balance_current:,.0f}"
-            limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:,.0f}"
+            available_balance_str = "Unknown" if balance_available is None else f"${balance_available:.0f}"
+            current_balance_str = "Unknown" if balance_current is None else f"${balance_current:.0f}"
+            limit_balance_str = "Unknown" if balance_limit is None else f"${balance_limit:.0f}"
           utterance = template.format(
             name=account_name,
             account_name=account_name,
@@ -221,8 +221,8 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
     log(f"Aggregated totals: total_available={total_available}, total_current={total_current}")
     
     # Format balances, using "Unknown" for None values
-    available_balance_str = "Unknown" if total_available is None else f"${total_available:,.0f}"
-    current_balance_str = "Unknown" if total_current is None else f"${total_current:,.0f}"
+    available_balance_str = "Unknown" if total_available is None else f"${total_available:.0f}"
+    current_balance_str = "Unknown" if total_current is None else f"${total_current:.0f}"
     
     # Use "Total" or similar as the name for aggregated results
     aggregate_name = "Total"
@@ -284,10 +284,10 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
       credit_available = credit_df['balance_available'].sum()
       credit_current = credit_df['balance_current'].sum()
     
-    savings_avail_str = f"{savings_available:,.0f}" if savings_available is not None else "0"
-    savings_curr_str = f"{savings_current:,.0f}" if savings_current is not None else "0"
-    credit_avail_str = f"{credit_available:,.0f}" if credit_available is not None else "0"
-    credit_curr_str = f"{credit_current:,.0f}" if credit_current is not None else "0"
+    savings_avail_str = f"{savings_available:.0f}" if savings_available is not None else "0"
+    savings_curr_str = f"{savings_current:.0f}" if savings_current is not None else "0"
+    credit_avail_str = f"{credit_available:.0f}" if credit_available is not None else "0"
+    credit_curr_str = f"{credit_current:.0f}" if credit_current is not None else "0"
     log(f"**Separated Totals**: STA: `${savings_avail_str}` | STC: `${savings_curr_str}` | CTA: `${credit_avail_str}` | CTC: `${credit_curr_str}`")
   
   # Check if template uses separated totals placeholders
@@ -304,15 +304,15 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     # Automatically format with separated totals
     has_dollar_sign_anywhere = '$' in template
     if has_dollar_sign_anywhere:
-      savings_curr_str = f"{savings_current:,.0f}" if savings_current is not None else "0"
-      credit_curr_str = f"{credit_current:,.0f}" if credit_current is not None else "0"
-      savings_avail_str = f"{savings_available:,.0f}" if savings_available is not None else "0"
-      credit_avail_str = f"{credit_available:,.0f}" if credit_available is not None else "0"
+      savings_curr_str = f"{savings_current:.0f}" if savings_current is not None else "0"
+      credit_curr_str = f"{credit_current:.0f}" if credit_current is not None else "0"
+      savings_avail_str = f"{savings_available:.0f}" if savings_available is not None else "0"
+      credit_avail_str = f"{credit_available:.0f}" if credit_available is not None else "0"
     else:
-      savings_curr_str = f"${savings_current:,.0f}" if savings_current is not None else "$0"
-      credit_curr_str = f"${credit_current:,.0f}" if credit_current is not None else "$0"
-      savings_avail_str = f"${savings_available:,.0f}" if savings_available is not None else "$0"
-      credit_avail_str = f"${credit_available:,.0f}" if credit_available is not None else "$0"
+      savings_curr_str = f"${savings_current:.0f}" if savings_current is not None else "$0"
+      credit_curr_str = f"${credit_current:.0f}" if credit_current is not None else "$0"
+      savings_avail_str = f"${savings_available:.0f}" if savings_available is not None else "$0"
+      credit_avail_str = f"${credit_available:.0f}" if credit_available is not None else "$0"
     
     result = f"Your savings accounts (checking, savings, money market) have a total current balance of {savings_curr_str} and available balance of {savings_avail_str}. Your credit accounts (credit cards, loans) have a total current balance of {credit_curr_str} and available balance of {credit_avail_str}."
     log(f"**Auto-separated Utterance**: `{result}`")
@@ -324,9 +324,9 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
   if uses_overall_totals:
     total_available = df['balance_available'].sum()
     total_current = df['balance_current'].sum()
-    log(f"**Calculated Totals**: **TA**: `${total_available:,.0f}`  |  **TC**: `${total_current:,.0f}`")
+    log(f"**Calculated Totals**: **TA**: `${total_available:.0f}`  |  **TC**: `${total_current:.0f}`")
   
-  # Detect if template uses format specifiers like {balance_available:,.0f} or {savings_balance_available:,.0f}
+  # Detect if template uses format specifiers like {balance_available:.0f} or {savings_balance_available:.0f}
   has_format_specifiers = bool(re.search(r"\{(balance_available|balance_current|savings_balance_available|savings_balance_current|credit_balance_available|credit_balance_current):[^}]+\}", template))
   has_dollar_sign_anywhere = '$' in template
   
@@ -345,20 +345,20 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     # No format specifiers - check if template has dollar signs
     if has_dollar_sign_anywhere:
       # Template has dollar signs, format without $ prefix
-      available_str = "Unknown" if total_available is None else f"{total_available:,.0f}"
-      current_str = "Unknown" if total_current is None else f"{total_current:,.0f}"
-      savings_available_str = "Unknown" if savings_available is None else f"{savings_available:,.0f}"
-      savings_current_str = "Unknown" if savings_current is None else f"{savings_current:,.0f}"
-      credit_available_str = "Unknown" if credit_available is None else f"{credit_available:,.0f}"
-      credit_current_str = "Unknown" if credit_current is None else f"{credit_current:,.0f}"
+      available_str = "Unknown" if total_available is None else f"{total_available:.0f}"
+      current_str = "Unknown" if total_current is None else f"{total_current:.0f}"
+      savings_available_str = "Unknown" if savings_available is None else f"{savings_available:.0f}"
+      savings_current_str = "Unknown" if savings_current is None else f"{savings_current:.0f}"
+      credit_available_str = "Unknown" if credit_available is None else f"{credit_available:.0f}"
+      credit_current_str = "Unknown" if credit_current is None else f"{credit_current:.0f}"
     else:
       # Template has NO dollar signs, format WITH $ prefix
-      available_str = "Unknown" if total_available is None else f"${total_available:,.0f}"
-      current_str = "Unknown" if total_current is None else f"${total_current:,.0f}"
-      savings_available_str = "Unknown" if savings_available is None else f"${savings_available:,.0f}"
-      savings_current_str = "Unknown" if savings_current is None else f"${savings_current:,.0f}"
-      credit_available_str = "Unknown" if credit_available is None else f"${credit_available:,.0f}"
-      credit_current_str = "Unknown" if credit_current is None else f"${credit_current:,.0f}"
+      available_str = "Unknown" if total_available is None else f"${total_available:.0f}"
+      current_str = "Unknown" if total_current is None else f"${total_current:.0f}"
+      savings_available_str = "Unknown" if savings_available is None else f"${savings_available:.0f}"
+      savings_current_str = "Unknown" if savings_current is None else f"${savings_current:.0f}"
+      credit_available_str = "Unknown" if credit_available is None else f"${credit_available:.0f}"
+      credit_current_str = "Unknown" if credit_current is None else f"${credit_current:.0f}"
     
     format_dict = {
       'balance_available': available_str,

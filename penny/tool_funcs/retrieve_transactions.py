@@ -64,7 +64,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     category = transaction.get('category', 'Unknown Category')
     transaction_id = transaction.get('transaction_id', None)
     
-    amount_log = f"${abs(amount):,.0f}" if amount else "Unknown"
+    amount_log = f"${abs(amount):.0f}" if amount else "Unknown"
     log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`")
     
     # Determine direction and preposition based on amount sign and category
@@ -115,7 +115,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
           direction = "received"
         preposition = "from"
     
-    # Check if template has format specifiers for amount (like {amount:,.0f})
+    # Check if template has format specifiers for amount (like {amount:.0f})
     amount_format_pattern = r'\{amount:([^}]+)\}'
     has_amount_format_specifier = bool(re.search(amount_format_pattern, temp_template))
     
@@ -184,18 +184,18 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       # Template originally had format specifiers, format with $ if template doesn't have $
       if has_dollar_sign:
         # Template has $, format without $ prefix
-        amount_str = f"{abs(amount):,.0f}"
+        amount_str = f"{abs(amount):.0f}"
       else:
         # Template has NO $, format WITH $ prefix
-        amount_str = f"${abs(amount):,.0f}"
+        amount_str = f"${abs(amount):.0f}"
     else:
       # No format specifiers - check if template has dollar signs
       if has_dollar_sign:
         # Template has dollar signs, format without $ prefix
-        amount_str = f"{abs(amount):,.0f}"
+        amount_str = f"{abs(amount):.0f}"
       else:
         # Template has NO dollar signs, format WITH $ prefix
-        amount_str = f"${abs(amount):,.0f}"
+        amount_str = f"${abs(amount):.0f}"
     
     # Build format dictionary with available columns
     format_dict = {
@@ -212,7 +212,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     # Extract all placeholder names from the template (e.g., {account_id}, {transaction_id})
     template_placeholders = re.findall(r'\{([^}:]+)', temp_template)
     for placeholder in template_placeholders:
-      # Remove any format specifiers (e.g., "amount:,.0f" -> "amount")
+      # Remove any format specifiers (e.g., "amount:.0f" -> "amount")
       placeholder_name = placeholder.split(':')[0]
       
       # If the placeholder is not already in format_dict and exists as a column in the DataFrame
@@ -292,7 +292,7 @@ def utter_transaction_totals(df: pd.DataFrame, template: str) -> str:
     raise ValueError(error_msg)
   
   total_amount = df['amount'].sum()
-  log(f"**Calculated Total**: **Amount**: `${abs(total_amount):,.0f}`")
+  log(f"**Calculated Total**: **Amount**: `${abs(total_amount):.0f}`")
   
   # Determine if transactions are income or spending based on categories
   # First try to use ai_category_id if available (more reliable)
@@ -340,7 +340,7 @@ def utter_transaction_totals(df: pd.DataFrame, template: str) -> str:
       direction = "received"
       amount_suffix = None
   
-  # Check if template has format specifiers for total_amount or amount (like {total_amount:,.0f} or {amount:,.0f})
+  # Check if template has format specifiers for total_amount or amount (like {total_amount:.0f} or {amount:.0f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
   amount_format_pattern = r'\{amount:([^}]+)\}'
   has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
@@ -367,18 +367,18 @@ def utter_transaction_totals(df: pd.DataFrame, template: str) -> str:
     # Template originally had format specifiers, format with $ if template doesn't have $
     if has_dollar_sign:
       # Template has $, format without $ prefix
-      total_amount_str = f"{display_amount:,.0f}"
+      total_amount_str = f"{display_amount:.0f}"
     else:
       # Template has NO $, format WITH $ prefix
-      total_amount_str = f"${display_amount:,.0f}"
+      total_amount_str = f"${display_amount:.0f}"
   else:
     # No format specifiers - check if template has dollar signs
     if has_dollar_sign:
       # Template has dollar signs, format without $ prefix
-      total_amount_str = f"{display_amount:,.0f}"
+      total_amount_str = f"{display_amount:.0f}"
     else:
       # Template has NO dollar signs, format WITH $ prefix
-      total_amount_str = f"${display_amount:,.0f}"
+      total_amount_str = f"${display_amount:.0f}"
   
   # Extract category if available and template needs it
   category_value = None

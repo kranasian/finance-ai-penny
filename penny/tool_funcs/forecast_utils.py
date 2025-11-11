@@ -28,7 +28,7 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
   temp_template = template
   if has_format_specifiers:
     for placeholder in format_specifiers:
-      # Replace {amount:,.0f} with {amount}
+      # Replace {amount:.0f} with {amount}
       temp_template = re.sub(
         r'\{' + re.escape(placeholder) + r':[^}]+\}',
         '{' + placeholder + '}',
@@ -88,16 +88,16 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
       # If template has format specifiers, format the number
       if has_dollar_sign:
         # Template has $, so format without $
-        amount_str = f"{abs(forecasted_amount):,.0f}"
+        amount_str = f"{abs(forecasted_amount):.0f}"
       else:
         # Template doesn't have $, so format with $
-        amount_str = f"${abs(forecasted_amount):,.0f}"
+        amount_str = f"${abs(forecasted_amount):.0f}"
     else:
       # No format specifiers, just format as string
       if has_dollar_sign:
-        amount_str = f"{abs(forecasted_amount):,.0f}"
+        amount_str = f"{abs(forecasted_amount):.0f}"
       else:
-        amount_str = f"${abs(forecasted_amount):,.0f}"
+        amount_str = f"${abs(forecasted_amount):.0f}"
     
     # Build format dictionary
     format_dict = {
@@ -196,7 +196,7 @@ def utter_forecasts(df: pd.DataFrame, template: str) -> str:
   else:
     direction_display = direction
   
-  # Check if template has format specifiers for total_amount or amount (like {total_amount:,.0f} or {amount:,.0f})
+  # Check if template has format specifiers for total_amount or amount (like {total_amount:.0f} or {amount:.0f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
   amount_format_pattern = r'\{amount:([^}]+)\}'
   has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
@@ -225,18 +225,18 @@ def utter_forecasts(df: pd.DataFrame, template: str) -> str:
     # Template originally had format specifiers, format with $ if template doesn't have $
     if has_dollar_sign:
       # Template has $, format without $ prefix
-      total_amount_str = f"{display_amount:,.0f}"
+      total_amount_str = f"{display_amount:.0f}"
     else:
       # Template has NO $, format WITH $ prefix
-      total_amount_str = f"${display_amount:,.0f}"
+      total_amount_str = f"${display_amount:.0f}"
   else:
     # No format specifiers - check if template has dollar signs
     if has_dollar_sign:
       # Template has dollar signs, format without $ prefix
-      total_amount_str = f"{display_amount:,.0f}"
+      total_amount_str = f"{display_amount:.0f}"
     else:
       # Template has NO dollar signs, format WITH $ prefix
-      total_amount_str = f"${display_amount:,.0f}"
+      total_amount_str = f"${display_amount:.0f}"
   
   # Build format dictionary
   format_dict = {
