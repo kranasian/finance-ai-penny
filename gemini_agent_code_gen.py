@@ -112,8 +112,6 @@ These functions are already implemented:
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
 - `utter_forecast_totals(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and calculates total forecasted amounts and returns a formatted string based on `template`.
-  - Template placeholders: `{total_amount}`, `{amount}`, `{direction}`
-  - `{direction}` is empty for "earned" or "spent", or shows "(inflow)" or "(outflow)" for other cases.
 - `retrieve_subscriptions() -> pd.DataFrame`
   - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
   - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `subscription_name` (str), `confidence_score_bills` (float), `reviewer_bills` (str)
