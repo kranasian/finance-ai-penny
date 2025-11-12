@@ -341,17 +341,17 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     log(f"**Auto-separated Utterance**: `{result}`")
     return result
   
-  # Calculate overall totals only if needed (for templates that use them)
-  total_available = None
-  total_current = None
-  if uses_overall_totals:
-    total_available = df['balance_available'].sum()
-    total_current = df['balance_current'].sum()
-    log(f"**Calculated Totals**: **TA**: `${total_available:.0f}`  |  **TC**: `${total_current:.0f}`")
-  
   # Detect if template uses format specifiers like {balance_available:.0f} or {savings_balance_available:.0f}
   has_format_specifiers = bool(re.search(r"\{(balance_available|balance_current|savings_balance_available|savings_balance_current|credit_balance_available|credit_balance_current):[^}]+\}", template))
   has_dollar_sign_anywhere = '$' in template
+  
+  # Calculate overall totals if template uses them (either with or without format specifiers)
+  total_available = None
+  total_current = None
+  if uses_overall_totals or (has_format_specifiers and bool(re.search(r"\{balance_(available|current)", template))):
+    total_available = df['balance_available'].sum()
+    total_current = df['balance_current'].sum()
+    log(f"**Calculated Totals**: **TA**: `${total_available:.0f}`  |  **TC**: `${total_current:.0f}`")
   
   if has_format_specifiers:
     # Pass raw numbers so the template's specifiers can format them
