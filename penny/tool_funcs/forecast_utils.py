@@ -3,6 +3,69 @@ import pandas as pd
 from penny.tool_funcs.sandbox_logging import log
 
 
+def _format_date_for_metadata(date_dt, template: str, temp_template: str) -> tuple[str, str]:
+  """
+  Convert a date object to a JSON-serializable string for metadata.
+  
+  Args:
+    date_dt: The date object (datetime, Timestamp, etc.)
+    template: The original template string
+    temp_template: The template string being modified (may have format specifiers removed)
+  
+  Returns:
+    tuple: (formatted_date_string, modified_temp_template)
+  """
+  # Ensure date_dt is always converted to a string for JSON serialization
+  try:
+    if date_dt is None or (hasattr(pd, 'NaT') and pd.isna(date_dt)):
+      return '', temp_template
+    elif hasattr(date_dt, 'strftime'):
+      # Format date - check if template has date format specifier
+      date_format_pattern = r'\{date:([^}]+)\}'
+      start_date_format_pattern = r'\{start_date:([^}]+)\}'
+      date_format_match = re.search(date_format_pattern, template)
+      start_date_format_match = re.search(start_date_format_pattern, template)
+      
+      if date_format_match:
+        # Extract format specifier (e.g., %%Y-%%m-%%d)
+        date_format = date_format_match.group(1).replace('%%', '%')
+        # Replace {date:%%Y-%%m-%%d} with {date}
+        modified_template = re.sub(date_format_pattern, '{date}', temp_template)
+        date_str = date_dt.strftime(date_format)
+        return date_str, modified_template
+      elif start_date_format_match:
+        # Extract format specifier for start_date (e.g., %%B %%Y for "December 2025")
+        date_format = start_date_format_match.group(1).replace('%%', '%')
+        # Replace {start_date:%%B %%Y} with {start_date}
+        modified_template = re.sub(start_date_format_pattern, '{start_date}', temp_template)
+        date_str = date_dt.strftime(date_format)
+        return date_str, modified_template
+      else:
+        # Default date format YYYY-MM-DD
+        date_str = date_dt.strftime('%Y-%m-%d')
+        return date_str, temp_template
+    else:
+      # Fallback: convert to string if it's not a datetime-like object
+      date_str = str(date_dt)
+      return date_str, temp_template
+  except Exception as e:
+    # If anything goes wrong, convert to string as fallback
+    log(f"**Forecast Dates and Amounts**: Error formatting date {date_dt}: {e}, converting to string")
+    if date_dt is None:
+      return '', temp_template
+    elif isinstance(date_dt, pd.Timestamp):
+      # Convert pandas Timestamp to ISO format string
+      date_str = date_dt.strftime('%Y-%m-%d')
+      return date_str, temp_template
+    else:
+      # Try to convert to string, but ensure it's JSON-serializable
+      try:
+        date_str = str(date_dt)
+        return date_str, temp_template
+      except:
+        return '', temp_template
+
+
 def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Format forecast dates and amounts using the provided template"""
   
@@ -102,27 +165,8 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
     # Get date from start_date column (already a datetime object)
     date_dt = row['start_date']
     
-    # Format date - check if template has date format specifier
-    date_format_pattern = r'\{date:([^}]+)\}'
-    start_date_format_pattern = r'\{start_date:([^}]+)\}'
-    date_format_match = re.search(date_format_pattern, template)
-    start_date_format_match = re.search(start_date_format_pattern, template)
-    
-    if date_format_match:
-      # Extract format specifier (e.g., %%Y-%%m-%%d)
-      date_format = date_format_match.group(1).replace('%%', '%')
-      # Replace {date:%%Y-%%m-%%d} with {date}
-      temp_template = re.sub(date_format_pattern, '{date}', temp_template)
-      date_str = date_dt.strftime(date_format)
-    elif start_date_format_match:
-      # Extract format specifier for start_date (e.g., %%B %%Y for "December 2025")
-      date_format = start_date_format_match.group(1).replace('%%', '%')
-      # Replace {start_date:%%B %%Y} with {start_date}
-      temp_template = re.sub(start_date_format_pattern, '{start_date}', temp_template)
-      date_str = date_dt.strftime(date_format)
-    else:
-      # Default date format YYYY-MM-DD
-      date_str = date_dt.strftime('%Y-%m-%d')
+    # Format date for metadata (ensures JSON serialization)
+    date_str, temp_template = _format_date_for_metadata(date_dt, template, temp_template)
     
     # Format amount
     if amount_has_format_specifier:
