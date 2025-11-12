@@ -20,7 +20,7 @@ from penny.tool_funcs.retrieve_accounts import retrieve_accounts_function_code_g
 from penny.tool_funcs.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
 from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
-from penny.tool_funcs.forecast_utils import utter_forecasts
+from penny.tool_funcs.forecast_utils import utter_forecast_totals
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from penny.tool_funcs.create_goal import create_goal_function_code_gen
 from penny.tool_funcs.date_utils import get_start_of_month, get_end_of_month, get_start_of_week, get_end_of_week, get_after_periods, get_date_string
@@ -145,7 +145,7 @@ def process_input_how_much_eating_out_have_I_done():
       return True, metadata
     
     print("Here are your eating out transactions:")
-    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{transaction_name} on {date}: {amount}")
+    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{amount_and_direction} {transaction_name} on {date}.")
     print(for_print)
     print(utter_transaction_totals(df, "In total, you have spent {total_amount} on eating out."))
     
@@ -319,7 +319,7 @@ def process_input_list_income_past_2_weeks():
       return True, metadata
     
     print("Here are your income transactions from the past 2 weeks:")
-    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{transaction_name}: {direction} ${amount:.0f} on {date}")
+    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{amount_and_direction} {transaction_name} on {date}.")
     print(for_print)
     print(utter_transaction_totals(df, "In total, you {direction} {total_amount} from the past 2 weeks."))
     
@@ -349,16 +349,14 @@ def process_input_how_much_am_i_expected_to_save_next_week():
       print("You have no forecasts for next week.")
       return True, metadata
     
-    # Calculate totals
+    # Calculate totals for expected savings
     total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
     total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    
-    # Calculate expected savings
     expected_savings = total_income - total_spending
     
-    # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "{direction} {total_amount:.0f}") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "{direction} {total_amount:.0f}") if not spending_df.empty else "$0.00"
+    # Format messages using utter_forecast_totals
+    income_msg = utter_forecast_totals(income_df, "${total_amount}")
+    expenses_msg = utter_forecast_totals(spending_df, "${total_amount}")
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -395,16 +393,14 @@ def process_input_how_much_am_i_expected_to_save_next_month():
       print("You have no forecasts for next month.")
       return True, metadata
     
-    # Calculate totals
+    # Calculate totals for expected savings
     total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
     total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    
-    # Calculate expected savings
     expected_savings = total_income - total_spending
     
-    # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "{direction} {total_amount:.0f}") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "{direction} {total_amount:.0f}") if not spending_df.empty else "$0.00"
+    # Format messages using utter_forecast_totals
+    income_msg = utter_forecast_totals(income_df, "${total_amount}")
+    expenses_msg = utter_forecast_totals(spending_df, "${total_amount}")
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -483,7 +479,7 @@ def process_input_list_my_subscriptions():
       print("You have no subscriptions.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{subscription_name}: {direction} ${amount:.0f} on {date}')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{amount_and_direction} {subscription_name} on {date}.')
     transaction_count = len(subscriptions_df)
     print(f"Your subscriptions ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
@@ -527,7 +523,7 @@ def process_input_list_streaming_subscriptions_paid_last_month():
       print("You have no streaming subscription payments last month.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{subscription_name}: {direction} ${amount:.0f} on {date}')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{amount_and_direction} {subscription_name} on {date}.')
     transaction_count = len(streaming_df)
     print(f"Your streaming subscription payments last month ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)

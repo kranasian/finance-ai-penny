@@ -58,12 +58,15 @@ Write a function `process_input` that takes no arguments and print()s what to te
 
 <AMOUNT_SIGN_CONVENTIONS>
 
-**Amount sign conventions** (applies to all transaction, forecast, and subscription functions):
-
-- Income (money coming in): negative amounts = "earned"
-- Income outflow (refunds/returns): positive amounts = "outflow" (for subscriptions) or "refunded" (for transactions/forecasts)
-- Spending (money going out): positive amounts = "spent"
-- Spending inflow (refunds/returns): negative amounts = "inflow" (for subscriptions) or "received" (for transactions/forecasts)
+**Amount sign conventions**:
+- **Transactions and Forecasts**:
+  - Income (money coming in): negative amounts = "received from"
+  - Income outflow (refunds/returns): positive amounts = "returned to"
+  - Spending (money going out): positive amounts = "paid to"
+  - Spending inflow (refunds/returns): negative amounts = "refunded from"
+- **Subscriptions** (always spending transactions):
+  - Spending (money going out): positive amounts = "paid to"
+  - Spending inflow (refunds/returns): negative amounts = "refunded from"
 
 </AMOUNT_SIGN_CONVENTIONS>
 
@@ -78,10 +81,10 @@ These functions are already implemented:
   - **Note**: `account_id` is for metadata only (e.g., filtering, joining), not for display to users. Use `account_name` for user-facing output.
 - `account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-  - Template placeholders: any column from the DataFrame (e.g., `{account_name}`, `{balance_current}`, `{balance_available}`, `{account_type}`)
+  - Template placeholders: any column from the DataFrame
 - `utter_account_totals(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and calculates total balances and returns a formatted string based on `template`.
-  - Template placeholders: any column from the DataFrame (e.g., `{balance_current}`, `{balance_available}`)
+  - Template placeholders: any column from the DataFrame
 - `retrieve_transactions() -> pd.DataFrame`
   - retrieves all transactions and returns a pandas DataFrame. It may be empty if no transactions exist.
   - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str)
@@ -91,44 +94,34 @@ These functions are already implemented:
     - "Earning" (or "Income") refers to all transactions with income categories, regardless of whether the amount is positive or negative.
 - `transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-  - Template placeholders: any column from the DataFrame (e.g., `{transaction_name}`, `{amount}`, `{date}`, `{category}`, `{direction}`, `{account_name}`)
-  - `{direction}` already contains the verb: "earned" or "refunded" for income, "spent" or "received" for expenses.
 - `utter_transaction_totals(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and `template` string, calculates total transaction amounts and returns a formatted string.
   - The function automatically determines if transactions are income or spending based on the `category` column in the DataFrame.
-  - Template placeholders: `{total_amount}`, `{direction}`
-  - `{direction}` already contains the verb: "earned" or "refunded" for income, "spent" or "received" for expenses.
 - `compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]`
   - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
 - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
   - retrieves spending forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
   - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-  - DataFrame columns: `user_id` (int), `start_date` (datetime), `forecasted_amount` (float), `category` (str)
+  - DataFrame columns: `start_date` (datetime), `forecasted_amount` (float), `category` (str)
   - Returns only spending forecasts.
 - `retrieve_income_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
   - retrieves income forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
   - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
-  - DataFrame columns: `user_id` (int), `start_date` (datetime), `forecasted_amount` (float), `category` (str)
+  - DataFrame columns: `start_date` (datetime), `forecasted_amount` (float), `category` (str)
 - `forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-  - Template placeholders: any column from the DataFrame (e.g., `{date}`, `{amount}`, `{forecasted_amount}`, `{direction}`, `{category}`, `{start_date}`)
-  - `{direction}` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `{direction}` in templates.
-- `utter_forecasts(df: pd.DataFrame, template: str) -> str`
+- `utter_forecast_totals(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and calculates total forecasted amounts and returns a formatted string based on `template`.
-  - Template placeholders: `{total_amount}`, `{amount}`, `{forecasted_amount}`, `{direction}`, `{start_date}`, `{categories}`
-  - `{direction}` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories. Do NOT add verbs before `{direction}` in templates.
+  - Template placeholders: `{total_amount}`, `{amount}`, `{direction}`
+  - `{direction}` is empty for "earned" or "spent", or shows "(inflow)" or "(outflow)" for other cases.
 - `retrieve_subscriptions() -> pd.DataFrame`
   - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
   - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `subscription_name` (str), `confidence_score_bills` (float), `reviewer_bills` (str)
 - `subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
-  - Template placeholders: any column from the DataFrame (e.g., `{subscription_name}`, `{transaction_name}`, `{amount}`, `{date}`, `{category}`, `{direction}`)
-  - `{direction}` already contains the verb: "earned" or "refunded" for income categories, "spent" or "received" for expense categories.
 - `utter_subscription_totals(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and `template` string, calculates total subscription transaction amounts and returns a formatted string.
   - The function automatically determines if transactions are income or spending based on the `category` column in the DataFrame.
-  - Template placeholders: `{total_amount}`, `{direction}`
-  - `{direction}` will be blank (empty string) for "earned" or "spent", and will show "(inflow)" or "(outflow)" for refunds/returns.
 - `respond_to_app_inquiry(inquiry: str) -> str`
   - accepts a string `inquiry` on how to categorize transactions, Penny's capabilities, or other app questions and returns a string response.
 - `create_goal(goals: list[dict]) -> tuple[str, dict]`
@@ -572,7 +565,7 @@ def process_input():
       return True, metadata
     
     print("Here are your income transactions from the past 2 weeks:")
-    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{transaction_name}: {direction} ${amount:.0f} on {date}")
+    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{amount_and_direction} {transaction_name} on {date}.")
     print(for_print)
     print(utter_transaction_totals(df, "In total, you {direction} {total_amount} from the past 2 weeks."))
     
@@ -604,16 +597,14 @@ def process_input():
       print("You have no forecasts for next week.")
       return True, metadata
     
-    # Calculate totals
+    # Calculate totals for expected savings
     total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
     total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    
-    # Calculate expected savings
     expected_savings = total_income - total_spending
     
-    # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "{direction} {total_amount:.0f}") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "{direction} {total_amount:.0f}") if not spending_df.empty else "$0.00"
+    # Format messages using utter_forecast_totals
+    income_msg = utter_forecast_totals(income_df, "${total_amount}")
+    expenses_msg = utter_forecast_totals(spending_df, "${total_amount}")
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -652,16 +643,14 @@ def process_input():
       print("You have no forecasts for next month.")
       return True, metadata
     
-    # Calculate totals
+    # Calculate totals for expected savings
     total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
     total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    
-    # Calculate expected savings
     expected_savings = total_income - total_spending
     
-    # Get formatted income and spending messages using utter_forecasts
-    income_msg = utter_forecasts(income_df, "{direction} {total_amount:.0f}") if not income_df.empty else "$0.00"
-    expenses_msg = utter_forecasts(spending_df, "{direction} {total_amount:.0f}") if not spending_df.empty else "$0.00"
+    # Format messages using utter_forecast_totals
+    income_msg = utter_forecast_totals(income_df, "${total_amount}")
+    expenses_msg = utter_forecast_totals(spending_df, "${total_amount}")
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -743,7 +732,7 @@ def process_input():
       print("You have no subscriptions.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{subscription_name}: {direction} ${amount:.0f} on {date}')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{amount_and_direction} {subscription_name} on {date}.')
     transaction_count = len(subscriptions_df)
     print(f"Your subscriptions ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
@@ -788,7 +777,7 @@ def process_input():
       print("You have no streaming subscription payments last month.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{subscription_name}: {direction} ${amount:.0f} on {date}')
+    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{amount_and_direction} {subscription_name} on {date}')
     transaction_count = len(streaming_df)
     print(f"Your streaming subscription payments last month ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)

@@ -433,6 +433,7 @@ def create_sample_forecasts(user_id: int) -> list:
       category_map['transportation_car']: 100.00,
       category_map['health_gym_wellness']: 50.00,
       category_map['meals_groceries']: 480.00,  # 4 weeks * 120
+      category_map['meals_dining_out']: 300.00,  # 4 weeks * ~75 average
       category_map['leisure_entertainment']: 25.00,
     }
     
@@ -639,8 +640,12 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
     
     transaction_name, amount, category = subscription_transaction_map[sub_name]
     
+    # Skip income subscriptions (salary, side gig) - they're not real subscriptions
+    if sub_name in ['salary', 'side gig']:
+      continue
+    
     # Determine frequency based on subscription
-    if sub_name in ['netflix', 'spotify', 'gym membership', 'municipal water and sewer', 'mid-carolina electric cooperative', 'phone bill', 'side gig']:
+    if sub_name in ['netflix', 'spotify', 'gym membership', 'municipal water and sewer', 'mid-carolina electric cooperative', 'phone bill']:
       # Monthly subscriptions - create one transaction per calendar month
       # Start from the first day of the start month
       current_month = start_date.replace(day=1)
@@ -669,6 +674,10 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
           transaction_id = _subscription_transaction_id_counter
           _subscription_transaction_id_counter += 1
           
+          # 10% chance to create a refund (negative amount) instead of a payment
+          is_refund = random.random() < 0.1
+          transaction_amount = -abs(amount) if is_refund else amount
+          
           # Create transaction with exact subscription name (lowercase) so it matches
           db.create_transaction(
             user_id=user_id,
@@ -676,7 +685,7 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
             transaction_id=transaction_id,
             date=transaction_date.strftime("%Y-%m-%d"),
             transaction_name=transaction_name.lower(),  # Use lowercase to match subscription name
-            amount=amount,
+            amount=transaction_amount,
             category=category
           )
           transaction_count += 1
@@ -724,13 +733,17 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
           transaction_id = _subscription_transaction_id_counter
           _subscription_transaction_id_counter += 1
           
+          # 10% chance to create a refund (negative amount) instead of a payment
+          is_refund = random.random() < 0.1
+          transaction_amount = -abs(amount) if is_refund else amount
+          
           db.create_transaction(
             user_id=user_id,
             account_id=account_id,
             transaction_id=transaction_id,
             date=transaction_date.strftime("%Y-%m-%d"),
             transaction_name=transaction_name.lower(),
-            amount=amount,
+            amount=transaction_amount,
             category=category
           )
           transaction_count += 1

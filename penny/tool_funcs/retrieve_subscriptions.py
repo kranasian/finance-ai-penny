@@ -86,36 +86,27 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     amount_log = f"${abs(amount):.0f}" if amount else "Unknown"
     log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Subscription**: `{subscription_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`")
     
-    # Determine direction and preposition based on category and amount sign
-    # First check if category is income category
-    income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
-    is_income = category in income_categories if category else False
+    # Determine amount_and_direction based on amount sign
+    # Subscriptions are always spending transactions:
+    # - Spending (Outflow): amount > 0 → "$X.XX was paid to"
+    # - Spending (Inflow/Refund): amount < 0 → "$X.XX was refunded from"
     
-    # Determine direction based on category and amount sign
-    # For income categories: negative = earned (inflow), positive = refunded (outflow)
-    # For expense categories: positive = spent (outflow), negative = received (inflow/refund)
-    if is_income:
-      if amount < 0:
-        direction = "earned"
-        preposition = "from"
-      else:  # amount > 0
-        direction = "refunded"
-        preposition = "to"
-    else:
-      # Expense categories (most subscriptions)
-      if amount > 0:
-        direction = "spent"
-        preposition = "on"
-      else:  # amount < 0
-        direction = "received"
-        preposition = "from"
+    # Format amount as positive for display
+    amount_abs = abs(amount)
+    amount_str_for_direction = f"${amount_abs:.0f}"
     
-    # Check if template has format specifiers for amount (like {amount:.0f})
-    amount_format_pattern = r'\{amount:([^}]+)\}'
-    has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
+    # Determine the verb phrase based on amount sign
+    if amount > 0:
+      # Spending (Outflow): amount > 0 → "was paid to"
+      verb_phrase = "was paid to"
+    else:  # amount < 0
+      # Spending (Inflow/Refund): amount < 0 → "was refunded from"
+      verb_phrase = "was refunded from"
     
-    # Check if template has dollar sign - if it does, format amount without $, otherwise with $
-    has_dollar_sign = '$' in template
+    # Build amount_and_direction string
+    amount_and_direction = f"{amount_str_for_direction} {verb_phrase}"
+    
+    temp_template = template
     
     # Check if template has date format specifiers (like {date:%%Y-%%m-%%d})
     date_format_pattern = r'\{date:([^}]+)\}'
@@ -168,39 +159,14 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
         if ' ' in date_str:
           date_str = date_str.split(' ')[0]
     
-    # Handle amount formatting based on template format specifiers
-    if has_amount_format_specifier:
-      # Template has format specifiers, replace ALL of them with simple {amount}
-      temp_template = re.sub(amount_format_pattern, '{amount}', temp_template)
-    
-    # Format amount string based on template requirements
-    if has_amount_format_specifier:
-      # Template originally had format specifiers, format with $ if template doesn't have $
-      if has_dollar_sign:
-        # Template has $, format without $ prefix
-        amount_str = f"{abs(amount):.0f}"
-      else:
-        # Template has NO $, format WITH $ prefix
-        amount_str = f"${abs(amount):.0f}"
-    else:
-      # No format specifiers - check if template has dollar signs
-      if has_dollar_sign:
-        # Template has dollar signs, format without $ prefix
-        amount_str = f"{abs(amount):.0f}"
-      else:
-        # Template has NO dollar signs, format WITH $ prefix
-        amount_str = f"${abs(amount):.0f}"
-    
     # Build format dictionary with subscription transaction fields
     format_dict = {
       'name': transaction_name,
       'transaction_name': transaction_name,
       'subscription_name': subscription_name,
-      'amount': amount_str,
+      'amount_and_direction': amount_and_direction,
       'date': date_str,
-      'category': category,
-      'direction': direction,
-      'preposition': preposition
+      'category': category
     }
     
     # Check for any additional columns in the DataFrame that might be referenced in the template
@@ -216,19 +182,9 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     try:
       utterance = temp_template.format(**format_dict)
     except (ValueError, KeyError) as e:
-      # If formatting fails, try with raw numeric amount (only if template had format specifiers)
-      if has_amount_format_specifier:
-        # Try with raw number (format specifier was already replaced)
-        format_dict_raw = format_dict.copy()
-        format_dict_raw['amount'] = abs(amount)
-        try:
-          utterance = temp_template.format(**format_dict_raw)
-        except Exception as e2:
-          # Fall back to formatted string
-          utterance = temp_template.format(**format_dict)
-      else:
-        # No format specifiers, so the error is unexpected - re-raise
-        raise
+      # If formatting fails, log error and re-raise
+      log(f"**Template Formatting Error**: {e}. Template: {temp_template}, Format dict keys: {list(format_dict.keys())}")
+      raise
     
     # Convert date to string for JSON serialization
     date_for_metadata = date

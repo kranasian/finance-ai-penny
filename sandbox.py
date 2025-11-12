@@ -16,7 +16,7 @@ from penny.tool_funcs.retrieve_accounts import retrieve_accounts_function_code_g
 from penny.tool_funcs.retrieve_transactions import retrieve_transactions_function_code_gen, transaction_names_and_amounts, utter_transaction_totals
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
-from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_forecasts
+from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_forecast_totals
 from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.respond_to_app_inquiry import respond_to_app_inquiry
 from penny.tool_funcs.create_goal import create_goal_function_code_gen
@@ -294,11 +294,11 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_transaction_totals_wrapper(df: pd.DataFrame, template: str):
     return utter_transaction_totals(df, template)
   
-  def utter_forecasts_wrapper(df: pd.DataFrame, template: str):
-    return utter_forecasts(df, template)
-  
   def forecast_dates_and_amount_wrapper(df: pd.DataFrame, template: str):
     return forecast_dates_and_amount(df, template)
+  
+  def utter_forecast_totals_wrapper(df: pd.DataFrame, template: str):
+    return utter_forecast_totals(df, template)
   
   def compare_spending_wrapper(df: pd.DataFrame, template: str, metadata: dict = None):
     return compare_spending(df, template, metadata)
@@ -343,8 +343,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "utter_subscription_totals": utter_subscription_totals_wrapper,
     "transaction_names_and_amounts": transaction_names_and_amounts_wrapper,
     "utter_transaction_totals": utter_transaction_totals_wrapper,
-    "utter_forecasts": utter_forecasts_wrapper,
     "forecast_dates_and_amount": forecast_dates_and_amount_wrapper,
+    "utter_forecast_totals": utter_forecast_totals_wrapper,
     "compare_spending": compare_spending_wrapper,
     "respond_to_app_inquiry": respond_to_app_inquiry_wrapper,
     "create_goal": create_goal_wrapper,
