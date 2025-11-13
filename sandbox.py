@@ -13,10 +13,8 @@ import pandas as pd
 import traceback
 import json
 from penny.tool_funcs.retrieve_accounts import (
-    retrieve_accounts_function_code_gen,
     retrieve_depository_accounts_function_code_gen,
     retrieve_credit_accounts_function_code_gen,
-    retrieve_loan_accounts_function_code_gen,
     account_names_and_balances,
     utter_account_totals,
     utter_net_worth
@@ -267,18 +265,11 @@ def _get_safe_globals(user_id,use_full_datetime=False):
 
   all_builtins.update(additional_builtins)
   
-  # Create a wrapper function for retrieve_accounts that uses the provided user_id
-  def retrieve_accounts_wrapper():
-    return retrieve_accounts(user_id)
-  
   def retrieve_depository_accounts_wrapper():
     return retrieve_depository_accounts(user_id)
   
   def retrieve_credit_accounts_wrapper():
     return retrieve_credit_accounts(user_id)
-  
-  def retrieve_loan_accounts_wrapper():
-    return retrieve_loan_accounts(user_id)
   
   # Create wrapper functions for account utility functions
   def account_names_and_balances_wrapper(df: pd.DataFrame, template: str):
@@ -363,10 +354,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "map": guarded_map,
     "timedelta": timedelta,
     "zip": guarded_zip,
-    "retrieve_accounts": retrieve_accounts_wrapper,
     "retrieve_depository_accounts": retrieve_depository_accounts_wrapper,
     "retrieve_credit_accounts": retrieve_credit_accounts_wrapper,
-    "retrieve_loan_accounts": retrieve_loan_accounts_wrapper,
     "account_names_and_balances": account_names_and_balances_wrapper,
     "utter_account_totals": utter_account_totals_wrapper,
     "utter_net_worth": utter_net_worth_wrapper,
@@ -427,11 +416,6 @@ def clear_captured_print_output():
   _print_collector = PrintCollector(_getattr_=_DataFrameGuard._getattr_)
 
 
-def retrieve_accounts(user_id: int = 1):
-  """Internal function to retrieve accounts - available to executed code"""
-  return retrieve_accounts_function_code_gen(user_id)
-
-
 def retrieve_depository_accounts(user_id: int = 1):
   """Internal function to retrieve depository accounts - available to executed code"""
   return retrieve_depository_accounts_function_code_gen(user_id)
@@ -440,11 +424,6 @@ def retrieve_depository_accounts(user_id: int = 1):
 def retrieve_credit_accounts(user_id: int = 1):
   """Internal function to retrieve credit accounts - available to executed code"""
   return retrieve_credit_accounts_function_code_gen(user_id)
-
-
-def retrieve_loan_accounts(user_id: int = 1):
-  """Internal function to retrieve loan accounts - available to executed code"""
-  return retrieve_loan_accounts_function_code_gen(user_id)
 
 
 def utter_net_worth_internal(total_assets: float, total_liabilities: float, template: str):

@@ -57,6 +57,20 @@ class GeminiAgentCodeGen:
 
 Today's date is {today_date}.""" + """
 
+<AMOUNT_SIGN_CONVENTIONS>
+
+**Amount sign conventions**:
+- **Transactions and Forecasts**:
+  - Income (money coming in): negative amounts = "received from"
+  - Income outflow (refunds/returns): positive amounts = "returned to"
+  - Spending (money going out): positive amounts = "paid to"
+  - Spending inflow (refunds/returns): negative amounts = "refunded from"
+- **Subscriptions** (always spending transactions):
+  - Spending (money going out): positive amounts = "paid to"
+  - Spending inflow (refunds/returns): negative amounts = "refunded from"
+
+</AMOUNT_SIGN_CONVENTIONS>
+
 <IMPLEMENTED_FUNCTIONS>
 
 These functions are already implemented:
@@ -65,10 +79,7 @@ These functions are already implemented:
   - retrieves depository accounts (checking, savings, money market) and returns a pandas DataFrame. It may be empty if no depository accounts exist.
   - DataFrame columns: `account_type` (str), `account_name` (str), `balance_available` (float), `balance_current` (float), `balance_limit` (float)
 - `retrieve_credit_accounts(): pd.DataFrame`
-  - retrieves credit card accounts and returns a pandas DataFrame. It may be empty if no credit card accounts exist.
-  - DataFrame columns: `account_type` (str), `account_name` (str), `balance_available` (float), `balance_current` (float), `balance_limit` (float)
-- `retrieve_loan_accounts(): pd.DataFrame`
-  - retrieves loan accounts (mortgage, auto, home equity, line of credit) and returns a pandas DataFrame. It may be empty if no loan accounts exist.
+  - retrieves credit card and loan accounts (mortgage, auto, home equity, line of credit) and returns a pandas DataFrame. It may be empty if no credit card or loan accounts exist.
   - DataFrame columns: `account_type` (str), `account_name` (str), `balance_available` (float), `balance_current` (float), `balance_limit` (float)
 - `account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
@@ -267,7 +278,7 @@ These are the valid `category` values.
     account_names_text = "\n".join(account_names_list) if account_names_list else "    (No account names found)"
     
     return f"""<ACCOUNT_NAMES>
-  **REFERENCE ONLY** - These are example `account_name` values in the `accounts` table. This is NOT code - use `retrieve_depository_accounts()`, `retrieve_credit_accounts()`, or `retrieve_loan_accounts()` to get the actual DataFrame.
+  **REFERENCE ONLY** - These are example `account_name` values in the `accounts` table. This is NOT code - use `retrieve_depository_accounts()` or `retrieve_credit_accounts()` to get the actual DataFrame.
   Account names:
 {account_names_text}
 </ACCOUNT_NAMES>"""
@@ -350,18 +361,15 @@ def process_input():
     
     # Get credit and loan accounts (liabilities)
     credit_df = retrieve_credit_accounts()
-    loan_df = retrieve_loan_accounts()
     
-    # Combine all accounts for checking if empty
-    if assets_df.empty and credit_df.empty and loan_df.empty:
+    # Check if empty
+    if assets_df.empty and credit_df.empty:
         print("You have no accounts to calculate net worth.")
         return True, metadata
 
     # Calculate totals
     total_assets = assets_df['balance_current'].sum() if not assets_df.empty else 0.0
-    total_credit_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
-    total_loan_liabilities = loan_df['balance_current'].sum() if not loan_df.empty else 0.0
-    total_liabilities = total_credit_liabilities + total_loan_liabilities
+    total_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
     
     # Use utter_net_worth to format the message
     print(utter_net_worth(total_assets, total_liabilities, "You have a {net_worth_state_with_amount}, with a {total_asset_state_with_amount} and a {total_liability_state_with_amount}."))

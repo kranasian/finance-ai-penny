@@ -18,8 +18,8 @@ ACCOUNT_TYPE_TO_STRING = {
 ACCOUNT_STRING_TO_TYPE = {v: k for k, v in ACCOUNT_TYPE_TO_STRING.items()}
 
 
-def retrieve_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
-  """Function to retrieve accounts from the database for a specific user"""
+def _get_accounts_with_mapping(user_id: int = 1) -> pd.DataFrame:
+  """Helper function to retrieve accounts from the database and map account types"""
   db = Database()
   accounts = db.get_accounts_by_user(user_id=user_id)
   df = pd.DataFrame(accounts)
@@ -46,13 +46,12 @@ def retrieve_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
     
     df['account_type'] = df.apply(map_account_type, axis=1)
   
-  log(f"**Retrieved All Accounts** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   return df
 
 
 def retrieve_depository_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   """Function to retrieve depository accounts (checking, savings, money market) from the database for a specific user"""
-  df = retrieve_accounts_function_code_gen(user_id=user_id)
+  df = _get_accounts_with_mapping(user_id=user_id)
   
   if df.empty:
     log(f"**Retrieved Depository Accounts** of `U-{user_id}`: empty DataFrame")
@@ -66,33 +65,22 @@ def retrieve_depository_accounts_function_code_gen(user_id: int = 1) -> pd.DataF
 
 
 def retrieve_credit_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
-  """Function to retrieve credit card accounts from the database for a specific user"""
-  df = retrieve_accounts_function_code_gen(user_id=user_id)
+  """Function to retrieve credit card and loan accounts from the database for a specific user"""
+  df = _get_accounts_with_mapping(user_id=user_id)
   
   if df.empty:
-    log(f"**Retrieved Credit Accounts** of `U-{user_id}`: empty DataFrame")
+    log(f"**Retrieved Credit and Loan Accounts** of `U-{user_id}`: empty DataFrame")
     return df
   
-  # Filter for credit card accounts
+  # Filter for credit card accounts and loan accounts (account_type starts with 'loan_')
   credit_df = df[df['account_type'] == 'credit_card']
-  
-  log(f"**Retrieved Credit Accounts** of `U-{user_id}`: `df: {credit_df.shape}` w/ **cols**:\n  - `{'`, `'.join(credit_df.columns)}`")
-  return credit_df
-
-
-def retrieve_loan_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
-  """Function to retrieve loan accounts (mortgage, auto, home equity, line of credit) from the database for a specific user"""
-  df = retrieve_accounts_function_code_gen(user_id=user_id)
-  
-  if df.empty:
-    log(f"**Retrieved Loan Accounts** of `U-{user_id}`: empty DataFrame")
-    return df
-  
-  # Filter for loan accounts (account_type starts with 'loan_')
   loan_df = df[df['account_type'].str.startswith('loan_', na=False)]
   
-  log(f"**Retrieved Loan Accounts** of `U-{user_id}`: `df: {loan_df.shape}` w/ **cols**:\n  - `{'`, `'.join(loan_df.columns)}`")
-  return loan_df
+  # Combine credit and loan accounts
+  combined_df = pd.concat([credit_df, loan_df], ignore_index=True) if not (credit_df.empty and loan_df.empty) else pd.DataFrame()
+  
+  log(f"**Retrieved Credit and Loan Accounts** of `U-{user_id}`: `df: {combined_df.shape}` w/ **cols**:\n  - `{'`, `'.join(combined_df.columns)}`")
+  return combined_df
 
 
 def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]:

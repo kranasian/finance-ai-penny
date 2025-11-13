@@ -19,7 +19,6 @@ from user_seeder import seed_users
 from penny.tool_funcs.retrieve_accounts import (
     retrieve_depository_accounts_function_code_gen,
     retrieve_credit_accounts_function_code_gen,
-    retrieve_loan_accounts_function_code_gen,
     account_names_and_balances,
     utter_account_totals,
     utter_net_worth
@@ -46,11 +45,6 @@ def retrieve_depository_accounts() -> pd.DataFrame:
 def retrieve_credit_accounts() -> pd.DataFrame:
   global user_id
   return retrieve_credit_accounts_function_code_gen(user_id=user_id)
-
-
-def retrieve_loan_accounts() -> pd.DataFrame:
-  global user_id
-  return retrieve_loan_accounts_function_code_gen(user_id=user_id)
 
 
 def retrieve_income_transactions() -> pd.DataFrame:
@@ -133,18 +127,15 @@ def process_input_what_is_my_net_worth():
     
     # Get credit and loan accounts (liabilities)
     credit_df = retrieve_credit_accounts()
-    loan_df = retrieve_loan_accounts()
     
-    # Combine all accounts for checking if empty
-    if assets_df.empty and credit_df.empty and loan_df.empty:
+    # Check if empty
+    if assets_df.empty and credit_df.empty:
         print("You have no accounts to calculate net worth.")
         return True, metadata
 
     # Calculate totals
     total_assets = assets_df['balance_current'].sum() if not assets_df.empty else 0.0
-    total_credit_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
-    total_loan_liabilities = loan_df['balance_current'].sum() if not loan_df.empty else 0.0
-    total_liabilities = total_credit_liabilities + total_loan_liabilities
+    total_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
     
     # Use utter_net_worth to format the message
     print(utter_net_worth(total_assets, total_liabilities, "You have a {net_worth_state_with_amount}, with a {total_asset_state_with_amount} and a {total_liability_state_with_amount}."))
@@ -549,11 +540,10 @@ def process_input_how_much_am_i_expected_to_save_next_month():
 def process_input_whats_the_total_across_account_types():
     depository_df = retrieve_depository_accounts()
     credit_df = retrieve_credit_accounts()
-    loan_df = retrieve_loan_accounts()
     metadata = {"accounts": []}
     
     # Combine all accounts
-    df = pd.concat([depository_df, credit_df, loan_df], ignore_index=True) if not (depository_df.empty and credit_df.empty and loan_df.empty) else pd.DataFrame()
+    df = pd.concat([depository_df, credit_df], ignore_index=True) if not (depository_df.empty and credit_df.empty) else pd.DataFrame()
     
     if df.empty:
       print("You have no accounts.")
