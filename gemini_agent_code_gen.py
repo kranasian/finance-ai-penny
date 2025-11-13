@@ -44,28 +44,18 @@ class GeminiAgentCodeGen:
     # System Prompt
     today_date = datetime.now().strftime("%Y-%m-%d")
     self.system_prompt = """Your name is "Penny" and you are a helpful AI specialized in code generation. **You only output python code.**
-Write a function `process_input` that takes no arguments and print()s what to tell the user and returns a tuple:
-  - The first element the boolean success or failure of the function.
-  - The second element is the metadata for the entities created or retrieved.
-- Assume `import datetime` is already included.  Use IMPLEMENTED_DATE_FUNCTIONS to compute for dates.
-- When looking for `account_name` and `==`, look for other relevant variations to find more matches. Refer to <ACCOUNT_NAMES> for the list of account names.
-- When looking for `subscription_name` and `==`, look for other relevant variations to find more matches. Refer to <SUBSCRIPTION_NAMES> for the list of subscription names.""" + f"""
-- Today's date is {today_date}.""" + """
 
-<AMOUNT_SIGN_CONVENTIONS>
+## Your Task and Main Rules
 
-**Amount sign conventions**:
-- **Transactions and Forecasts**:
-  - Income (money coming in): negative amounts = "received from"
-  - Income outflow (refunds/returns): positive amounts = "returned to"
-  - Spending (money going out): positive amounts = "paid to"
-  - Spending inflow (refunds/returns): negative amounts = "refunded from"
-- **Subscriptions** (always spending transactions):
-  - Spending (money going out): positive amounts = "paid to"
-  - Spending inflow (refunds/returns): negative amounts = "refunded from"
+1. Write a function `process_input` that takes no arguments and print()s what to tell the user and returns a tuple:
+	- The first element the boolean success or failure of the function.
+	- The second element is the metadata for the entities created or retrieved.
+2. Assume `import datetime` is already included.  Use IMPLEMENTED_DATE_FUNCTIONS to compute for dates.
+3. When matching for `account_name`, `subscription_name` and `transaction_name`:
+	- Always do partial lowercase matching: `contains`, `case=False` for these fields.
+	- look for relevant variations to find more matches in **Account Names**, **Subscription Names** sections.
 
-</AMOUNT_SIGN_CONVENTIONS>
-
+Today's date is {today_date}.""" + """
 
 <IMPLEMENTED_FUNCTIONS>
 
@@ -324,7 +314,8 @@ These are the valid `category` values.
       List of example dictionaries with user input and expected code output
     """
     return """input: User: how much left in checking
-output: ```python
+output:
+```python
 def process_input():
     df = retrieve_depository_accounts()
     metadata = {}
@@ -349,7 +340,8 @@ def process_input():
 ```
 
 input: User: what is my net worth
-output: ```python
+output:
+```python
 def process_input():
     metadata = {}
 
@@ -378,7 +370,8 @@ def process_input():
 ```
 
 input: User: did i spend more on dining out over groceries last month?
-output: ```python
+output:
+```python
 def process_input():
     df = retrieve_spending_transactions()
     metadata = {}
@@ -418,7 +411,8 @@ def process_input():
 ```
 
 input: User: can I afford to pay a couple months of fun with what I have now
-output: ```python
+output:
+```python
 def process_input():
     metadata = {}
     
@@ -471,7 +465,8 @@ def process_input():
 ```
 
 input: User: Have I been saving anything monthly in the past 4 months?
-output: ```python
+output:
+```python
 def process_input():
     metadata = {}
     
@@ -528,7 +523,8 @@ def process_input():
 ```
 
 input: User: how much am i expected to save next week?
-output: ```python
+output:
+```python
 def process_input():
     metadata = {}
     
@@ -573,7 +569,8 @@ def process_input():
 ```
 
 input: User: Did i get any income in last last few weeks and what about upcoming weeks?
-output: ```python
+output:
+```python
 def process_input():
     metadata = {"transactions": [], "forecasts": []}
     
@@ -620,7 +617,8 @@ def process_input():
 ```
 
 input: User: check my checking account if i can afford paying my rent next month
-output: ```python
+output:
+```python
 def process_input():
     metadata = {}
     
@@ -678,7 +676,8 @@ def process_input():
 ```
 
 input: User: list my subscriptions
-output: ```python
+output:
+```python
 def process_input():
     metadata = {"subscriptions": []}
     
@@ -699,7 +698,8 @@ def process_input():
 ```
 
 input: User: list streaming subscriptions paid last month
-output: ```python
+output:
+```python
 def process_input():
     metadata = {"subscriptions": []}
     
@@ -714,7 +714,7 @@ def process_input():
     streaming_names = []
     streaming_categories = ['leisure_entertainment']
     
-    name_matches = subscriptions_df['subscription_name'].str.lower().isin(streaming_names)
+    name_matches = subscriptions_df['subscription_name'].str.contains('|'.join(streaming_names), case=False, regex=True, na=False)
     category_matches = subscriptions_df['category'].isin(streaming_categories)
     streaming_df = subscriptions_df[name_matches & category_matches]
     
@@ -742,7 +742,6 @@ def process_input():
     
     return True, metadata
 ```
-
 """
 
 
