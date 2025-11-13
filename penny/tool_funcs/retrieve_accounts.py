@@ -50,6 +50,51 @@ def retrieve_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   return df
 
 
+def retrieve_depository_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
+  """Function to retrieve depository accounts (checking, savings, money market) from the database for a specific user"""
+  df = retrieve_accounts_function_code_gen(user_id=user_id)
+  
+  if df.empty:
+    log(f"**Retrieved Depository Accounts** of `U-{user_id}`: empty DataFrame")
+    return df
+  
+  # Filter for depository accounts (account_type starts with 'deposit_')
+  depository_df = df[df['account_type'].str.startswith('deposit_', na=False)]
+  
+  log(f"**Retrieved Depository Accounts** of `U-{user_id}`: `df: {depository_df.shape}` w/ **cols**:\n  - `{'`, `'.join(depository_df.columns)}`")
+  return depository_df
+
+
+def retrieve_credit_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
+  """Function to retrieve credit card accounts from the database for a specific user"""
+  df = retrieve_accounts_function_code_gen(user_id=user_id)
+  
+  if df.empty:
+    log(f"**Retrieved Credit Accounts** of `U-{user_id}`: empty DataFrame")
+    return df
+  
+  # Filter for credit card accounts
+  credit_df = df[df['account_type'] == 'credit_card']
+  
+  log(f"**Retrieved Credit Accounts** of `U-{user_id}`: `df: {credit_df.shape}` w/ **cols**:\n  - `{'`, `'.join(credit_df.columns)}`")
+  return credit_df
+
+
+def retrieve_loan_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame:
+  """Function to retrieve loan accounts (mortgage, auto, home equity, line of credit) from the database for a specific user"""
+  df = retrieve_accounts_function_code_gen(user_id=user_id)
+  
+  if df.empty:
+    log(f"**Retrieved Loan Accounts** of `U-{user_id}`: empty DataFrame")
+    return df
+  
+  # Filter for loan accounts (account_type starts with 'loan_')
+  loan_df = df[df['account_type'].str.startswith('loan_', na=False)]
+  
+  log(f"**Retrieved Loan Accounts** of `U-{user_id}`: `df: {loan_df.shape}` w/ **cols**:\n  - `{'`, `'.join(loan_df.columns)}`")
+  return loan_df
+
+
 def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Generate a formatted string describing account names and balances using the provided template and return metadata"""
   log(f"**Account Names/Balances**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
@@ -393,6 +438,68 @@ def utter_account_totals(df: pd.DataFrame, template: str) -> str:
     }
     result = template.format(**format_dict)
   log(f"**Utterance**: `{result}`")
+  return result
+
+
+def utter_net_worth(total_assets: float, total_liabilities: float, template: str) -> str:
+  """Calculate net worth and return formatted string with state descriptions.
+  
+  Args:
+    total_assets: Total assets amount (can be negative)
+    total_liabilities: Total liabilities amount (can be negative)
+    template: Template string with placeholders:
+      - {net_worth_state_with_amount}: Net worth state with amount (e.g., "net worth deficit of $500" or "net worth surplus of $1000")
+      - {total_asset_state_with_amount}: Asset state with amount (e.g., "net asset shortfall of $200" or "net asset of $5000")
+      - {total_liability_state_with_amount}: Liability state with amount (e.g., "net liability surplus of $300" or "net liability of $2000")
+  
+  Returns:
+    Formatted string with net worth information
+  """
+  
+  log(f"**Net Worth Calculation**: Assets: ${total_assets:.0f}, Liabilities: ${total_liabilities:.0f}")
+  
+  # Calculate net worth
+  net_worth = total_assets - total_liabilities
+  
+  # Determine net worth state
+  if net_worth < 0:
+    net_worth_state = "net worth deficit"
+    net_worth_amount = abs(net_worth)
+  else:
+    net_worth_state = "net worth surplus"
+    net_worth_amount = abs(net_worth)
+  
+  net_worth_state_with_amount = f"{net_worth_state} of ${net_worth_amount:.0f}"
+  
+  # Determine asset state
+  if total_assets < 0:
+    asset_state = "net asset shortfall"
+    asset_amount = abs(total_assets)
+  else:
+    asset_state = "net asset"
+    asset_amount = abs(total_assets)
+  
+  total_asset_state_with_amount = f"{asset_state} of ${asset_amount:.0f}"
+  
+  # Determine liability state
+  if total_liabilities < 0:
+    liability_state = "net liability surplus"
+    liability_amount = abs(total_liabilities)
+  else:
+    liability_state = "net liability"
+    liability_amount = abs(total_liabilities)
+  
+  total_liability_state_with_amount = f"{liability_state} of ${liability_amount:.0f}"
+  
+  # Format the template
+  format_dict = {
+    'net_worth_state_with_amount': net_worth_state_with_amount,
+    'total_asset_state_with_amount': total_asset_state_with_amount,
+    'total_liability_state_with_amount': total_liability_state_with_amount,
+  }
+  
+  result = template.format(**format_dict)
+  log(f"**Net Worth Utterance**: `{result}`")
   return result
 
 # Note: handle_function_call is now centralized in tools/tool_defs.py

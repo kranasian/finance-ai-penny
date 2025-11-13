@@ -371,6 +371,115 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
   
   return transaction_ids
 
+def create_month_with_negative_savings(user_id: int, account_ids: list, months_ago: int) -> list:
+  """Create transactions for a specific month where income < spending (negative savings)
+  
+  Args:
+    user_id: User ID
+    account_ids: List of account IDs to use
+    months_ago: Number of months ago (1-4 for past 4 months)
+  
+  Returns:
+    List of transaction IDs created
+  """
+  global _transaction_id_counter
+  db = Database()
+  transaction_ids = []
+  
+  # Calculate the target month
+  first_day_current_month = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+  target_month_start = first_day_current_month - relativedelta(months=months_ago)
+  # Get end of month
+  if target_month_start.month == 12:
+    target_month_end = target_month_start.replace(day=31)
+  else:
+    target_month_end = (target_month_start.replace(month=target_month_start.month + 1, day=1) - timedelta(days=1))
+  
+  # Income transactions - very low total to ensure spending > income
+  # Total income: -$1000 (only $1000 earned)
+  income_transactions = [
+    ('Direct Deposit - Salary', 'PAYROLL DEPOSIT COMPANY INC', -500.00, 'income_salary'),
+    ('Freelance Payment', 'FREELANCE CLIENT LLC', -300.00, 'income_sidegig'),
+    ('Uber Earnings', 'UBER TECHNOLOGIES INC', -200.00, 'income_sidegig'),
+  ]
+  
+  # Spending transactions - EXTREMELY high total to ensure spending > income
+  # Total spending: $100000+ (spending way more than any possible random income)
+  # This ensures that even with random transactions adding income, spending will exceed income
+  spending_transactions = [
+    ('Whole Foods', 'WHOLE FOODS MARKET', 2000.00, 'meals_groceries'),
+    ('Costco', 'COSTCO WHOLESALE', 3000.00, 'meals_groceries'),
+    ('McDonalds', 'MCDONALDS RESTAURANT', 500.00, 'meals_dining_out'),
+    ('Starbucks', 'STARBUCKS COFFEE', 800.00, 'meals_dining_out'),
+    ('DoorDash', 'DOORDASH INC', 1500.00, 'meals_delivered_food'),
+    ('Airline Ticket', 'DELTA AIRLINES', 10000.00, 'leisure_travel'),
+    ('Hotel Booking', 'MARRIOTT HOTELS', 8000.00, 'leisure_travel'),
+    ('Concert Tickets', 'TICKETMASTER', 2000.00, 'leisure_entertainment'),
+    ('Rent Payment', 'APARTMENT COMPLEX', 15000.00, 'shelter_home'),
+    ('Electric Bill', 'ELECTRIC COMPANY', 1500.00, 'shelter_utilities'),
+    ('Water Bill', 'WATER DEPARTMENT', 1000.00, 'shelter_utilities'),
+    ('Gas Station', 'SHELL OIL', 2000.00, 'transportation_car'),
+    ('Auto Parts', 'AUTOZONE INC', 5000.00, 'transportation_car'),
+    ('Car Repair', 'AUTO REPAIR SHOP', 15000.00, 'transportation_car'),
+    ('Doctor Visit', 'MEDICAL CENTER', 2000.00, 'health_medical_pharmacy'),
+    ('Emergency Room', 'HOSPITAL', 20000.00, 'health_medical_pharmacy'),
+    ('Gym Membership', 'FITNESS CENTER', 1000.00, 'health_gym_wellness'),
+    ('Amazon Purchase', 'AMAZON.COM', 3000.00, 'shopping_gadgets'),
+    ('Electronics Purchase', 'BEST BUY', 8000.00, 'shopping_gadgets'),
+    ('Home Renovation', 'HOME DEPOT', 10000.00, 'shopping_gadgets'),
+  ]
+  
+  # Distribute transactions throughout the month
+  days_in_month = (target_month_end - target_month_start).days + 1
+  
+  # Add income transactions (spread throughout the month)
+  for i, (name, raw_name, amount, category) in enumerate(income_transactions):
+    # Spread income transactions across the month
+    day_offset = int((i / len(income_transactions)) * days_in_month)
+    transaction_date = target_month_start + timedelta(days=day_offset)
+    
+    transaction_id = _transaction_id_counter
+    _transaction_id_counter += 1
+    
+    transaction_name = f"{name} [{raw_name}]"
+    account_id = random.choice(account_ids)
+    
+    db.create_transaction(
+      user_id=user_id,
+      account_id=account_id,
+      transaction_id=transaction_id,
+      date=transaction_date.strftime("%Y-%m-%d"),
+      transaction_name=transaction_name,
+      amount=amount,
+      category=category
+    )
+    transaction_ids.append(transaction_id)
+  
+  # Add spending transactions (spread throughout the month)
+  for i, (name, raw_name, amount, category) in enumerate(spending_transactions):
+    # Spread spending transactions across the month
+    day_offset = int((i / len(spending_transactions)) * days_in_month)
+    transaction_date = target_month_start + timedelta(days=day_offset)
+    
+    transaction_id = _transaction_id_counter
+    _transaction_id_counter += 1
+    
+    transaction_name = f"{name} [{raw_name}]"
+    account_id = random.choice(account_ids)
+    
+    db.create_transaction(
+      user_id=user_id,
+      account_id=account_id,
+      transaction_id=transaction_id,
+      date=transaction_date.strftime("%Y-%m-%d"),
+      transaction_name=transaction_name,
+      amount=amount,
+      category=category
+    )
+    transaction_ids.append(transaction_id)
+  
+  return transaction_ids
+
 def create_sample_forecasts(user_id: int) -> list:
   """Create sample monthly and weekly forecasts for a user"""
   db = Database()
@@ -802,6 +911,12 @@ def seed_users():
   last_year_start = datetime.now() - relativedelta(years=1)
   subscription_transaction_count_last_year = create_subscription_transactions(heavy_user_id, heavy_accounts, months=12, start_date=last_year_start.replace(day=1))
   
+  # Add a month where income < spending (randomly pick one of the last 4 months)
+  months_ago_for_negative_savings = random.randint(1, 4)
+  target_month = (datetime.now().replace(day=1) - relativedelta(months=months_ago_for_negative_savings)).strftime('%B %Y')
+  print(f"Creating negative savings month: {target_month} ({months_ago_for_negative_savings} months ago)")
+  negative_savings_transactions = create_month_with_negative_savings(heavy_user_id, heavy_accounts, months_ago=months_ago_for_negative_savings)
+  
   print(f"Created HeavyDataUser with ID: {heavy_user_id}")
   print(f"  - {len(heavy_accounts)} account(s)")
   print(f"  - {len(heavy_transactions)} transactions over 6 months")
@@ -810,6 +925,7 @@ def seed_users():
   print(f"  - {subscription_count} subscriptions")
   print(f"  - {subscription_transaction_count} subscription transactions (last 6 months)")
   print(f"  - {subscription_transaction_count_last_year} subscription transactions (last year)")
+  print(f"  - {len(negative_savings_transactions)} transactions for month with negative savings ({months_ago_for_negative_savings} months ago)")
   
   print("\nUser seeding completed successfully!")
   

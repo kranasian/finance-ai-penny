@@ -2,6 +2,8 @@ import re
 import pandas as pd
 from penny.tool_funcs.sandbox_logging import log
 
+MAX_FORECASTS = 10
+
 
 def _format_date_for_metadata(date_dt, template: str, temp_template: str) -> tuple[str, str]:
   """
@@ -106,6 +108,12 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
   
   # Income categories for determining direction
   income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
+  
+  # Limit both utterances and metadata to MAX_FORECASTS
+  total_count = len(df)
+  has_more = total_count > MAX_FORECASTS
+  
+  log(f"**Listing Individual Forecasts**: Processing up to {MAX_FORECASTS} items (out of {total_count} total).")
   
   # Process each forecast row
   for _, row in df.iterrows():
@@ -212,27 +220,37 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
       # Try to add $ before numbers
       utterance = re.sub(r'(\d+[.,]\d+)', r'$\1', utterance)
     
-    utterances.append(utterance)
+    # Add to utterances only if under the limit (max MAX_FORECASTS)
+    if len(utterances) < MAX_FORECASTS:
+      utterances.append(utterance)
     
-    # Add to metadata
-    metadata_entry = {
-      'ai_category_id': int(ai_category_id),
-      'forecasted_amount': float(forecasted_amount),
-    }
-    metadata_entry['start_date'] = date_str
+    # Add to metadata only if under the limit (max MAX_FORECASTS)
+    if len(metadata) < MAX_FORECASTS:
+      metadata_entry = {
+        'ai_category_id': int(ai_category_id),
+        'forecasted_amount': float(forecasted_amount),
+      }
+      metadata_entry['start_date'] = date_str
+      metadata.append(metadata_entry)
     
-    metadata.append(metadata_entry)
+    # Break early if we've reached both limits
+    if len(metadata) >= MAX_FORECASTS and len(utterances) >= MAX_FORECASTS:
+      break
   
+  # Add message about remaining forecasts if there are more
   result = "\n".join(utterances)
+  if has_more:
+    remaining_count = total_count - MAX_FORECASTS
+    result += f"\n{remaining_count} more forecast{'s' if remaining_count != 1 else ''}."
   
-  log(f"**Forecast Dates and Amounts**: Returning {len(utterances)} utterances and {len(metadata)} metadata entries.")
+  log(f"**Forecast Dates and Amounts**: Returning {len(utterances)} utterances and {len(metadata)} metadata entries. Has more: {has_more}")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
   
   return result, metadata
 
 
-def utter_forecast_totals(df: pd.DataFrame, template: str) -> str:
-  """Calculate total forecasted amounts and return formatted string"""
+def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> str:
+  """Helper function to format forecast totals for income or spending"""
   
   log(f"**Forecast Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
@@ -251,30 +269,27 @@ def utter_forecast_totals(df: pd.DataFrame, template: str) -> str:
   total_amount = df['forecasted_amount'].sum()
   log(f"**Calculated Total**: **Amount**: `${abs(total_amount):.0f}`")
   
-  # Determine if forecasts are income or spending based on categories
-  income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest']
-  is_income = False
-  if len(df) > 0:
-    if 'category' in df.columns:
-      is_income = df['category'].isin(income_categories).any()
-  
-  # Determine direction based on category and total_amount sign
-  # For income categories: negative = earned (inflow), positive = refunded (outflow)
+  # Determine verb and direction based on category and total_amount sign
+  # For income categories: negative = earned (inflow), positive = returned (outflow)
   # For expense categories: positive = spent (outflow), negative = received (inflow)
   if is_income:
     if total_amount < 0:
       # Income inflow (negative amount = money coming in)
+      verb = "earn"
       direction = "earned"
     else:  # total_amount > 0
-      # Income outflow (positive amount = money going out, refund)
+      # Income outflow (positive amount = money going out, return/refund)
+      verb = "return"
       direction = "outflow"
   else:
     # Expense categories
     if total_amount > 0:
       # Spending outflow (positive amount = money going out)
+      verb = "spend"
       direction = "spent"
     else:  # total_amount < 0
       # Spending inflow (negative amount = money coming in, refund)
+      verb = "receive"
       direction = "inflow"
   
   # Only show direction for inflow/outflow, not for earned/spent
@@ -288,8 +303,12 @@ def utter_forecast_totals(df: pd.DataFrame, template: str) -> str:
   # Check if template has format specifiers for total_amount or amount (like {total_amount:.0f} or {amount:.0f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
   amount_format_pattern = r'\{amount:([^}]+)\}'
+  total_amount_and_verb_format_pattern = r'\{total_amount_and_verb:([^}]+)\}'
+  verb_and_total_amount_format_pattern = r'\{verb_and_total_amount:([^}]+)\}'
   has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
   has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
+  has_total_amount_and_verb_format_specifier = bool(re.search(total_amount_and_verb_format_pattern, template))
+  has_verb_and_total_amount_format_specifier = bool(re.search(verb_and_total_amount_format_pattern, template))
   
   # Check if template has dollar sign - if it does, format amount without $, otherwise with $
   has_dollar_sign = '$' in template
@@ -300,9 +319,15 @@ def utter_forecast_totals(df: pd.DataFrame, template: str) -> str:
     temp_template = re.sub(total_amount_format_pattern, '{total_amount}', temp_template)
   if has_amount_format_specifier:
     temp_template = re.sub(amount_format_pattern, '{total_amount}', temp_template)
+  if has_total_amount_and_verb_format_specifier:
+    temp_template = re.sub(total_amount_and_verb_format_pattern, '{verb_and_total_amount}', temp_template)
+  if has_verb_and_total_amount_format_specifier:
+    temp_template = re.sub(verb_and_total_amount_format_pattern, '{verb_and_total_amount}', temp_template)
   
   # Also replace any plain {amount} with {total_amount}
   temp_template = temp_template.replace('{amount}', '{total_amount}')
+  # Replace {total_amount_and_verb} with {verb_and_total_amount} (alias support)
+  temp_template = temp_template.replace('{total_amount_and_verb}', '{verb_and_total_amount}')
   
   # Format amount string - always use .0f format, with or without $ based on template
   display_amount = abs(total_amount)
@@ -313,9 +338,15 @@ def utter_forecast_totals(df: pd.DataFrame, template: str) -> str:
     # Template doesn't have $, format with $ prefix
     total_amount_str = f"${display_amount:.0f}"
   
+  # Create combined verb_and_total_amount string (e.g., "earn $5000" or "spend $3000")
+  verb_and_total_amount_str = f"{verb} {total_amount_str}"
+  
   format_dict = {
     'total_amount': total_amount_str,
     'direction': direction_display,  # Use direction_display which is empty for earned/spent
+    'verb': verb,  # Verb for use in templates like "earn", "spend", "receive", "return"
+    'verb_and_total_amount': verb_and_total_amount_str,  # Combined verb and amount (e.g., "earn $5000")
+    'total_amount_and_verb': verb_and_total_amount_str,  # Alias for verb_and_total_amount (e.g., "earn $5000")
   }
   
   try:
@@ -336,3 +367,39 @@ def utter_forecast_totals(df: pd.DataFrame, template: str) -> str:
   
   log(f"**Forecast Totals**: Template formatted successfully")
   return result
+
+
+def utter_income_forecast_totals(df: pd.DataFrame, template: str) -> str:
+  """Calculate total income forecasted amounts and return formatted string.
+  
+  Args:
+    df: DataFrame with income forecasts (must have 'forecasted_amount' column)
+    template: Template string with placeholders:
+      - {verb_and_total_amount}: Combined verb and amount (e.g., "earn $5000" or "return $500")
+      - {verb}: Verb only (e.g., "earn", "return")
+      - {total_amount}: Amount only (e.g., "$5000")
+      - {direction}: Direction display (empty for earned/returned, or "(outflow)")
+  
+  Returns:
+    Formatted string with income forecast totals.
+    Returns "$0.00" if DataFrame is empty.
+  """
+  return _format_forecast_total(df, template, is_income=True)
+
+
+def utter_spending_forecast_totals(df: pd.DataFrame, template: str) -> str:
+  """Calculate total spending forecasted amounts and return formatted string.
+  
+  Args:
+    df: DataFrame with spending forecasts (must have 'forecasted_amount' column)
+    template: Template string with placeholders:
+      - {verb_and_total_amount}: Combined verb and amount (e.g., "spend $3000" or "receive $500")
+      - {verb}: Verb only (e.g., "spend", "receive")
+      - {total_amount}: Amount only (e.g., "$3000")
+      - {direction}: Direction display (empty for spent/received, or "(inflow)")
+  
+  Returns:
+    Formatted string with spending forecast totals.
+    Returns "$0.00" if DataFrame is empty.
+  """
+  return _format_forecast_total(df, template, is_income=False)

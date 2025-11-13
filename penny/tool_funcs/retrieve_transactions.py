@@ -22,6 +22,38 @@ def retrieve_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   return df
 
 
+def retrieve_income_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
+  """Function to retrieve income transactions from the database for a specific user"""
+  df = retrieve_transactions_function_code_gen(user_id=user_id)
+  
+  if df.empty:
+    log(f"**Retrieved Income Transactions** of `U-{user_id}`: empty DataFrame")
+    return df
+  
+  # Filter for income categories
+  income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
+  income_df = df[df['category'].isin(income_categories)]
+  
+  log(f"**Retrieved Income Transactions** of `U-{user_id}`: `df: {income_df.shape}` w/ **cols**:\n  - `{'`, `'.join(income_df.columns)}`")
+  return income_df
+
+
+def retrieve_spending_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
+  """Function to retrieve spending transactions from the database for a specific user"""
+  df = retrieve_transactions_function_code_gen(user_id=user_id)
+  
+  if df.empty:
+    log(f"**Retrieved Spending Transactions** of `U-{user_id}`: empty DataFrame")
+    return df
+  
+  # Filter for spending categories (exclude income categories)
+  income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
+  spending_df = df[~df['category'].isin(income_categories)]
+  
+  log(f"**Retrieved Spending Transactions** of `U-{user_id}`: `df: {spending_df.shape}` w/ **cols**:\n  - `{'`, `'.join(spending_df.columns)}`")
+  return spending_df
+
+
 def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
   """Generate a formatted string describing transaction names and amounts using the provided template and return metadata.
   
@@ -222,10 +254,20 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
   return utterance_text, metadata
 
 
-def utter_transaction_totals(df: pd.DataFrame, template: str) -> str:
-  """Calculate total transaction amounts and return formatted string"""
+def utter_spending_transaction_total(df: pd.DataFrame, template: str) -> str:
+  """Calculate total spending transaction amounts and return formatted string.
   
-  log(f"**Transaction Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  Args:
+    df: DataFrame with spending transactions (must have 'amount' column)
+    template: Template string with {total_amount_and_verb} placeholder.
+      Example: "In total, you {total_amount_and_verb}."
+  
+  Returns:
+    Formatted string with verb automatically determined and inserted.
+    Only {total_amount_and_verb} placeholder is supported.
+  """
+  
+  log(f"**Spending Transaction Total**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")
@@ -242,76 +284,32 @@ def utter_transaction_totals(df: pd.DataFrame, template: str) -> str:
   total_amount = df['amount'].sum()
   log(f"**Calculated Total**: **Amount**: `${abs(total_amount):.0f}`")
   
-  # Determine if transactions are income or spending based on categories
-  # First try to use ai_category_id if available (more reliable)
-  is_income = False
-  if len(df) > 0:
-    if 'ai_category_id' in df.columns:
-      # Use category IDs to determine income categories
-      # Income category IDs: 47, 46, 36, 37, 38, 39
-      income_category_ids = [47, 46, 36, 37, 38, 39]
-      is_income = df['ai_category_id'].isin(income_category_ids).any()
-    elif 'category' in df.columns:
-      # Fallback to category name strings
-      income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
-      is_income = df['category'].isin(income_categories).any()
-  
-  # Determine verb/phrase and direction based on category and amount sign
-  # Always use abs() for display amount
+  # Determine verb/phrase based on amount sign for spending transactions
+  # Expense categories: positive = spent (outflow), negative = received (inflow/refund)
   display_amount = abs(total_amount)
   
-  # Determine direction and verb based on category and amount sign
-  # For income categories: negative = earned (inflow), positive = refunded (outflow)
-  # For expense categories: positive = spent (outflow), negative = received (inflow/refund)
-  if is_income:
-    # Income categories
-    if total_amount < 0:
-      # Income inflow (negative amount = money coming in)
-      verb = "earned"
-      direction = "earned"
-      amount_suffix = None
-    else:  # total_amount > 0
-      # Income outflow (positive amount = money going out, refund)
-      verb = "had a"
-      direction = "refunded"
-      amount_suffix = "outflow"
-  else:
-    # Expense categories
-    if total_amount > 0:
-      # Spending outflow (positive amount = money going out)
-      verb = "spent"
-      direction = "spent"
-      amount_suffix = None
-    else:  # total_amount < 0
-      # Spending inflow (negative amount = money coming in, refund)
-      verb = "received"
-      direction = "received"
-      amount_suffix = None
+  if total_amount > 0:
+    # Spending outflow (positive amount = money going out)
+    verb = "spent"
+  else:  # total_amount < 0
+    # Spending inflow (negative amount = money coming in, refund)
+    verb = "received"
   
-  # Check if template has format specifiers for total_amount or amount (like {total_amount:.0f} or {amount:.0f})
-  total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
-  amount_format_pattern = r'\{amount:([^}]+)\}'
-  has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
-  has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
+  # Check if template has format specifiers for total_amount_and_verb (like {total_amount_and_verb:.0f})
+  total_amount_and_verb_format_pattern = r'\{total_amount_and_verb:([^}]+)\}'
+  has_format_specifier = bool(re.search(total_amount_and_verb_format_pattern, template))
   
   # Check if template has dollar sign - if it does, format amount without $, otherwise with $
   has_dollar_sign = '$' in template
   
-  # Handle format specifiers - replace with simple placeholders
+  # Handle format specifiers - replace with simple placeholder
   temp_template = template
-  if has_total_amount_format_specifier:
-    # Template has format specifiers, replace them with simple {total_amount}
-    temp_template = re.sub(total_amount_format_pattern, '{total_amount}', temp_template)
-  if has_amount_format_specifier:
-    # Template uses {amount} instead of {total_amount}, replace format specifiers with {total_amount}
-    temp_template = re.sub(amount_format_pattern, '{total_amount}', temp_template)
-  
-  # Also replace any plain {amount} with {total_amount}
-  temp_template = temp_template.replace('{amount}', '{total_amount}')
+  if has_format_specifier:
+    # Template has format specifiers, replace them with simple {total_amount_and_verb}
+    temp_template = re.sub(total_amount_and_verb_format_pattern, '{total_amount_and_verb}', temp_template)
   
   # Format amount string based on template requirements
-  has_any_format_specifier = has_total_amount_format_specifier or has_amount_format_specifier
-  if has_any_format_specifier:
+  if has_format_specifier:
     # Template originally had format specifiers, format with $ if template doesn't have $
     if has_dollar_sign:
       # Template has $, format without $ prefix
@@ -328,69 +326,95 @@ def utter_transaction_totals(df: pd.DataFrame, template: str) -> str:
       # Template has NO dollar signs, format WITH $ prefix
       total_amount_str = f"${display_amount:.0f}"
   
-  # Extract category if available and template needs it
-  category_value = None
-  target_category_value = None
-  if 'category' in df.columns:
-    if len(df) > 0:
-      category_value = df['category'].iloc[0]  # Use first category as representative
-      # Format category for display (e.g., "meals_dining_out" -> "dining out")
-      if category_value:
-        # Replace underscores with spaces and title case
-        target_category_value = category_value.replace('_', ' ').title()
-        # Remove common prefixes like "meals ", "income ", etc.
-        for prefix in ['meals ', 'income ', 'bills ', 'leisure ', 'shelter ']:
-          if target_category_value.lower().startswith(prefix):
-            target_category_value = target_category_value[len(prefix):]
-            break
+  # Create total_amount_and_verb string (e.g., "spent $500" or "received $500")
+  total_amount_and_verb_str = f"{verb} {total_amount_str}"
   
-  # Prepare format dictionary with verb, direction, amount_suffix, total_amount, category, and target_category
-  format_dict = {
-    'total_amount': total_amount_str,
-    'verb': verb,
-    'direction': direction,
-  }
-  if amount_suffix:
-    format_dict['amount_suffix'] = amount_suffix
-  if category_value is not None:
-    format_dict['category'] = category_value
-  if target_category_value is not None:
-    format_dict['target_category'] = target_category_value
+  # Replace placeholder in template
+  result = temp_template.replace('{total_amount_and_verb}', total_amount_and_verb_str)
   
-  try:
-    # If template has {verb}, {direction}, {amount_suffix}, {category}, or {target_category}, use them; otherwise use total_amount
-    if '{verb}' in temp_template or '{direction}' in temp_template or '{amount_suffix}' in temp_template or '{category}' in temp_template or '{target_category}' in temp_template:
-      result = temp_template.format(**format_dict)
+  log(f"**Spending Transaction Total Utterance**: `{result}`")
+  return result
+
+
+def utter_income_transaction_total(df: pd.DataFrame, template: str) -> str:
+  """Calculate total income transaction amounts and return formatted string.
+  
+  Args:
+    df: DataFrame with income transactions (must have 'amount' column)
+    template: Template string with {total_amount_and_verb} placeholder.
+      Example: "In total, you {total_amount_and_verb}."
+  
+  Returns:
+    Formatted string with verb automatically determined and inserted.
+    Only {total_amount_and_verb} placeholder is supported.
+  """
+  
+  log(f"**Income Transaction Total**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  
+  if df.empty:
+    log("- **`df` is empty**, returning empty string.")
+    return ""
+  
+  # Check if required columns exist
+  required_columns = ['amount']
+  missing_columns = [col for col in required_columns if col not in df.columns]
+  if missing_columns:
+    error_msg = f"- **`df` is missing required columns**: `{', '.join(missing_columns)}`. Available columns: `{', '.join(df.columns)}`"
+    log(error_msg)
+    raise ValueError(error_msg)
+  
+  total_amount = df['amount'].sum()
+  log(f"**Calculated Total**: **Amount**: `${abs(total_amount):.0f}`")
+  
+  # Determine verb/phrase based on amount sign for income transactions
+  # Income categories: negative = earned (inflow), positive = refunded (outflow)
+  display_amount = abs(total_amount)
+  
+  if total_amount < 0:
+    # Income inflow (negative amount = money coming in)
+    verb = "earned"
+  else:  # total_amount > 0
+    # Income outflow (positive amount = money going out, refund)
+    verb = "were refunded"
+  
+  # Check if template has format specifiers for total_amount_and_verb (like {total_amount_and_verb:.0f})
+  total_amount_and_verb_format_pattern = r'\{total_amount_and_verb:([^}]+)\}'
+  has_format_specifier = bool(re.search(total_amount_and_verb_format_pattern, template))
+  
+  # Check if template has dollar sign - if it does, format amount without $, otherwise with $
+  has_dollar_sign = '$' in template
+  
+  # Handle format specifiers - replace with simple placeholder
+  temp_template = template
+  if has_format_specifier:
+    # Template has format specifiers, replace them with simple {total_amount_and_verb}
+    temp_template = re.sub(total_amount_and_verb_format_pattern, '{total_amount_and_verb}', temp_template)
+  
+  # Format amount string based on template requirements
+  if has_format_specifier:
+    # Template originally had format specifiers, format with $ if template doesn't have $
+    if has_dollar_sign:
+      # Template has $, format without $ prefix
+      total_amount_str = f"{display_amount:.0f}"
     else:
-      # Fall back to just total_amount for backward compatibility
-      result = temp_template.format(total_amount=total_amount_str)
-  except (ValueError, KeyError) as e:
-    # If formatting fails, try with raw numeric amount (only if template had format specifiers)
-    if has_any_format_specifier:
-      # Try with raw number (format specifier was already replaced)
-      try:
-        if '{verb}' in temp_template or '{direction}' in temp_template or '{amount_suffix}' in temp_template or '{category}' in temp_template or '{target_category}' in temp_template:
-          format_dict_raw = {'total_amount': display_amount, 'verb': verb, 'direction': direction}
-          if amount_suffix:
-            format_dict_raw['amount_suffix'] = amount_suffix
-          if category_value is not None:
-            format_dict_raw['category'] = category_value
-          if target_category_value is not None:
-            format_dict_raw['target_category'] = target_category_value
-          result = temp_template.format(**format_dict_raw)
-        else:
-          result = temp_template.format(
-            total_amount=display_amount
-          )
-      except Exception as e2:
-        # Fall back to formatted string
-        result = temp_template.format(
-          total_amount=total_amount_str
-        )
+      # Template has NO $, format WITH $ prefix
+      total_amount_str = f"${display_amount:.0f}"
+  else:
+    # No format specifiers - check if template has dollar signs
+    if has_dollar_sign:
+      # Template has dollar signs, format without $ prefix
+      total_amount_str = f"{display_amount:.0f}"
     else:
-      # No format specifiers, so the error is unexpected - re-raise
-      raise
+      # Template has NO dollar signs, format WITH $ prefix
+      total_amount_str = f"${display_amount:.0f}"
   
+  # Create total_amount_and_verb string (e.g., "earned $500" or "were refunded $500")
+  total_amount_and_verb_str = f"{verb} {total_amount_str}"
+  
+  # Replace placeholder in template
+  result = temp_template.replace('{total_amount_and_verb}', total_amount_and_verb_str)
+  
+  log(f"**Income Transaction Total Utterance**: `{result}`")
   return result
 
 
