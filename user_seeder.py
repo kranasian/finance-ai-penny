@@ -487,22 +487,46 @@ def create_sample_forecasts(user_id: int) -> list:
   
   # Category ID mapping (from category_masterlist)
   category_map = {
+    # Income categories
+    'income': 47,  # Parent category
     'income_salary': 36,
     'income_sidegig': 37,
     'income_business': 38,
     'income_interest': 39,
+    # Meals categories
+    'meals': 1,  # Parent category
     'meals_groceries': 4,
     'meals_dining_out': 2,
     'meals_delivered_food': 3,
+    # Leisure categories
+    'leisure': 5,  # Parent category
     'leisure_entertainment': 6,
     'leisure_travel': 7,
+    # Bills categories
+    'bills': 9,  # Parent category
     'bills_connectivity': 10,
     'bills_insurance': 11,
+    # Shelter categories
+    'shelter': 14,  # Parent category
     'shelter_home': 15,
     'shelter_utilities': 16,
     'shelter_upkeep': 17,
+    # Education categories
+    'education': 18,  # Parent category
+    # Transportation categories
+    'transportation': 25,  # Parent category
     'transportation_car': 26,
+    # Health categories
+    'health': 28,  # Parent category
     'health_gym_wellness': 30,
+    # Shopping categories
+    'shopping': 21,  # Parent category
+    'shopping_clothing': 22,
+    'shopping_gadgets': 23,
+    'shopping_kids': 24,
+    'shopping_pets': 8,
+    # Other categories
+    'donations_gifts': 32,
   }
   
   # Get current date and calculate dates for next 12 months
@@ -534,6 +558,12 @@ def create_sample_forecasts(user_id: int) -> list:
       forecast_count += 1
     
     # Monthly spending forecasts
+    # Note: Parent categories should equal sum of their children
+    # leisure (5) = leisure_entertainment (6) + leisure_travel (7)
+    # shopping (21) = shopping_clothing (22) + shopping_gadgets (23) + shopping_kids (24) + shopping_pets (8)
+    # For donations_gifts: month 2 has negative amount (inflow/refund) to test inflow case
+    # Making it -$150 so total for 3 months is negative: $50 + (-$150) + $50 = -$50
+    donations_gifts_amount = -150.00 if month_offset == 2 else 50.00  # Negative for month 2 (inflow), positive otherwise
     monthly_spending = {
       category_map['shelter_home']: 1200.00,
       category_map['shelter_utilities']: 200.00,
@@ -543,7 +573,17 @@ def create_sample_forecasts(user_id: int) -> list:
       category_map['health_gym_wellness']: 50.00,
       category_map['meals_groceries']: 480.00,  # 4 weeks * 120
       category_map['meals_dining_out']: 300.00,  # 4 weeks * ~75 average
-      category_map['leisure_entertainment']: 25.00,
+      # Leisure: parent = sum of children
+      category_map['leisure_entertainment']: 100.00,  # Child of leisure
+      category_map['leisure_travel']: 50.00,  # Child of leisure
+      category_map['leisure']: 150.00,  # Parent = 100 + 50
+      # Shopping: parent = sum of children
+      category_map['shopping_clothing']: 80.00,  # Child of shopping
+      category_map['shopping_gadgets']: 60.00,  # Child of shopping
+      category_map['shopping_kids']: 40.00,  # Child of shopping
+      category_map['shopping_pets']: 20.00,  # Child of shopping
+      category_map['shopping']: 200.00,  # Parent = 80 + 60 + 40 + 20
+      category_map['donations_gifts']: donations_gifts_amount,  # Discretionary: gifts and donations (negative for month 2 = inflow/refund)
     }
     
     for ai_category_id, amount in monthly_spending.items():

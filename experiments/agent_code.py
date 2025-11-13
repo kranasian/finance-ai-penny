@@ -32,7 +32,7 @@ from penny.tool_funcs.retrieve_transactions import (
 )
 from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
-from penny.tool_funcs.forecast_utils import utter_income_forecast_totals, utter_spending_forecast_totals, forecast_dates_and_amount
+from penny.tool_funcs.forecast_utils import utter_income_forecast_totals, utter_spending_forecast_totals, forecast_dates_and_amount, utter_spending_forecast_amount, utter_income_forecast_amount
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from penny.tool_funcs.date_utils import get_start_of_month, get_end_of_month, get_start_of_week, get_end_of_week, get_after_periods, get_date_string
 user_id = 1
@@ -349,7 +349,7 @@ def process_input_did_i_get_any_income_in_last_few_weeks_and_what_about_upcoming
         print("Here is your income from the past few weeks:")
         for_print, metadata["transactions"] = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
         print(for_print)
-        print(utter_income_transaction_total(past_income_df, "In total, you {total_amount_and_verb} from the past few weeks."))
+        print(utter_income_transaction_total(past_income_df, "In total, you {verb_and_total_amount} from the past few weeks."))
     
     # Check upcoming weeks (forecasts)
     print("\nUpcoming weeks:")
@@ -372,7 +372,6 @@ def process_input_did_i_get_any_income_in_last_few_weeks_and_what_about_upcoming
         print(utter_income_forecast_totals(upcoming_income_df, "In total, you are expected to {verb_and_total_amount} in upcoming weeks."))
     
     return True, metadata
-
 
 
 def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_month():
@@ -431,21 +430,55 @@ def process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_
     return True, metadata
 
 
-def process_input_list_my_subscriptions():
-    metadata = {"subscriptions": []}
+def process_input_what_is_my_forecasted_discretionary_spending_breakdown_for_the_next_three_months():
+    metadata = {}
     
-    subscriptions_df = retrieve_subscriptions()
+    # Get current month start
+    first_day_current_month = get_start_of_month(datetime.now())
     
-    if subscriptions_df.empty:
-      print("You have no subscriptions.")
+    # Calculate next 3 months start dates
+    next_month_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
+    month_after_next_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=2))
+    third_month_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=3))
+    
+    # Retrieve spending forecasts for next 3 months
+    spending_df = retrieve_spending_forecasts('monthly')
+    
+    if spending_df.empty:
+      print("You have no spending forecasts for the next 3 months.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{amount_and_direction} {subscription_name} on {date}.')
-    transaction_count = len(subscriptions_df)
-    print(f"Your subscriptions ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
-    print(for_print)
+    # Filter for next 3 months
+    spending_df = spending_df[spending_df['start_date'].isin([next_month_start, month_after_next_start, third_month_start])]
     
-    print(utter_subscription_totals(subscriptions_df, 'Total subscription transactions: ${total_amount:.0f} {direction}'))
+    if spending_df.empty:
+      print("You have no spending forecasts for the next 3 months.")
+      return True, metadata
+    
+    leisure_categories = ['leisure_entertainment', 'leisure_travel']
+    shopping_categories = ['shopping_clothing', 'shopping_gadgets', 'shopping_kids', 'shopping_pets']
+    gifts_categories = ['donations_gifts']
+    
+    leisure_df = spending_df[spending_df['category'].isin(leisure_categories)]
+    shopping_df = spending_df[spending_df['category'].isin(shopping_categories)]
+    gifts_df = spending_df[spending_df['category'].isin(gifts_categories)]
+    
+    if leisure_df.empty and shopping_df.empty and gifts_df.empty:
+      print("You have no discretionary spending forecasts for the next 3 months.")
+      return True, metadata
+    
+    # Calculate totals by category group
+    total_leisure = leisure_df['forecasted_amount'].sum() if not leisure_df.empty else 0.0
+    total_shopping = shopping_df['forecasted_amount'].sum() if not shopping_df.empty else 0.0
+    total_gifts = gifts_df['forecasted_amount'].sum() if not gifts_df.empty else 0.0
+    total_discretionary = total_leisure + total_shopping + total_gifts
+    
+    # Format and print breakdown
+    print(f"Your forecasted discretionary spending breakdown for the next 3 months:")
+    print(f"  Leisure: {utter_spending_forecast_amount(total_leisure, '{amount_and_direction}')}")
+    print(f"  Shopping: {utter_spending_forecast_amount(total_shopping, '{amount_and_direction}')}")
+    print(f"  Gifts: {utter_spending_forecast_amount(total_gifts, '{amount_and_direction}')}")
+    print(f"  Total: {utter_spending_forecast_amount(total_discretionary, '{amount_and_direction}')}")
     
     return True, metadata
 
@@ -489,50 +522,6 @@ def process_input_list_streaming_subscriptions_paid_last_month():
     print(for_print)
     
     print(utter_subscription_totals(streaming_df, 'Total streaming subscription spending last month: ${total_amount:.0f} {direction}'))
-    
-    return True, metadata
-
-
-def process_input_how_much_am_i_expected_to_save_next_month():
-    metadata = {}
-    
-    # Get next month date
-    first_day_current_month = get_start_of_month(datetime.now())
-    next_month_start_date = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
-    
-    # Retrieve income and spending forecasts for next month
-    income_df = retrieve_income_forecasts('monthly')
-    spending_df = retrieve_spending_forecasts('monthly')
-    
-    if income_df.empty and spending_df.empty:
-      print("You have no forecasts for next month.")
-      return True, metadata
-    
-    # Filter for next month
-    if not income_df.empty:
-      income_df = income_df[income_df['start_date'] == next_month_start_date]
-    if not spending_df.empty:
-      spending_df = spending_df[spending_df['start_date'] == next_month_start_date]
-    if income_df.empty and spending_df.empty:
-      print("You have no forecasts for next month.")
-      return True, metadata
-    
-    # Calculate totals for expected savings
-    total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
-    total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
-    expected_savings = total_income - total_spending
-    
-    # Format messages using forecast totals
-    income_msg = utter_income_forecast_totals(income_df, "${total_amount}")
-    expenses_msg = utter_spending_forecast_totals(spending_df, "${total_amount}")
-    
-    # Format and print expected savings message
-    if expected_savings > 0:
-      print(f"You are expected to save ${expected_savings:.0f} next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
-    elif expected_savings < 0:
-      print(f"You are expected to spend ${abs(expected_savings):.0f} more than you earn next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
-    else:
-      print(f"You are expected to break even next month. Your forecasted income is {income_msg} and your forecasted spending is {expenses_msg}.")
     
     return True, metadata
 
@@ -583,7 +572,7 @@ def process_input_how_much_eating_out_have_I_done():
     print("Here are your eating out transactions:")
     for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{amount_and_direction} {transaction_name} on {date}.")
     print(for_print)
-    print(utter_spending_transaction_total(df, "In total, you {total_amount_and_verb} on eating out."))
+    print(utter_spending_transaction_total(df, "In total, you {verb_and_total_amount} on eating out."))
     
     return True, metadata
 
@@ -652,29 +641,18 @@ def main():
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
   
-  print("\n📊 Testing expected savings next month...")
-  success, metadata = process_input_how_much_am_i_expected_to_save_next_month()
-  print(f"Success: {success}")
-  print(f"Metadata: {metadata}")
-  
-  print("\n💰 Testing checking account affordability for rent next month...")
+  print("\n🏠 Testing checking account affordability for rent next month...")
   success, metadata = process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_month()
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
   
-  print("\n📋 Testing list subscriptions...")
-  success, metadata = process_input_list_my_subscriptions()
+  print("\n💰 Testing forecasted discretionary spending breakdown for next 3 months...")
+  success, metadata = process_input_what_is_my_forecasted_discretionary_spending_breakdown_for_the_next_three_months()
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
   
   print("\n📋 Testing list streaming subscriptions last month...")
   success, metadata = process_input_list_streaming_subscriptions_paid_last_month()
-  print(f"Success: {success}")
-  print(f"Metadata: {metadata}")
-  
-
-  print("\n💰 Testing checking account affordability for rent next month...")
-  success, metadata = process_input_check_my_checking_account_if_i_can_afford_paying_my_rent_next_month()
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
 

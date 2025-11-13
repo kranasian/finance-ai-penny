@@ -259,12 +259,12 @@ def utter_spending_transaction_total(df: pd.DataFrame, template: str) -> str:
   
   Args:
     df: DataFrame with spending transactions (must have 'amount' column)
-    template: Template string with {total_amount_and_verb} placeholder.
-      Example: "In total, you {total_amount_and_verb}."
+    template: Template string with {verb_and_total_amount} placeholder.
+      Example: "In total, you {verb_and_total_amount}."
   
   Returns:
     Formatted string with verb automatically determined and inserted.
-    Only {total_amount_and_verb} placeholder is supported.
+    Only {verb_and_total_amount} placeholder is supported.
   """
   
   log(f"**Spending Transaction Total**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
@@ -295,9 +295,9 @@ def utter_spending_transaction_total(df: pd.DataFrame, template: str) -> str:
     # Spending inflow (negative amount = money coming in, refund)
     verb = "received"
   
-  # Check if template has format specifiers for total_amount_and_verb (like {total_amount_and_verb:.0f})
-  total_amount_and_verb_format_pattern = r'\{total_amount_and_verb:([^}]+)\}'
-  has_format_specifier = bool(re.search(total_amount_and_verb_format_pattern, template))
+  # Check if template has format specifiers for verb_and_total_amount (like {verb_and_total_amount:.0f})
+  verb_and_total_amount_format_pattern = r'\{verb_and_total_amount:([^}]+)\}'
+  has_format_specifier = bool(re.search(verb_and_total_amount_format_pattern, template))
   
   # Check if template has dollar sign - if it does, format amount without $, otherwise with $
   has_dollar_sign = '$' in template
@@ -305,8 +305,8 @@ def utter_spending_transaction_total(df: pd.DataFrame, template: str) -> str:
   # Handle format specifiers - replace with simple placeholder
   temp_template = template
   if has_format_specifier:
-    # Template has format specifiers, replace them with simple {total_amount_and_verb}
-    temp_template = re.sub(total_amount_and_verb_format_pattern, '{total_amount_and_verb}', temp_template)
+    # Template has format specifiers, replace them with simple {verb_and_total_amount}
+    temp_template = re.sub(verb_and_total_amount_format_pattern, '{verb_and_total_amount}', temp_template)
   
   # Format amount string based on template requirements
   if has_format_specifier:
@@ -326,11 +326,11 @@ def utter_spending_transaction_total(df: pd.DataFrame, template: str) -> str:
       # Template has NO dollar signs, format WITH $ prefix
       total_amount_str = f"${display_amount:.0f}"
   
-  # Create total_amount_and_verb string (e.g., "spent $500" or "received $500")
-  total_amount_and_verb_str = f"{verb} {total_amount_str}"
+  # Create verb_and_total_amount string (e.g., "spent $500" or "received $500")
+  verb_and_total_amount_str = f"{verb} {total_amount_str}"
   
   # Replace placeholder in template
-  result = temp_template.replace('{total_amount_and_verb}', total_amount_and_verb_str)
+  result = temp_template.replace('{verb_and_total_amount}', verb_and_total_amount_str)
   
   log(f"**Spending Transaction Total Utterance**: `{result}`")
   return result
@@ -341,12 +341,12 @@ def utter_income_transaction_total(df: pd.DataFrame, template: str) -> str:
   
   Args:
     df: DataFrame with income transactions (must have 'amount' column)
-    template: Template string with {total_amount_and_verb} placeholder.
-      Example: "In total, you {total_amount_and_verb}."
+    template: Template string with {verb_and_total_amount} placeholder.
+      Example: "In total, you {verb_and_total_amount}."
   
   Returns:
     Formatted string with verb automatically determined and inserted.
-    Only {total_amount_and_verb} placeholder is supported.
+    Only {verb_and_total_amount} placeholder is supported.
   """
   
   log(f"**Income Transaction Total**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
@@ -377,9 +377,9 @@ def utter_income_transaction_total(df: pd.DataFrame, template: str) -> str:
     # Income outflow (positive amount = money going out, refund)
     verb = "were refunded"
   
-  # Check if template has format specifiers for total_amount_and_verb (like {total_amount_and_verb:.0f})
-  total_amount_and_verb_format_pattern = r'\{total_amount_and_verb:([^}]+)\}'
-  has_format_specifier = bool(re.search(total_amount_and_verb_format_pattern, template))
+  # Check if template has format specifiers for verb_and_total_amount (like {verb_and_total_amount:.0f})
+  verb_and_total_amount_format_pattern = r'\{verb_and_total_amount:([^}]+)\}'
+  has_format_specifier = bool(re.search(verb_and_total_amount_format_pattern, template))
   
   # Check if template has dollar sign - if it does, format amount without $, otherwise with $
   has_dollar_sign = '$' in template
@@ -387,8 +387,8 @@ def utter_income_transaction_total(df: pd.DataFrame, template: str) -> str:
   # Handle format specifiers - replace with simple placeholder
   temp_template = template
   if has_format_specifier:
-    # Template has format specifiers, replace them with simple {total_amount_and_verb}
-    temp_template = re.sub(total_amount_and_verb_format_pattern, '{total_amount_and_verb}', temp_template)
+    # Template has format specifiers, replace them with simple {verb_and_total_amount}
+    temp_template = re.sub(verb_and_total_amount_format_pattern, '{verb_and_total_amount}', temp_template)
   
   # Format amount string based on template requirements
   if has_format_specifier:
@@ -408,11 +408,11 @@ def utter_income_transaction_total(df: pd.DataFrame, template: str) -> str:
       # Template has NO dollar signs, format WITH $ prefix
       total_amount_str = f"${display_amount:.0f}"
   
-  # Create total_amount_and_verb string (e.g., "earned $500" or "were refunded $500")
-  total_amount_and_verb_str = f"{verb} {total_amount_str}"
+  # Create verb_and_total_amount string (e.g., "earned $500" or "were refunded $500")
+  verb_and_total_amount_str = f"{verb} {total_amount_str}"
   
   # Replace placeholder in template
-  result = temp_template.replace('{total_amount_and_verb}', total_amount_and_verb_str)
+  result = temp_template.replace('{verb_and_total_amount}', verb_and_total_amount_str)
   
   log(f"**Income Transaction Total Utterance**: `{result}`")
   return result

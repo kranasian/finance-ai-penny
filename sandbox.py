@@ -28,7 +28,7 @@ from penny.tool_funcs.retrieve_transactions import (
 )
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
-from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_income_forecast_totals, utter_spending_forecast_totals
+from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_income_forecast_totals, utter_spending_forecast_totals, utter_spending_forecast_amount, utter_income_forecast_amount
 from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.respond_to_app_inquiry import respond_to_app_inquiry
 from penny.tool_funcs.date_utils import (
@@ -325,6 +325,12 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_spending_forecast_totals_wrapper(df: pd.DataFrame, template: str):
     return utter_spending_forecast_totals(df, template)
   
+  def utter_spending_forecast_amount_wrapper(amount: float, template: str):
+    return utter_spending_forecast_amount(amount, template)
+  
+  def utter_income_forecast_amount_wrapper(amount: float, template: str):
+    return utter_income_forecast_amount(amount, template)
+  
   def compare_spending_wrapper(df: pd.DataFrame, template: str, metadata: dict = None):
     return compare_spending(df, template, metadata)
   
@@ -372,6 +378,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "forecast_dates_and_amount": forecast_dates_and_amount_wrapper,
     "utter_income_forecast_totals": utter_income_forecast_totals_wrapper,
     "utter_spending_forecast_totals": utter_spending_forecast_totals_wrapper,
+    "utter_spending_forecast_amount": utter_spending_forecast_amount_wrapper,
+    "utter_income_forecast_amount": utter_income_forecast_amount_wrapper,
     "compare_spending": compare_spending_wrapper,
     "respond_to_app_inquiry": respond_to_app_inquiry_wrapper,
     "utter_delta_from_now": utter_delta_from_now,

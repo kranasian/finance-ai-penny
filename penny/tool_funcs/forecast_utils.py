@@ -1,6 +1,7 @@
 import re
 import pandas as pd
 from penny.tool_funcs.sandbox_logging import log
+from categories import get_all_parent_categories
 
 MAX_FORECASTS = 10
 
@@ -115,11 +116,18 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
   
   log(f"**Listing Individual Forecasts**: Processing up to {MAX_FORECASTS} items (out of {total_count} total).")
   
+  # Get parent category IDs to filter them out
+  parent_category_ids = set(get_all_parent_categories())
+  
   # Process each forecast row
   for _, row in df.iterrows():
     forecasted_amount = row['forecasted_amount']
     ai_category_id = row.get('ai_category_id', 0)
     category_name = row['category']  # category is always available
+    
+    # Skip parent category forecasts
+    if ai_category_id in parent_category_ids:
+      continue
     
     # Determine if this is an income category
     is_income = category_name in income_categories
@@ -303,11 +311,9 @@ def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> 
   # Check if template has format specifiers for total_amount or amount (like {total_amount:.0f} or {amount:.0f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
   amount_format_pattern = r'\{amount:([^}]+)\}'
-  total_amount_and_verb_format_pattern = r'\{total_amount_and_verb:([^}]+)\}'
   verb_and_total_amount_format_pattern = r'\{verb_and_total_amount:([^}]+)\}'
   has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
   has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
-  has_total_amount_and_verb_format_specifier = bool(re.search(total_amount_and_verb_format_pattern, template))
   has_verb_and_total_amount_format_specifier = bool(re.search(verb_and_total_amount_format_pattern, template))
   
   # Check if template has dollar sign - if it does, format amount without $, otherwise with $
@@ -319,15 +325,11 @@ def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> 
     temp_template = re.sub(total_amount_format_pattern, '{total_amount}', temp_template)
   if has_amount_format_specifier:
     temp_template = re.sub(amount_format_pattern, '{total_amount}', temp_template)
-  if has_total_amount_and_verb_format_specifier:
-    temp_template = re.sub(total_amount_and_verb_format_pattern, '{verb_and_total_amount}', temp_template)
   if has_verb_and_total_amount_format_specifier:
     temp_template = re.sub(verb_and_total_amount_format_pattern, '{verb_and_total_amount}', temp_template)
   
   # Also replace any plain {amount} with {total_amount}
   temp_template = temp_template.replace('{amount}', '{total_amount}')
-  # Replace {total_amount_and_verb} with {verb_and_total_amount} (alias support)
-  temp_template = temp_template.replace('{total_amount_and_verb}', '{verb_and_total_amount}')
   
   # Format amount string - always use .0f format, with or without $ based on template
   display_amount = abs(total_amount)
@@ -346,7 +348,6 @@ def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> 
     'direction': direction_display,  # Use direction_display which is empty for earned/spent
     'verb': verb,  # Verb for use in templates like "earn", "spend", "receive", "return"
     'verb_and_total_amount': verb_and_total_amount_str,  # Combined verb and amount (e.g., "earn $5000")
-    'total_amount_and_verb': verb_and_total_amount_str,  # Alias for verb_and_total_amount (e.g., "earn $5000")
   }
   
   try:
@@ -403,3 +404,125 @@ def utter_spending_forecast_totals(df: pd.DataFrame, template: str) -> str:
     Returns "$0.00" if DataFrame is empty.
   """
   return _format_forecast_total(df, template, is_income=False)
+
+
+def utter_spending_forecast_amount(amount: float, template: str) -> str:
+  """Format a spending forecast amount with appropriate verb and direction.
+  
+  Args:
+    amount: Spending forecast amount (positive = outflow/spent, negative = inflow/received)
+    template: Template string with placeholders:
+      - {verb_and_amount}: Combined verb and amount (e.g., "spend $3000" or "receive $500")
+      - {amount_and_direction}: Combined amount and direction (e.g., "$3000" or "$500 (inflow)")
+      - {verb}: Verb only (e.g., "spend", "receive")
+      - {amount}: Amount only (e.g., "$3000")
+      - {direction}: Direction display (empty for spent, or "(inflow)" for received)
+  
+  Returns:
+    Formatted string with spending forecast amount.
+  """
+  log(f"**Spending Forecast Amount**: Amount: ${amount:.0f}")
+  
+  # Determine verb and direction based on amount sign
+  # Positive = spent (outflow), negative = received (inflow)
+  if amount > 0:
+    # Spending outflow (positive amount = money going out)
+    verb = "spend"
+    direction = "spent"
+  elif amount < 0:
+    # Spending inflow (negative amount = money coming in, refund)
+    verb = "receive"
+    direction = "inflow"
+  else:
+    # Zero amount
+    verb = "spend"
+    direction = "spent"
+  
+  # Only show direction for inflow, not for spent
+  if direction == "spent":
+    direction_display = ""
+  else:
+    direction_display = f"({direction})"
+  
+  # Format amount string
+  display_amount = abs(amount)
+  amount_str = f"${display_amount:.0f}"
+  
+  # Create combined verb_and_amount string
+  verb_and_amount_str = f"{verb} {amount_str}"
+  
+  # Create combined amount_and_direction string
+  amount_and_direction_str = f"{amount_str} {direction_display}".strip()
+  
+  format_dict = {
+    'amount': amount_str,
+    'direction': direction_display,
+    'verb': verb,
+    'verb_and_amount': verb_and_amount_str,
+    'amount_and_direction': amount_and_direction_str,
+  }
+  
+  result = template.format(**format_dict)
+  log(f"**Spending Forecast Amount Utterance**: `{result}`")
+  return result
+
+
+def utter_income_forecast_amount(amount: float, template: str) -> str:
+  """Format an income forecast amount with appropriate verb and direction.
+  
+  Args:
+    amount: Income forecast amount (negative = inflow/earned, positive = outflow/returned)
+    template: Template string with placeholders:
+      - {verb_and_amount}: Combined verb and amount (e.g., "earn $5000" or "return $500")
+      - {amount_and_direction}: Combined amount and direction (e.g., "$5000" or "$500 (outflow)")
+      - {verb}: Verb only (e.g., "earn", "return")
+      - {amount}: Amount only (e.g., "$5000")
+      - {direction}: Direction display (empty for earned, or "(outflow)" for returned)
+  
+  Returns:
+    Formatted string with income forecast amount.
+  """
+  log(f"**Income Forecast Amount**: Amount: ${amount:.0f}")
+  
+  # Determine verb and direction based on amount sign
+  # Negative = earned (inflow), positive = returned (outflow)
+  if amount < 0:
+    # Income inflow (negative amount = money coming in)
+    verb = "earn"
+    direction = "earned"
+  elif amount > 0:
+    # Income outflow (positive amount = money going out, return/refund)
+    verb = "return"
+    direction = "outflow"
+  else:
+    # Zero amount
+    verb = "earn"
+    direction = "earned"
+  
+  # Only show direction for outflow, not for earned
+  if direction == "earned":
+    direction_display = ""
+  else:
+    direction_display = f"({direction})"
+  
+  # Format amount string
+  display_amount = abs(amount)
+  amount_str = f"${display_amount:.0f}"
+  
+  # Create combined verb_and_amount string
+  verb_and_amount_str = f"{verb} {amount_str}"
+  
+  # Create combined amount_and_direction string
+  amount_and_direction_str = f"{amount_str} {direction_display}".strip()
+  
+  format_dict = {
+    'amount': amount_str,
+    'direction': direction_display,
+    'verb': verb,
+    'verb_and_amount': verb_and_amount_str,
+    'amount_and_direction': amount_and_direction_str,
+  }
+  
+  result = template.format(**format_dict)
+  log(f"**Income Forecast Amount Utterance**: `{result}`")
+  return result

@@ -5,12 +5,12 @@ from penny.tools.utils import to_all_category_name
 from categories import get_parents_with_leaves_as_dict_categories
 
 def _adjust_parent_forecasts(df: pd.DataFrame) -> pd.DataFrame:
-  """Post-process forecasts: adjust parent category forecasts to be original - sum of children.
+  """Post-process forecasts: adjust parent category forecasts to be difference of original minus sum of children.
   
   For each parent category, the forecast is adjusted to:
-  parent_forecast = original_parent_forecast - sum(children_forecasts)
+  parent_forecast = original_forecast - sum(children_forecasts)
   
-  This ensures parent categories represent the "other" amount not accounted for by children.
+  This means the parent represents the "other" spending in that category not accounted for by children.
   """
   if df.empty:
     return df
@@ -28,11 +28,6 @@ def _adjust_parent_forecasts(df: pd.DataFrame) -> pd.DataFrame:
   for start_date, date_group in df.groupby('start_date'):
     # For each parent category that exists in this date group
     for parent_id in parent_category_ids:
-      # Check if parent category exists in this date group
-      parent_rows = date_group[date_group['ai_category_id'] == parent_id]
-      if parent_rows.empty:
-        continue
-      
       # Get children category IDs (excluding the parent itself)
       children_ids = [cid for cid in parent_to_leaf_categories[parent_id] if cid != parent_id]
       
@@ -46,7 +41,7 @@ def _adjust_parent_forecasts(df: pd.DataFrame) -> pd.DataFrame:
         original_forecast = df.loc[parent_mask, 'forecasted_amount'].iloc[0]
         adjusted_forecast = original_forecast - children_sum
         df.loc[parent_mask, 'forecasted_amount'] = adjusted_forecast
-        log(f"**Adjusted Parent Forecast**: Category {parent_id} on {start_date}: {original_forecast:.2f} - {children_sum:.2f} = {adjusted_forecast:.2f}")
+        log(f"**Adjusted Parent Forecast**: Category {parent_id} on {start_date}: {original_forecast:.2f} -> {adjusted_forecast:.2f} (original - sum of children: {children_sum:.2f})")
   
   return df
 
@@ -82,7 +77,7 @@ def retrieve_spending_forecasts_function_code_gen(user_id: int = 1, granularity:
   # Change category of top_income to income and top_bills to bills, etc
   df["category"] = df["category"].apply(lambda x: x.replace("top_", "") if x.startswith("top_") else x)
   
-  # Post-process: adjust parent category forecasts (original - sum of children)
+  # Post-process: adjust parent category forecasts to equal sum of children
   df = _adjust_parent_forecasts(df)
   
   log(f"**Retrieved Spending Forecasts** of `U-{user_id}` (granularity: {granularity}): `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
@@ -120,7 +115,7 @@ def retrieve_income_forecasts_function_code_gen(user_id: int = 1, granularity: s
   # Change category of top_income to income and top_bills to bills, etc
   df["category"] = df["category"].apply(lambda x: x.replace("top_", "") if x.startswith("top_") else x)
   
-  # Post-process: adjust parent category forecasts (original - sum of children)
+  # Post-process: adjust parent category forecasts to equal sum of children
   df = _adjust_parent_forecasts(df)
   
   log(f"**Retrieved Income Forecasts** of `U-{user_id}` (granularity: {granularity}): `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")

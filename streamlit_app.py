@@ -192,6 +192,7 @@ def render_example_prompts():
     # Subscription questions
     render_prompt_section(
       [
+        "List my subscriptions",
         "List my streaming subscriptions",
         "List my streaming subscriptions paid this month",
         "List active streaming subscriptions",

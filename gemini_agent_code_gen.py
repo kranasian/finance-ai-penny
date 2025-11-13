@@ -118,6 +118,12 @@ These functions are already implemented:
   - takes filtered income forecast `df` and calculates total income forecasted amounts and returns a formatted string based on `template`.
 - `utter_spending_forecast_totals(df: pd.DataFrame, template: str) -> str`
   - takes filtered spending forecast `df` and calculates total spending forecasted amounts and returns a formatted string based on `template`.
+- `utter_spending_forecast_amount(amount: float, template: str) -> str`
+  - formats a spending forecast amount with appropriate verb and direction.
+  - `amount`: Spending forecast amount (positive = outflow/spent, negative = inflow/received)
+- `utter_income_forecast_amount(amount: float, template: str) -> str`
+  - formats an income forecast amount with appropriate verb and direction.
+  - `amount`: Income forecast amount (negative = inflow/earned, positive = outflow/returned)
 - `retrieve_subscriptions() -> pd.DataFrame`
   - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
   - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `subscription_name` (str), `confidence_score_bills` (float), `reviewer_bills` (str)
@@ -599,7 +605,7 @@ def process_input():
         print("Here is your income from the past few weeks:")
         for_print, metadata["transactions"] = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
         print(for_print)
-        print(utter_income_transaction_total(past_income_df, "In total, you {total_amount_and_verb} from the past few weeks."))
+        print(utter_income_transaction_total(past_income_df, "In total, you {verb_and_total_amount} from the past few weeks."))
     
     # Check upcoming weeks (forecasts)
     print("\nUpcoming weeks:")
@@ -683,24 +689,58 @@ def process_input():
     return True, metadata
 ```
 
-input: User: list my subscriptions
+input: User: What is my forecasted discretionary spending breakdown (leisure, shopping, gifts) for the next three months?
 output:
 ```python
 def process_input():
-    metadata = {"subscriptions": []}
+    metadata = {}
     
-    subscriptions_df = retrieve_subscriptions()
+    # Get current month start
+    first_day_current_month = get_start_of_month(datetime.now())
     
-    if subscriptions_df.empty:
-      print("You have no subscriptions.")
+    # Calculate next 3 months start dates
+    next_month_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
+    month_after_next_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=2))
+    third_month_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=3))
+    
+    # Retrieve spending forecasts for next 3 months
+    spending_df = retrieve_spending_forecasts('monthly')
+    
+    if spending_df.empty:
+      print("You have no spending forecasts for the next 3 months.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(subscriptions_df, '{amount_and_direction} {subscription_name} on {date}.')
-    transaction_count = len(subscriptions_df)
-    print(f"Your subscriptions ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
-    print(for_print)
+    # Filter for next 3 months
+    spending_df = spending_df[spending_df['start_date'].isin([next_month_start, month_after_next_start, third_month_start])]
     
-    print(utter_subscription_totals(subscriptions_df, 'Total subscription transactions: ${total_amount:.0f} {direction}'))
+    if spending_df.empty:
+      print("You have no spending forecasts for the next 3 months.")
+      return True, metadata
+    
+    leisure_categories = ['leisure_entertainment', 'leisure_travel']
+    shopping_categories = ['shopping_clothing', 'shopping_gadgets', 'shopping_kids', 'shopping_pets']
+    gifts_categories = ['donations_gifts']
+    
+    leisure_df = spending_df[spending_df['category'].isin(leisure_categories)]
+    shopping_df = spending_df[spending_df['category'].isin(shopping_categories)]
+    gifts_df = spending_df[spending_df['category'].isin(gifts_categories)]
+    
+    if leisure_df.empty and shopping_df.empty and gifts_df.empty:
+      print("You have no discretionary spending forecasts for the next 3 months.")
+      return True, metadata
+    
+    # Calculate totals by category group
+    total_leisure = leisure_df['forecasted_amount'].sum() if not leisure_df.empty else 0.0
+    total_shopping = shopping_df['forecasted_amount'].sum() if not shopping_df.empty else 0.0
+    total_gifts = gifts_df['forecasted_amount'].sum() if not gifts_df.empty else 0.0
+    total_discretionary = total_leisure + total_shopping + total_gifts
+    
+    # Format and print breakdown
+    print(f"Your forecasted discretionary spending breakdown for the next 3 months:")
+    print(f"  Leisure: {utter_spending_forecast_amount(total_leisure, '{amount_and_direction}')}")
+    print(f"  Shopping: {utter_spending_forecast_amount(total_shopping, '{amount_and_direction}')}")
+    print(f"  Gifts: {utter_spending_forecast_amount(total_gifts, '{amount_and_direction}')}")
+    print(f"  Total: {utter_spending_forecast_amount(total_discretionary, '{amount_and_direction}')}")
     
     return True, metadata
 ```
