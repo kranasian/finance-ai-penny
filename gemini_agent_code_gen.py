@@ -607,65 +607,6 @@ def process_input():
     return True, metadata
 ```
 
-input: User: check my checking account if i can afford paying my rent next month
-output:
-```python
-def process_input():
-    metadata = {}
-    
-    # Get checking account balance
-    depository_df = retrieve_depository_accounts()
-    
-    if depository_df.empty:
-      print("You have no depository accounts.")
-      return True, metadata
-    
-    # Filter for checking account
-    checking_df = depository_df[depository_df['account_type'] == 'deposit_checking']
-    
-    if checking_df.empty:
-      print("You have no checking account.")
-      return True, metadata
-    
-    # Get total available balance from checking accounts
-    total_available = checking_df['balance_available'].sum()
-    
-    # Get next month date
-    first_day_current_month = get_start_of_month(datetime.now())
-    next_month_start_date = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=1))
-    
-    # Retrieve spending forecasts for next month
-    spending_df = retrieve_spending_forecasts('monthly')
-    
-    if spending_df.empty:
-      print("You have no spending forecasts for next month.")
-      return True, metadata
-    
-    # Filter for next month
-    spending_df = spending_df[spending_df['start_date'] == next_month_start_date]
-    
-    if spending_df.empty:
-      print("You have no spending forecasts for next month.")
-      return True, metadata
-    
-    rent_df = spending_df[spending_df['category'] == 'shelter_home']
-    
-    if rent_df.empty:
-      print("You have no rent forecast for next month.")
-      return True, metadata
-    
-    # Calculate total forecasted rent
-    total_rent = rent_df['forecasted_amount'].sum()
-    
-    # Compare and determine affordability
-    if total_available >= total_rent:
-      print(f"You can afford your rent next month. Your checking account has ${total_available:.0f} available, and your forecasted rent is ${total_rent:.0f}. You would have ${total_available - total_rent:.0f} remaining.")
-    else:
-      print(f"You cannot afford your rent next month. Your checking account has ${total_available:.0f} available, but your forecasted rent is ${total_rent:.0f}. You would need ${total_rent - total_available:.0f} more.")
-    
-    return True, metadata
-```
-
 input: User: What is my forecasted discretionary spending breakdown (leisure, shopping, gifts) for the next three months?
 output:
 ```python
