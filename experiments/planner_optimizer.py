@@ -59,26 +59,24 @@ Assistant: Yep, slightly.  You're spending $230 more than you earn.
 output:
 ```python
 def execute_plan() -> tuple[bool,  str]:
-    # Step 1: Lookup current income and spending needed to build the plan and find Netflix transaction details
+    # Goal: Get the necessary data for the savings plan.
     success, lookup_result = lookup_user_accounts_transactions_income_and_spending_patterns(
-        lookup_request="Provide my last 3 months of monthly income.  Categorized breakdown of the key categories of monthly spending in the last 3 months to validate the $230 of overspending. List transactions  matching 'netflix' across all my transactions."
+        lookup_request="Find all 'Netflix' transactions. Get a summary of monthly income and spending for the last 3 months."
     )
     if not success:
         return False, lookup_result
 
-    # Step 2: First fix categorization of Netflix to entertainment and make a category rule
+    # Goal: Correct the categorization of Netflix transactions.
     success, category_result = update_transaction_category_or_create_category_rules(
-        categorize_request="Update categorization of 'netflix' to be entertainment for all transactions.  Create a category rule that matches the netflix transaction name.",
+        categorize_request="Recategorize all 'Netflix' transactions as 'Entertainment' and create a rule for future ones.",
         input_info=lookup_result
     )
     if not success:
-        # Even if categorization fails, need to proceed and just tell the user why in the final result
         pass 
 
-    # Step 3: Develop the strategy to save $5,000, incorporating the elimination of the deficit and after the Netflix categorization and future cancellation.
+    # Goal: Develop a strategy to save $5,000.
     return research_and_strategize_financial_outcomes(
-        strategize_request="Develop a concrete financial plan detailing the timeline and required monthly surplus needed to save $5,000. This plan must account for eliminating the existing monthly deficit and factoring in the recurring savings achieved by canceling the Netflix subscription.",
-        # The result of categorization is irrelevant so only use lookup_result.
+        strategize_request="Create a detailed savings plan to save $5,000. Specify a timeline and a monthly savings target, accounting for the canceled Netflix subscription.",
         input_info=lookup_result
     )
 ```
@@ -90,33 +88,33 @@ Assistant: Yeah, its significant but manageable for a family. For the past 2 wee
 output:
 ```python
 def execute_plan() -> tuple[bool,  str]:
-    # Step 1: Lookup discretionary monthly spending in the last 3 months to assess feasibility of saving $2000.
+    # Goal: Find where to save money for the car repair.
     success, lookup_result = lookup_user_accounts_transactions_income_and_spending_patterns(
-        lookup_request="Retrieve last 3 months of discretionary monthly spending patterns to identify how many months is realistically achievable to save $2000."
+        lookup_request="Analyze discretionary spending from the last 3 months to find areas to cut back for a $2000 car repair."
     )
     if not success:
         return False, lookup_result
 
-    # Step 2: Develop the strategy to save $2000 and propose a reasonable timeline, factoring in current monthly spending patterns.
+    # Goal: Create a realistic savings plan.
     success, goals_plan = research_and_strategize_financial_outcomes(
-        strategize_request="Looking at the discretionary spending, develop a feasible, realistic spending plan for the discretionary categories to be able to save $2000 and propose reasonable timeline.",
+        strategize_request="Develop a savings plan to reach $2000. The plan should propose a timeline and suggest specific spending reductions.",
         input_info=lookup_result
     )
     if not success:
         return False, goals_plan
     
-    output_message = f"The proposed spending plan is: {goals_plan}\n"
+    output_message = f"I have developed a savings plan for you: {goals_plan}\n"
 
-    # Step 3: Create the budget across the proposed spending plan in the reasonable timeframe.
+    # Goal: Implement the savings plan by creating a budget.
     success, budget_result = create_budget_or_goal_or_reminder(
-        strategize_request="Create the budgets in the proposed spending plan in accordance with the proposed timeline.",
+        creation_request="Create a budget based on the new savings plan to track your progress.",
         input_info=goals_plan
     )
     if not success:
-        output_message += f"But: {budget_result}"
+        output_message += f"I was unable to create the budget automatically: {budget_result}"
         return False, output_message
     
-    output_message += f"I have created these spending budgets: {budget_result}"
+    output_message += f"To help you stay on track, I have created this budget: {budget_result}"
     return True, output_message
 ```
 
@@ -211,21 +209,20 @@ output:""")
       raise Exception(f"Failed to get models: {str(e)}")
 
 
-def main():
-  """Main function to test the planner optimizer with a sample input"""
-  # Create planner optimizer instance
-  planner = PlannerOptimizer()
+def _run_test_with_logging(last_user_request: str, previous_conversation: str, planner: PlannerOptimizer = None):
+  """
+  Internal helper function that runs a test with consistent logging.
   
-  # Last user request
-  last_user_request = "how's my accounts doing?"
-  
-  # Previous conversation as a string
-  previous_conversation = """User: Will I be able to pay for rent?
-Assistant: Not yet but close.  Your checking accounts only total $603 but rent is expected to be $2233.
-User: Have I been spending more than what I earn?
-Assistant: No, but its close.  You only save about $33.
-User: I've just been to Europe.  How was my spending?
-Assistant: For the last week, travel was $1,344 and eating out was $443."""
+  Args:
+    last_user_request: The last user request as a string
+    previous_conversation: The previous conversation as a string
+    planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    
+  Returns:
+    The generated response string
+  """
+  if planner is None:
+    planner = PlannerOptimizer()
   
   # Construct LLM input
   llm_input = f"""**Last User Request**: {last_user_request}
@@ -244,12 +241,6 @@ output:"""
   print("=" * 80)
   print()
   
-  # Generate response
-  print("=" * 80)
-  print("Sending request to LLM...")
-  print("=" * 80)
-  print()
-  
   result = planner.generate_response(last_user_request, previous_conversation)
   
   # Print the output
@@ -258,6 +249,74 @@ output:"""
   print("=" * 80)
   print(result)
   print("=" * 80)
+  
+  return result
+
+
+def test_hows_my_accounts_doing(planner: PlannerOptimizer = None):
+  """
+  Test method for "how's my accounts doing?" scenario.
+  
+  Args:
+    planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    
+  Returns:
+    The generated response string
+  """
+  last_user_request = "how's my accounts doing?"
+  
+  previous_conversation = """User: Hey, do I have enough to cover rent this month?
+Assistant: You're getting close! Your checking accounts have $1,850, and rent is $2,200. You'll need about $350 more by the due date.
+User: Ugh, okay. Am I spending too much? Like am I going over what I make?
+Assistant: You're actually staying within your means, but just barely. After all expenses, you're only saving about $50 a month, which is pretty tight.
+User: Yeah that makes sense, I just got back from a trip to Europe. How bad was it?
+Assistant: The trip definitely added up! Over the past two weeks, you spent $1,890 on travel and hotels, plus $520 on restaurants and dining out."""
+  
+  return _run_test_with_logging(last_user_request, previous_conversation, planner)
+
+
+def test_how_is_my_net_worth_doing_lately(planner: PlannerOptimizer = None):
+  """
+  Test method for "how is my net worth doing lately?" scenario with conversational distractions.
+  
+  Args:
+    planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    
+  Returns:
+    The generated response string
+  """
+  last_user_request = "how is my net worth doing lately?"
+  
+  previous_conversation = """User: What's the weather like today?
+Assistant: I don't have access to weather information, but I can help you with your finances!
+User: Can you help me plan a vacation to Hawaii?
+Assistant: I can help you budget for your Hawaii vacation.  Looks like you have $2,333 in your checking accounts.
+User: Actually, I just bought a new car.  Should I change my monthly spending plan?
+Assistant: Yes, updating your budget after a major purchase is a good idea. I can help you adjust your monthly expenses.
+User: What's my credit score?
+Assistant: I don't have access to your credit score, but I can help you track your spending patterns that affect it."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, planner)
+
+
+def test_with_inputs(last_user_request: str, previous_conversation: str, planner: PlannerOptimizer = None):
+  """
+  Convenient method to test the planner optimizer with custom inputs.
+  
+  Args:
+    last_user_request: The last user request as a string
+    previous_conversation: The previous conversation as a string
+    planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    
+  Returns:
+    The generated response string
+  """
+  return _run_test_with_logging(last_user_request, previous_conversation, planner)
+
+
+def main():
+  """Main function to test the planner optimizer"""
+  test_hows_my_accounts_doing()
 
 
 if __name__ == "__main__":
