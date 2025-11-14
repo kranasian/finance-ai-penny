@@ -24,6 +24,9 @@ def _adjust_parent_forecasts(df: pd.DataFrame) -> pd.DataFrame:
   # Create a copy to avoid modifying the original
   df = df.copy()
   
+  # Add original_forecasted_amount column to preserve original values
+  df['original_forecasted_amount'] = df['forecasted_amount'].copy()
+  
   # Group by start_date to process each date separately
   for start_date, date_group in df.groupby('start_date'):
     # For each parent category that exists in this date group
@@ -41,6 +44,7 @@ def _adjust_parent_forecasts(df: pd.DataFrame) -> pd.DataFrame:
         original_forecast = df.loc[parent_mask, 'forecasted_amount'].iloc[0]
         adjusted_forecast = original_forecast - children_sum
         df.loc[parent_mask, 'forecasted_amount'] = adjusted_forecast
+        # original_forecasted_amount already contains the original value, no need to update
         log(f"**Adjusted Parent Forecast**: Category {parent_id} on {start_date}: {original_forecast:.2f} -> {adjusted_forecast:.2f} (original - sum of children: {children_sum:.2f})")
   
   return df

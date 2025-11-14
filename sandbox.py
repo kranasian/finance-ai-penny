@@ -28,7 +28,7 @@ from penny.tool_funcs.retrieve_transactions import (
 )
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
-from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_income_forecast_totals, utter_spending_forecast_totals, utter_spending_forecast_amount, utter_income_forecast_amount
+from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_income_forecast_totals, utter_spending_forecast_totals, utter_spending_forecast_amount, utter_income_forecast_amount, utter_balance, utter_amount
 from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.respond_to_app_inquiry import respond_to_app_inquiry
 from penny.tool_funcs.date_utils import (
@@ -331,6 +331,12 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_income_forecast_amount_wrapper(amount: float, template: str):
     return utter_income_forecast_amount(amount, template)
   
+  def utter_balance_wrapper(amount: float, template: str):
+    return utter_balance(amount, template)
+  
+  def utter_amount_wrapper(amount: float, template: str):
+    return utter_amount(amount, template)
+  
   def compare_spending_wrapper(df: pd.DataFrame, template: str, metadata: dict = None):
     return compare_spending(df, template, metadata)
   
@@ -380,6 +386,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "utter_spending_forecast_totals": utter_spending_forecast_totals_wrapper,
     "utter_spending_forecast_amount": utter_spending_forecast_amount_wrapper,
     "utter_income_forecast_amount": utter_income_forecast_amount_wrapper,
+    "utter_balance": utter_balance_wrapper,
+    "utter_amount": utter_amount_wrapper,
     "compare_spending": compare_spending_wrapper,
     "respond_to_app_inquiry": respond_to_app_inquiry_wrapper,
     "utter_delta_from_now": utter_delta_from_now,
@@ -398,8 +406,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   return safe_globals_dict
 
 def _check_code_for_full_datetime(code_str: str) -> bool:
-  """Check if the code contains datetime.timedelta"""
-  return "datetime.date" in code_str or "datetime.time" in code_str
+  """Check if the code contains datetime.timedelta, datetime.date, or datetime.time"""
+  return "datetime.timedelta" in code_str or "datetime.date" in code_str or "datetime.time" in code_str
 
 # Global PrintCollector instance for capturing print outputs
 _print_collector = None

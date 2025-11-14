@@ -70,8 +70,8 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     log("- **`df` is empty**, returning empty string and metadata.")
     return "", []
   
-  # Check if required columns exist
-  required_columns = ['transaction_name', 'amount', 'date', 'category', 'transaction_id']
+  # Check if required columns exist (only transaction_name and amount are required)
+  required_columns = ['transaction_name', 'amount']
   missing_columns = [col for col in required_columns if col not in df.columns]
   if missing_columns:
     error_msg = f"DataFrame is missing required columns: {missing_columns}. Available columns: {list(df.columns)}"

@@ -14,7 +14,6 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
   
   if df.empty:
     log("- **`df` is empty**, returning empty string and metadata.")
-    metadata["comparison"] = []
     return "", metadata
   
   # Check if required columns exist
@@ -91,21 +90,8 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
         # Default message if template doesn't have the right placeholders
         result = f"You only have transactions in {group_label} this month. You spent {amount_str} on {group_label} ({count} transactions)."
       
-      comparison_metadata = [{
-        "comparison_type": "single_group",
-        "group": {
-          "name": group_name,
-          "label": group_label,
-          "total": float(total),
-          "count": int(count)
-        }
-      }]
-      
-      metadata["comparison"] = comparison_metadata
-      
-      log(f"**Returning** single group result and metadata.")
+      log(f"**Returning** single group result.")
       log(f"**Result**: `{result}`")
-      log(f"**Metadata**:\n```json\n{json.dumps(comparison_metadata, indent=2)}\n```")
       
       return result, metadata
     elif len(groups) != 2:
@@ -174,21 +160,8 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
         # Default message if template doesn't have the right placeholders
         result = f"You only have transactions in {category_label} this month. You spent {amount_str} on {category_label} ({count} transactions)."
       
-      comparison_metadata = [{
-        "comparison_type": "single_category",
-        "category": {
-          "name": category_name,
-          "label": category_label,
-          "total": float(total),
-          "count": int(count)
-        }
-      }]
-      
-      metadata["comparison"] = comparison_metadata
-      
-      log(f"**Returning** single category result and metadata.")
+      log(f"**Returning** single category result.")
       log(f"**Result**: `{result}`")
-      log(f"**Metadata**:\n```json\n{json.dumps(comparison_metadata, indent=2)}\n```")
       
       return result, metadata
     elif len(categories) != 2:
@@ -341,33 +314,8 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       # If that also fails, use the original template with minimal formatting
       result = f"{first_label}: {first_amount_str} | {second_label}: {second_amount_str}"
   
-  # Create comparison metadata
-  comparison_metadata = [{
-    "comparison_type": "group" if 'group' in df.columns else "category",
-    "first_group": {
-      "name": group1_name,
-      "label": first_label,
-      "total": float(total1),
-      "count": int(count1)
-    },
-    "second_group": {
-      "name": group2_name,
-      "label": second_label,
-      "total": float(total2),
-      "count": int(count2)
-    },
-    "difference": float(difference),
-    "difference_abs": float(difference_abs),
-    "count_difference": int(count_difference),
-    "count_difference_abs": int(count_difference_abs)
-  }]
-  
-  # Set comparison metadata in the provided metadata dict
-  metadata["comparison"] = comparison_metadata
-  
-  log(f"**Returning** comparison result and metadata.")
+  log(f"**Returning** comparison result.")
   log(f"**Result**: `{result}`")
-  log(f"**Metadata**:\n```json\n{json.dumps(comparison_metadata, indent=2)}\n```")
   
   # Ensure we always return a tuple
   if result is None:

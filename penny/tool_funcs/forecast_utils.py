@@ -1,9 +1,92 @@
 import re
 import pandas as pd
 from penny.tool_funcs.sandbox_logging import log
-from categories import get_all_parent_categories
+from categories import get_all_parent_categories, get_parents_with_leaves_as_dict_categories, get_name
 
 MAX_FORECASTS = 10
+
+
+def _consolidate_parent_categories(df: pd.DataFrame) -> tuple[pd.DataFrame, set[int]]:
+  """Consolidate child categories into parent categories when all children are present.
+  
+  This function will replace child category rows with their parent category row when
+  all children for the same start_date are present. The parent forecast amount is the
+  sum of all children (original forecast).
+  
+  If the DataFrame has more than 10 rows, consolidation happens automatically.
+  If the DataFrame has 10 or fewer rows, consolidation still happens but only when
+  all children of a parent are present.
+  
+  Args:
+    df: DataFrame with forecast data
+    
+  Returns:
+    tuple: (consolidated DataFrame, set of consolidated parent category IDs)
+  """
+  total_count = len(df)
+  consolidated_parent_ids = set()
+  
+  parent_to_leaf_categories = get_parents_with_leaves_as_dict_categories()
+  df_consolidated = df.copy()
+  rows_to_remove = []
+  rows_to_add = []
+  
+  # Group by start_date to process each date separately
+  for start_date, date_group in df.groupby('start_date'):
+    # For each parent category, check if all children are present
+    for parent_id, children_ids in parent_to_leaf_categories.items():
+      # Get children category IDs (excluding the parent itself)
+      child_ids = [cid for cid in children_ids if cid != parent_id]
+      
+      if not child_ids:
+        continue
+      
+      # Check if all children are present in this date group
+      children_in_group = date_group[date_group['ai_category_id'].isin(child_ids)]
+      if len(children_in_group) == len(child_ids):
+        # All children are present - consolidate into parent
+        # Only consolidate if df has more than 10 rows, OR if this is a filtered query
+        # (we can detect filtered queries by checking if parent is not in the original df)
+        parent_in_df = date_group[date_group['ai_category_id'] == parent_id]
+        should_consolidate = total_count > 10 or parent_in_df.empty
+        
+        if should_consolidate:
+          # Use original_forecasted_amount from parent if available, otherwise sum children
+          if not parent_in_df.empty and 'original_forecasted_amount' in parent_in_df.columns:
+            parent_forecast = parent_in_df['original_forecasted_amount'].iloc[0]
+          else:
+            parent_forecast = children_in_group['forecasted_amount'].sum()
+          
+          # Get parent category name
+          parent_category_name = get_name(parent_id)
+          if not parent_category_name:
+            continue
+          
+          # Mark child rows for removal
+          child_indices = children_in_group.index.tolist()
+          rows_to_remove.extend(child_indices)
+          
+          # Create parent row
+          parent_row = children_in_group.iloc[0].copy()
+          parent_row['ai_category_id'] = parent_id
+          parent_row['category'] = parent_category_name
+          parent_row['forecasted_amount'] = parent_forecast
+          # Set original_forecasted_amount if it exists
+          if 'original_forecasted_amount' in parent_row:
+            parent_row['original_forecasted_amount'] = parent_forecast
+          rows_to_add.append(parent_row)
+          consolidated_parent_ids.add(parent_id)
+          
+          log(f"**Consolidating Parent Category**: Replacing {len(child_ids)} children of parent {parent_id} ({parent_category_name}) with parent forecast ${parent_forecast:.0f} for {start_date}")
+  
+  # Remove child rows and add parent rows
+  if rows_to_remove:
+    df_consolidated = df_consolidated.drop(index=rows_to_remove)
+    if rows_to_add:
+      parent_df = pd.DataFrame(rows_to_add)
+      df_consolidated = pd.concat([df_consolidated, parent_df], ignore_index=True)
+  
+  return df_consolidated, consolidated_parent_ids
 
 
 def _format_date_for_metadata(date_dt, template: str, temp_template: str) -> tuple[str, str]:
@@ -119,22 +202,30 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
   # Get parent category IDs to filter them out
   parent_category_ids = set(get_all_parent_categories())
   
+  # Consolidate child categories into parent categories when all children are present
+  df, consolidated_parent_ids = _consolidate_parent_categories(df)
+  
   # Process each forecast row
   for _, row in df.iterrows():
-    forecasted_amount = row['forecasted_amount']
     ai_category_id = row.get('ai_category_id', 0)
     category_name = row['category']  # category is always available
     
-    # Skip parent category forecasts
-    if ai_category_id in parent_category_ids:
+    # Skip parent category forecasts (unless they were added through consolidation)
+    if ai_category_id in parent_category_ids and ai_category_id not in consolidated_parent_ids:
       continue
+    
+    # Use original_forecasted_amount for parent categories if available, otherwise use forecasted_amount
+    if ai_category_id in parent_category_ids and 'original_forecasted_amount' in row:
+      forecasted_amount = row['original_forecasted_amount']
+    else:
+      forecasted_amount = row['forecasted_amount']
     
     # Determine if this is an income category
     is_income = category_name in income_categories
     
     # Determine amount_and_direction based on category and amount sign
     # Rules:
-    # 1. Spending (Outflow): amount > 0, not income → "pay for $X.XX"
+    # 1. Spending (Outflow): amount > 0, not income → "spend $X.XX for"
     # 2. Income (Inflow): amount < 0, income → "receive $X.XX from"
     # 3. Spending Refund (Inflow): amount < 0, not income → "be refunded $X.XX from"
     # 4. Income Adjustment (Outflow): amount > 0, income → "return $X.XX to"
@@ -155,8 +246,8 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
         preposition = "to"
     else:  # expense categories
       if forecasted_amount > 0:
-        # Spending (Outflow): amount > 0, not income → "pay for $X.XX"
-        verb_phrase = "pay for"
+        # Spending (Outflow): amount > 0, not income → "spend $X.XX for"
+        verb_phrase = "spend"
         preposition = "for"
       else:  # forecasted_amount < 0
         # Spending Refund (Inflow): amount < 0, not income → "be refunded $X.XX from"
@@ -164,7 +255,10 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
         preposition = "from"
     
     # Build amount_and_direction string: "{verb_phrase} ${amount} {preposition}"
-    amount_and_direction = f"{verb_phrase} {amount_str_for_direction} {preposition}"
+    if preposition:
+      amount_and_direction = f"{verb_phrase} {amount_str_for_direction} {preposition}"
+    else:
+      amount_and_direction = f"{verb_phrase} {amount_str_for_direction}"
     
     # Keep direction for backward compatibility
     if is_income:
@@ -525,4 +619,78 @@ def utter_income_forecast_amount(amount: float, template: str) -> str:
   
   result = template.format(**format_dict)
   log(f"**Income Forecast Amount Utterance**: `{result}`")
+  return result
+
+
+def utter_balance(amount: float, template: str) -> str:
+  """Format a balance amount (positive or negative) with appropriate sign and direction.
+  
+  Use this method for:
+  - Account balances (balance_available, balance_current, remaining_balance)
+  - Balance differences (shortfall, deficit_after)
+  - Any financial amount representing a balance or difference that can be positive or negative
+  
+  Args:
+    amount: Balance value (positive or negative)
+    template: Template string with placeholder:
+      - {amount_with_direction}: Amount with direction indicator (e.g., "$1000" or "$500 deficit")
+  
+  Returns:
+    Formatted string with balance amount.
+  """
+  log(f"**Balance**: Amount: ${amount:.0f}")
+  
+  # Determine if negative
+  is_negative = amount < 0
+  
+  # Format amount strings
+  amount_abs = abs(amount)
+  amount_str = f"${amount_abs:.0f}"
+  
+  # Amount with direction: "$X deficit" for negative, "$X" for positive
+  if is_negative:
+    amount_with_direction_str = f"{amount_str} deficit"
+  else:
+    amount_with_direction_str = amount_str
+  
+  format_dict = {
+    'amount_with_direction': amount_with_direction_str,
+  }
+  
+  result = template.format(**format_dict)
+  log(f"**Balance Utterance**: `{result}`")
+  return result
+
+
+def utter_amount(amount: float, template: str) -> str:
+  """Format a transaction total amount as a positive number.
+  
+  Use this method for:
+  - Transaction totals (always displays as positive, no sign indicators)
+  - Any financial amount that should be displayed as a simple positive number
+  
+  Args:
+    amount: Transaction amount (positive or negative, will be displayed as absolute value)
+    template: Template string with placeholder:
+      - {amount}: Amount formatted as positive number. If template doesn't include "$", dollar sign will be added automatically.
+  
+  Returns:
+    Formatted string with amount (always positive, no commas, 0 decimals). Dollar sign added if not in template.
+  """
+  log(f"**Amount**: Amount: ${amount:.0f}")
+  
+  # Format as positive number (absolute value), no commas, 0 decimals
+  amount_abs = abs(amount)
+  amount_str = f"{amount_abs:.0f}"
+  
+  # Add dollar sign if template doesn't already include it
+  if "$" not in template:
+    amount_str = f"${amount_str}"
+  
+  format_dict = {
+    'amount': amount_str,
+  }
+  
+  result = template.format(**format_dict)
+  log(f"**Amount Utterance**: `{result}`")
   return result

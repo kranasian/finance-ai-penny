@@ -288,13 +288,6 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
       balance_current=current_balance_str
     )
     utterances.append(utterance)
-    
-    # For aggregated data, we may not have individual account metadata
-    metadata.append({
-      "aggregate": True,
-      "total_available": total_available,
-      "total_current": total_current,
-    })
   
   log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries.")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")

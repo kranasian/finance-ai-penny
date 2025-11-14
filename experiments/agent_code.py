@@ -5,6 +5,7 @@ Agent Code Experiment - Demonstrates usage of create_reminder and retrieve_remin
 
 import sys
 import os
+import datetime
 from datetime import datetime, timedelta
 import pandas as pd
 
@@ -32,7 +33,7 @@ from penny.tool_funcs.retrieve_transactions import (
 )
 from penny.tool_funcs.compare_spending import compare_spending
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
-from penny.tool_funcs.forecast_utils import utter_income_forecast_totals, utter_spending_forecast_totals, forecast_dates_and_amount, utter_spending_forecast_amount, utter_income_forecast_amount
+from penny.tool_funcs.forecast_utils import utter_amount, utter_income_forecast_totals, utter_spending_forecast_totals, forecast_dates_and_amount, utter_spending_forecast_amount, utter_income_forecast_amount, utter_balance
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from penny.tool_funcs.date_utils import get_start_of_month, get_end_of_month, get_start_of_week, get_end_of_week, get_after_periods, get_date_string
 user_id = 1
@@ -174,7 +175,7 @@ def process_input_did_i_spend_more_on_dining_out_over_groceries_last_month():
       return True, metadata
     
     # Compare spending between categories
-    result, metadata = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+    result, _ = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
     print(result)
     
     return True, metadata
@@ -214,22 +215,32 @@ def process_input_can_i_afford_to_pay_a_couple_months_of_fun_with_what_i_have_no
     else:
       total_spending = 0.0
     
-    # Compare and determine affordability
+    # Calculate remaining balance after spending
+    remaining_balance = current_balance - total_spending
+    
+    # Format amounts using utter_balance
+    current_balance_str = utter_balance(current_balance, "{amount_with_direction}")
+    total_spending_str = utter_spending_forecast_amount(total_spending, "{amount_and_direction}")
+    remaining_balance_str = utter_balance(remaining_balance, "{amount_with_direction}")
+    
+    # Determine affordability and format message
     if current_balance < 0:
       if total_spending < 0:
         # Refund would reduce the deficit
-        new_balance = current_balance - total_spending
-        print(f"You have a negative balance of ${abs(current_balance):.0f} in your checking and savings accounts. However, your projected refunds of ${abs(total_spending):.0f} would reduce your deficit to ${abs(new_balance):.0f}.")
+        print(f"You have {current_balance_str} in your checking and savings accounts. However, your projected refunds of {total_spending_str} would reduce your deficit to {remaining_balance_str}.")
       else:
         # Additional spending would increase the deficit
-        print(f"You have a negative balance of ${abs(current_balance):.0f} in your checking and savings accounts. You cannot afford additional spending. Your projected total spending is ${total_spending:.0f}, which would increase your deficit to ${abs(current_balance - total_spending):.0f}.")
+        deficit_after = abs(remaining_balance)
+        print(f"You have {current_balance_str} in your checking and savings accounts. You cannot afford additional spending. Your projected total spending is {total_spending_str}, which would increase your deficit to ${deficit_after:.0f}.")
     elif current_balance >= total_spending:
-      print(f"You can afford a couple months of fun. Your checking and savings accounts have ${current_balance:.0f} available. Your projected total spending is ${total_spending:.0f}, leaving you with ${current_balance - total_spending:.0f} remaining.")
+      print(f"You can afford a couple months of fun. Your checking and savings accounts have {current_balance_str} available. Your projected total spending is {total_spending_str}, leaving you with {remaining_balance_str} remaining.")
     else:
-      print(f"You cannot afford a couple months of fun. Your checking and savings accounts have ${current_balance:.0f} available. However, your projected total spending is ${total_spending:.0f}, so you would need ${total_spending - current_balance:.0f} more.")
+      # Need more money
+      shortfall = total_spending - current_balance
+      shortfall_str = utter_balance(shortfall, "{amount_with_direction}")
+      print(f"You cannot afford a couple months of fun. Your checking and savings accounts have {current_balance_str} available. However, your projected total spending is {total_spending_str}, so you would need {shortfall_str} more.")
     
     return True, metadata
-
 
 def process_input_have_i_been_saving_anything_monthly_in_the_past_4_months():
     metadata = {}
@@ -245,44 +256,44 @@ def process_input_have_i_been_saving_anything_monthly_in_the_past_4_months():
     # Get current month start
     first_day_current_month = get_start_of_month(datetime.now())
     
-    # Calculate savings for each of the past 4 months
-    months_with_savings = []
-    months_without_savings = []
+    # Calculate start dates for the past 4 months
+    month_4_ago_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=-4))
+    month_1_ago_end = get_after_periods(first_day_current_month, granularity="daily", count=-1)
     
-    for i in range(1, 5):  # Past 4 months (1, 2, 3, 4 months ago)
-      month_start = get_start_of_month(get_after_periods(first_day_current_month, granularity="monthly", count=-i))
-      month_end = get_end_of_month(month_start)
-      
-      # Filter transactions for this month
-      month_income_df = income_df[(income_df['date'] >= month_start) & (income_df['date'] <= month_end)]
-      month_expenses_df = spending_df[(spending_df['date'] >= month_start) & (spending_df['date'] <= month_end)]
-      
-      if month_income_df.empty and month_expenses_df.empty:
-        continue
-      
-      # Calculate income and expenses for this month
-      total_income = month_income_df['amount'].sum() if not month_income_df.empty else 0.0
-      total_expenses = month_expenses_df['amount'].sum() if not month_expenses_df.empty else 0.0
-      savings = total_income + total_expenses
-      
-      # Check if savings were positive (saving money)
-      month_name = month_start.strftime('%B %Y')
-      if savings < 0:  # Negative savings means positive net (income > expenses)
-        months_with_savings.append((month_name, abs(savings)))
-      else:
-        months_without_savings.append((month_name, savings))
+    # Filter transactions for the past 4 months
+    past_4_months_income_df = income_df[
+      (income_df['date'] >= month_4_ago_start) & (income_df['date'] <= month_1_ago_end)
+    ]
     
-    # Format and print results
-    if months_with_savings:
-      savings_list = ", ".join([f"{month} (${amount:.0f})" for month, amount in months_with_savings])
-      print(f"Yes, you have been saving monthly in {len(months_with_savings)} of the past 4 months: {savings_list}.")
+    past_4_months_spending_df = spending_df[
+      (spending_df['date'] >= month_4_ago_start) & (spending_df['date'] <= month_1_ago_end)
+    ]
+    
+    if past_4_months_income_df.empty and past_4_months_spending_df.empty:
+      print("You have no transactions for the past 4 months.")
+      return True, metadata
+
+    # Calculate totals for the period
+    total_income = past_4_months_income_df['amount'].sum() if not past_4_months_income_df.empty else 0.0
+    total_spending = past_4_months_spending_df['amount'].sum() if not past_4_months_spending_df.empty else 0.0
+    transaction_total = total_income + total_spending
+    transaction_total_str = utter_amount(transaction_total, "{amount}")
+    
+    # Format messages
+    income_msg = utter_income_transaction_total(past_4_months_income_df, "Total income: {verb_and_total_amount}") if not past_4_months_income_df.empty else "No income transactions found."
+    spending_msg = utter_spending_transaction_total(past_4_months_spending_df, "Total spending: {verb_and_total_amount}") if not past_4_months_spending_df.empty else "No spending transactions found."
+    
+    print(f"Checking monthly savings over the past 4 months:")
+    print(f"  {income_msg}")
+    print(f"  {spending_msg}")
+    
+    if transaction_total < 0:  # Negative transaction_total means positive savings (income > expenses)
+      print(f"Yes, you have been saving! Your net savings over the last 4 months is {transaction_total_str}.")
+    elif transaction_total > 0:  # Positive transaction_total means spending exceeded income
+      print(f"No, you have spent more than you earned over the last 4 months. Your net result is {transaction_total_str}.")
     else:
-      print("No, you have not been saving monthly in any of the past 4 months.")
-    
-    if months_without_savings:
-      no_savings_list = ", ".join([f"{month} (spent ${amount:.0f} more than earned)" for month, amount in months_without_savings])
-      print(f"Months without savings: {no_savings_list}.")
-    
+      print("No, you have broken even over the last 4 months.")
+      
     return True, metadata
 
 
@@ -577,6 +588,114 @@ def process_input_how_much_eating_out_have_I_done():
     return True, metadata
 
 
+def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
+    metadata = {}
+    
+    # --- 1. Comprehensive Account Balances ---
+    print("--- Account Balances Summary ---")
+    
+    # Depository Accounts (Assets)
+    assets_df = retrieve_depository_accounts()
+    if not assets_df.empty:
+        print("\nDepository Accounts:")
+        _, metadata["depository_balances"] = account_names_and_balances(assets_df, "Account '{account_name}' ({account_type}): {balance_current} current.")
+        print(utter_account_totals(assets_df, "Total Assets: {balance_current}."))
+    else:
+        print("No depository accounts found.")
+
+    # Credit/Loan Accounts (Liabilities)
+    credit_df = retrieve_credit_accounts()
+    if not credit_df.empty:
+        print("\nCredit/Loan Accounts:")
+        _, metadata['credit_liabilities'] = account_names_and_balances(credit_df, "Account '{account_name}' ({account_type}): {balance_current} owed.")
+        print(utter_account_totals(credit_df, "Total Liabilities: {balance_current}."))
+    else:
+        print("No credit or loan accounts found.")
+        
+    # Net Worth
+    total_assets = assets_df['balance_current'].sum() if not assets_df.empty else 0.0
+    total_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
+    print(utter_net_worth(total_assets, total_liabilities, "Net Worth: {net_worth_state_with_amount}."))
+
+    # --- 2. Income vs Spending Comparison (Last Month) ---
+    print("\n--- Income vs Spending Comparison (Last Month) ---")
+    
+    income_df = retrieve_income_transactions()
+    spending_df = retrieve_spending_transactions()
+    
+    if income_df.empty and spending_df.empty:
+        print("No recent transactions to compare.")
+    else:
+        # Filter for last month
+        first_day_current_month = get_start_of_month(datetime.now())
+        first_day_last_month = get_after_periods(first_day_current_month, granularity="monthly", count=-1)
+        last_day_last_month = get_end_of_month(first_day_last_month)
+        
+        last_month_income_df = income_df[(income_df['date'] >= first_day_last_month) & (income_df['date'] <= last_day_last_month)]
+        last_month_spending_df = spending_df[(spending_df['date'] >= first_day_last_month) & (spending_df['date'] <= last_day_last_month)]
+        
+        total_income_last_month = last_month_income_df['amount'].sum() if not last_month_income_df.empty else 0.0
+        total_spending_last_month = last_month_spending_df['amount'].sum() if not last_month_spending_df.empty else 0.0
+        
+        income_msg = utter_income_transaction_total(last_month_income_df, "Total Income: {verb_and_total_amount}")
+        spending_msg = utter_spending_transaction_total(last_month_spending_df, "Total Spending: {verb_and_total_amount}")
+        
+        net_flow = total_income_last_month + total_spending_last_month # Since spending amounts are positive (outflow)
+        
+        print(income_msg)
+        print(spending_msg)
+        
+        if net_flow > 0:
+            print(f"Net result: You saved/had a surplus of ${net_flow:.2f} last month.")
+        elif net_flow < 0:
+            print(f"Net result: You spent/had a deficit of ${abs(net_flow):.2f} last month.")
+        else:
+            print("Net result: You broke even last month.")
+        
+        metadata['last_month_income_total'] = total_income_last_month
+        metadata['last_month_spending_total'] = total_spending_last_month
+
+
+    # --- 3. Recent Significant Spending (Travel & Dining Out) ---
+    print("\n--- Recent Significant Spending (Travel & Dining Out) ---")
+    
+    if spending_df.empty:
+        print("No spending transactions available for detailed review.")
+    else:
+        # Define categories of interest
+        travel_categories = ['leisure_travel']
+        dining_categories = ['meals_dining_out', 'meals_delivered_food']
+        
+        # Filter for recent spending (e.g., last 30 days)
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+        recent_spending_df = spending_df[spending_df['date'] >= thirty_days_ago]
+        
+        travel_df = recent_spending_df[recent_spending_df['category'].isin(travel_categories)]
+        dining_df = recent_spending_df[recent_spending_df['category'].isin(dining_categories)]
+        
+        if travel_df.empty and dining_df.empty:
+            print("No recent travel or dining out spending found in the last 30 days.")
+        else:
+            # Travel Summary
+            if not travel_df.empty:
+                total_travel = travel_df['amount'].sum()
+                print(f"Travel Spending (Last 30 Days): {utter_spending_forecast_amount(total_travel, '{amount_and_direction}')}")
+                _, metadata['recent_travel'] = transaction_names_and_amounts(travel_df, " - {amount_and_direction} {transaction_name} on {date}.")
+            else:
+                print("No recent travel spending.")
+
+            # Dining Summary
+            if not dining_df.empty:
+                total_dining = dining_df['amount'].sum()
+                print(f"Dining/Food Spending (Last 30 Days): {utter_spending_forecast_amount(total_dining, '{amount_and_direction}')}")
+                _, metadata['recent_dining'] = transaction_names_and_amounts(dining_df, " - {amount_and_direction} {transaction_name} on {date}.")
+            else:
+                print("No recent dining/food spending.")
+                
+    print("\n--- Summary Complete ---")
+    return True, metadata
+
+
 def main():
   """Main function that demonstrates the reminder tools"""
   global user_id
@@ -655,6 +774,12 @@ def main():
   success, metadata = process_input_list_streaming_subscriptions_paid_last_month()
   print(f"Success: {success}")
   print(f"Metadata: {metadata}")
+  
+  print("\n📋 Testing provide a comprehensive summary of my financial situation...")
+  success, metadata = process_input_provide_a_comprehensive_summary_of_my_financial_situation()
+  print(f"Success: {success}")
+  print(f"Metadata: {metadata}")
+
 
 
 if __name__ == "__main__":
