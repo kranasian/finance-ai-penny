@@ -119,81 +119,80 @@ def normalize_dates(goal: dict) -> dict:
     return goal
 
 
-def create_budget_or_goal(goal_dicts: list) -> Tuple[bool, str]:
+def create_budget_or_goal(
+    category: str,
+    match_category: str,
+    match_caveats: str | None,
+    type: str,
+    granularity: str,
+    start_date: str,
+    end_date: str,
+    amount: float,
+    title: str,
+    budget_or_goal: str
+) -> Tuple[bool, str]:
     """
-    Create budgets/goals based on the list of goal dictionaries.
+    Create a budget or goal based on individual parameters.
     
     Args:
-        goal_dicts: A list of dictionaries, where each dictionary represents a spending goal/budget
-                   with keys: category, match_category, match_caveats, clarification_needed, type,
-                   granularity, start_date, end_date, amount, title, budget_or_goal
+        category: The raw spending category text (e.g., "gas", "eating out"). Can be empty string.
+        match_category: The category from the OFFICIAL CATEGORY LIST. Can be empty string.
+        match_caveats: Explanation of matching constraints. None if not applicable.
+        type: The type of goal. Must be one of: "category", "credit_X_amount", "save_X_amount", "credit_0", "save_0".
+        granularity: The time period for the goal. Must be one of: "weekly", "monthly", or "yearly". Can be empty string.
+        start_date: The start date for the goal in YYYY-MM-DD format. Can be empty string.
+        end_date: The end date for the goal in YYYY-MM-DD format. Can be empty string.
+        amount: The target dollar amount for the specified category and granularity. Can be 0.0.
+        title: Goal name/title.
+        budget_or_goal: Must be either "budget" or "goal". Defaults to "goal" if invalid.
     
     Returns:
         Tuple[bool, str]: (success, output_info)
-        - success: True if goals were created successfully, False if clarification is needed
+        - success: True if goal/budget was created successfully, False if clarification is needed
         - output_info: Success message or clarification prompts
     """
-    if not goal_dicts:
-        return False, "No goals provided. Please specify at least one goal to create."
+    # Convert parameters to dictionary for processing
+    goal = {
+        "category": category,
+        "match_category": match_category,
+        "match_caveats": match_caveats,
+        "type": type,
+        "granularity": granularity,
+        "start_date": start_date,
+        "end_date": end_date,
+        "amount": amount,
+        "title": title,
+        "budget_or_goal": budget_or_goal
+    }
     
-    # Check for clarifications needed
-    clarification_results = [g.get("clarification_needed") for g in goal_dicts if g.get("clarification_needed")]
-    if clarification_results:
-        return False, "\n".join(clarification_results)
+    # Validate the goal
+    user_asks = validate_goal(goal)
+    if user_asks:
+        return False, "\n".join(user_asks)
     
-    # Validate all goals
-    all_user_asks = []
-    for goal in goal_dicts:
-        user_asks = validate_goal(goal)
-        if user_asks:
-            all_user_asks.extend(user_asks)
+    # Normalize dates
+    goal = normalize_dates(goal)
     
-    if all_user_asks:
-        return False, "\n".join(all_user_asks)
+    # Get goal name for confirmation message
+    goal_name = (goal.get("title") if goal.get("title")
+                 else goal.get("category") if goal.get("category") else "goal")
     
-    # Normalize dates and build confirmation messages
-    # Count budgets and goals separately for the summary message
-    budget_count = sum(1 for g in goal_dicts if g.get("budget_or_goal", "goal") == "budget")
-    goal_count = len(goal_dicts) - budget_count
+    # Validate and set budget_or_goal
+    budget_or_goal_value = goal.get("budget_or_goal", "goal")
+    if budget_or_goal_value not in ["budget", "goal"]:
+        budget_or_goal_value = "goal"  # Default to "goal" if invalid
     
-    summary_parts = []
-    if budget_count > 0:
-        summary_parts.append(f"{budget_count} budget{'s' if budget_count != 1 else ''}")
-    if goal_count > 0:
-        summary_parts.append(f"{goal_count} goal{'s' if goal_count != 1 else ''}")
+    # Build confirmation message
+    confirmation_message = (
+        f"Successfully created {budget_or_goal_value} '{goal_name}' "
+        f"from {goal['start_date']} to {goal['end_date']} "
+        f"with target amount ${goal.get('amount', 0):.2f}."
+    )
     
-    if summary_parts:
-        confirmation_messages = [f"Successfully created {', '.join(summary_parts)}."]
-    else:
-        confirmation_messages = [f"Successfully created {len(goal_dicts)} budget(s) or goal(s)."]
-    
-    caveats_results = []
-    
-    for goal in goal_dicts:
-        # Create a copy to avoid mutating the original
-        goal_copy = goal.copy()
-        goal_copy = normalize_dates(goal_copy)
-        goal_name = (goal_copy.get("title") if goal_copy.get("title")
-                     else goal_copy.get("category") if goal_copy.get("category") else "goal")
-        
-        # Get budget_or_goal from dict, validate and default to "goal" if invalid or missing
-        budget_or_goal = goal_copy.get("budget_or_goal", "goal")
-        if budget_or_goal not in ["budget", "goal"]:
-            budget_or_goal = "goal"  # Default to "goal" if invalid
-        
-        confirmation_messages.append(
-            f"Created {budget_or_goal} '{goal_name}' "
-            f"from {goal_copy['start_date']} to {goal_copy['end_date']} "
-            f"with target amount ${goal_copy.get('amount', 0):.2f}."
-        )
-        
-        # Include match caveats if present
-        if goal_copy.get("match_caveats"):
-            caveats_results.append(goal_copy["match_caveats"])
-    
-    # Combine caveats and confirmations
-    all_messages = caveats_results + confirmation_messages
-    output_info = "\n".join([m for m in all_messages if m])
+    # Include match caveats if present
+    output_info = confirmation_message
+    if goal.get("match_caveats"):
+        output_info = f"{goal['match_caveats']}\n{output_info}"
     
     return True, output_info
 

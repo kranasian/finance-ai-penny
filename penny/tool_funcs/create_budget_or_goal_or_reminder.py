@@ -9,11 +9,13 @@ from typing import Tuple
 import pandas as pd
 
 
-# Add the parent directory to the path so we can import the tools
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Add the parent directory to the path so we can import database and other modules
+# From penny/tool_funcs/, we need to go up two levels to get to the root
+parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if parent_dir not in sys.path:
   sys.path.insert(0, parent_dir)
 
+# Import from same package (tool_funcs) - use absolute imports to work both as module and when run directly
 from penny.tool_funcs.create_budget_or_goal import create_budget_or_goal, VALID_GRANULARITIES, VALID_GOAL_TYPES
 from penny.tool_funcs.date_utils import get_start_of_week, get_end_of_week, get_start_of_month, get_end_of_month, get_start_of_year, get_end_of_year, get_after_periods, get_date_string
 from database import Database
@@ -23,18 +25,15 @@ load_dotenv()
 
 SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budgets, goals, and reminders based on user requests. **You only output python code.**
 
-## Your Task and Main Rules
+## Your Tasks
 
-1. Write a function `process_input` that takes no arguments and returns a tuple:
-   - The first element is a boolean indicating success or failure.
-   - The second element is a string containing the output information (what was created or error message).
-2. Assume `import datetime` and `import pandas as pd` are already included. Do not include import statements in your code.
-3. Determine whether the user wants to create a **budget/goal** or a **reminder** based on the request.
-4. For **budget/goal** requests:
-   - Create a list of goal dictionaries based on the user's request.
-   - Each dictionary should follow the structure described in `create_budget_or_goal` function documentation.
-   - Call `create_budget_or_goal(goal_dicts)` with the list of dictionaries.
-5. For **reminder** requests:
+1. Understand the **Creation Request** and the provided information in **Input Info from previous skill**.
+2. Determine whether the user wants to create a **budget/goal** or a **reminder** based on the request.
+3. For **budget/goal** requests:
+   - Extract the goal parameters from the user's request.
+   - Call `create_budget_or_goal` with individual parameters as defined in the function signature.
+   - If the user requests multiple budgets/goals, call `create_budget_or_goal` once for each budget/goal separately with its own parameters.
+4. For **reminder** requests:
    - Generate validation code that checks if the reminder request has 2 required pieces of information:
      1. **What** to be reminded about: transaction coming in, subscription getting refunded, account balances, or a clear general task
      2. **When** the reminder will be relevant: date, condition, or frequency
@@ -47,7 +46,6 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budget
      - Determine when to check next (next_check_date) if the condition might be met in the future
    - Save/store the should_remind code logic (as a string or in metadata) so it can be used later for periodic checking.
    - After generating and executing should_remind code:
-     - The should_remind code should be saved/stored (as a string or in metadata) for later periodic checking.
      - If should_remind returns a trigger message (condition is met), include the trigger message in the response.
      - Include the next_check_date in the response if provided.
      - Build the response message describing what reminder was created. The message should be clear and descriptive, following the pattern: `Reminder "<reminder_description>" was successfully created.` where `<reminder_description>` is a natural description of what the reminder is for (e.g., "to cancel Netflix on August 31st", "when checking account balance drops below $1000"). You may also include additional context like when the last transaction/subscription occurred if relevant.
@@ -55,17 +53,25 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budget
    - The validation should check the dataframes to ensure the reminder can be created (e.g., subscription exists, account exists, etc.).
    - The should_remind check should determine if the reminder condition is already satisfied (e.g., account balance already below threshold, subscription already cancelled, transaction already occurred).
 
+## Your Output
+
+1. Write a function `process_input` that takes no arguments and returns a tuple:
+   - The first element is a boolean indicating success or failure.
+   - The second element is a string containing the output information (what was created or error message).
+2. Assume `import datetime` and `import pandas as pd` are already included. Do not include import statements in your code.
+3. Only output the Python code that implements the `process_input` function.
+
 <IMPLEMENTED_FUNCTIONS>
 
 These functions are already implemented:
 
-- `create_budget_or_goal(goal_dicts: list[dict]) -> tuple[bool, str]`
-  - Creates a spending goal or budget based on the list of goal dictionaries provided.
-  - `goal_dicts`: A list of dictionaries, where each dictionary represents a single spending goal/budget with the following keys:
+- `create_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str) -> tuple[bool, str]`
+  - Creates a spending goal or budget based on individual parameters.
+  - **Method Signature**: `create_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str) -> tuple[bool, str]`
+  - **Parameters**:
     - `category`: (string) The raw spending category text extracted from user input (e.g., "gas", "eating out"). Can be empty string if not provided.
-    - `match_category`: (string) The category from the OFFICIAL CATEGORY LIST that best matches the user's goal category. Can be empty string if not provided or if clarification is needed.
+    - `match_category`: (string) The category from the OFFICIAL CATEGORY LIST that best matches the user's goal category. Can be empty string if not provided.
     - `match_caveats`: (string or None) Explanation of matching constraints and any generalization made. Only provide if the input is a more specific item that falls under a broader category, or if there's any ambiguity in the match. Otherwise use None.
-    - `clarification_needed`: (string or None) If the goal category is ambiguous, incomplete, or could belong to multiple categories, provide a string prompting the user for clarification. Otherwise use None.
     - `type`: (string) The type of goal. Must be one of: "category", "credit_X_amount", "save_X_amount", "credit_0", "save_0". Defaults to "category" for spending goals based on category inflow/spending.
       - `category`: based on category inflow/spending
       - `credit_X_amount`: paying down credit X amount per period (weekly/monthly/yearly based on granularity)
@@ -78,6 +84,10 @@ These functions are already implemented:
     - `amount`: (float) The target dollar amount for the specified category and granularity. Can be 0.0 or empty if not provided.
     - `title`: (string) Provide a fun goal name if not provided, and use the user requested title if provided.
     - `budget_or_goal`: (string) Must be either "budget" or "goal". Determines the wording in the confirmation message. Defaults to "goal" if not provided.
+  - **Returns**:
+    - `tuple[bool, str]`: A tuple where:
+      - First element (bool): `True` if the goal/budget was created successfully, `False` if clarification is needed or an error occurred
+      - Second element (str): Success message describing what was created, or error/clarification message
   - Use helper functions: `get_start_of_week(date: datetime) -> datetime`, `get_end_of_week(date: datetime) -> datetime`, `get_start_of_month(date: datetime) -> datetime`, `get_end_of_month(date: datetime) -> datetime`, `get_start_of_year(date: datetime) -> datetime`, `get_end_of_year(date: datetime) -> datetime`, `get_after_periods(date: datetime, granularity: str, count: int) -> datetime`, `get_date_string(date: datetime) -> str`.
 
 - `get_accounts_df() -> pd.DataFrame`
@@ -181,147 +191,161 @@ These functions are already implemented:
 
 <EXAMPLES>
 
-input: **Last User Request**: budget $60 for gas every week for the next 6 months and a yearly car insurance cost of 3500 starting next year
+input: **Creation Request**: Budget $60 for gas every week for the next 6 months. Additionally, create a savings goal or reminder for a yearly car insurance cost of $3500 starting next year.
 output:
 ```python
 def process_input():
     today = datetime.now()
-    goal_dicts = []
     
-    goal_dicts.append({{
-        "category": "gas",
-        "match_category": "transportation_car",
-        "match_caveats": "Matching gas to overall car expenses.",
-        "clarification_needed": None,
-        "type": "category",
-        "granularity": "weekly",
-        "start_date": get_date_string(get_start_of_week(today)),
-        "end_date": get_date_string(get_end_of_week(get_after_periods(today, granularity="monthly", count=6))),
-        "amount": 60.0,
-        "title": "Weekly Gas ⛽",
-        "budget_or_goal": "budget",
-    }})
+    # Create first budget: weekly gas
+    success1, result1 = create_budget_or_goal(
+        category="gas",
+        match_category="transportation_car",
+        match_caveats="Matching gas to overall car expenses.",
+        type="category",
+        granularity="weekly",
+        start_date=get_date_string(get_start_of_week(today)),
+        end_date=get_date_string(get_end_of_week(get_after_periods(today, granularity="monthly", count=6))),
+        amount=60.0,
+        title="Weekly Gas ⛽",
+        budget_or_goal="budget"
+    )
+    if not success1:
+        return success1, result1
     
-    goal_dicts.append({{
-        "category": "car insurance",
-        "match_category": "transportation_car",
-        "match_caveats": "Matching car insurance to overall car expenses.",
-        "clarification_needed": None,
-        "type": "category",
-        "granularity": "yearly",
-        "start_date": get_date_string(get_start_of_year(get_after_periods(today, granularity="yearly", count=1))),
-        "end_date": "",
-        "amount": 3500.0,
-        "title": "🚗 Insurance Year Limit",
-        "budget_or_goal": "budget",
-    }})
+    # Create second budget: yearly car insurance
+    success2, result2 = create_budget_or_goal(
+        category="car insurance",
+        match_category="transportation_car",
+        match_caveats="Matching car insurance to overall car expenses.",
+        type="category",
+        granularity="yearly",
+        start_date=get_date_string(get_start_of_year(get_after_periods(today, granularity="yearly", count=1))),
+        end_date="",
+        amount=3500.0,
+        title="🚗 Insurance Year Limit",
+        budget_or_goal="budget"
+    )
+    if not success2:
+        return success2, result2
     
-    return create_budget_or_goal(goal_dicts)
+    return True, f"{{result1}}\\n{{result2}}"
 ```
 
-input: **Last User Request**: remind me to cancel Netflix on August 31st
+input: **Creation Request**: Set a formal savings goal of $5000 for a car purchase, due by December 31st, 2025
+output:
+```python
+def process_input():
+    today = datetime.now()
+    
+    return create_budget_or_goal(
+        category="",
+        match_category="",
+        match_caveats=None,
+        type="save_0",
+        granularity="monthly",
+        start_date=get_date_string(get_start_of_month(today)),
+        end_date="2025-12-31",
+        amount=5000.0,
+        title="Save for Car 🚗",
+        budget_or_goal="goal"
+    )
+```
+
+input: **Creation Request**: Create a reminder to cancel Spotify subscription at the end of this year (December 31st).
+**Input Info from previous skill**:
+--- Last 10 Spotify Spending Transactions ---
+$9.99 was paid to Spotify on 2025-11-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-10-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-09-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-08-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-07-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-06-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-05-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-04-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-03-01 (Chase Total Checking **1563).
+$9.99 was paid to Spotify on 2025-02-01 (Chase Total Checking **1563).
+
+--- Spotify Subscription ---
+name: Spotify
+next_amount: 9.99
+next_likely_payment_date: 2025-12-01
+next_earliest_payment_date: 2025-12-01
+next_latest_payment_date: 2025-12-05
+user_cancelled_date: None
+last_transaction_date: 2025-11-01
+
 output:
 ```python
 def process_input():
     # Validate reminder request
-    accounts_df = get_accounts_df()
-    transactions_df = get_transactions_df()
-    subscriptions_df = get_subscriptions_df()
+    # Note: input_info from previous skill provides Spotify subscription and transaction data.
+    # Based on input_info, Spotify subscription exists with last_transaction_date: 2025-11-01
+    # and transactions show recent Spotify payments, so we can proceed with creating the reminder.
     
-    # Check if we have subscription data to validate Netflix subscription
-    if subscriptions_df.empty and transactions_df.empty:
-        return False, "Unable to create reminder: No subscription or transaction data available. Please ensure your accounts are connected."
+    today = datetime.now().date()
+    messages = []
     
-    # Check if Netflix subscription exists
-    netflix_subscriptions = subscriptions_df[subscriptions_df['name'].str.lower().str.contains('netflix', na=False)]
-    netflix_transactions = transactions_df[transactions_df['name'].str.lower().str.contains('netflix', na=False)]
+    # Extract information from input_info context (visible in prompt)
+    # From input_info: Spotify subscription exists with last_transaction_date: 2025-11-01
+    last_transaction_date = datetime(2025, 11, 1).date()
+    messages.append(f"Last Spotify expense was on {{last_transaction_date.strftime('%B %d, %Y')}}.")
     
-    if netflix_subscriptions.empty and netflix_transactions.empty:
-        return False, "No Netflix subscription or transactions found. Please check if you have an active Netflix subscription."
+    # Set reminder date to end of year (December 31st)
+    reminder_date = datetime(today.year, 12, 31).date()
+    if reminder_date < today:
+        # If the end of the year has passed, set it for next year
+        reminder_date = datetime(today.year + 1, 12, 31).date()
+    
+    messages.append(f"Created reminder to cancel Spotify on {{reminder_date.strftime('%B %d, %Y')}}.")
     
     # Generate should_remind code
     should_remind_code = '''
 def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
     # Check if reminder should trigger now and when to check next
     today = datetime.now().date()
-    target_date = datetime(2024, 8, 31).date()
-    
-    subscriptions_df = get_subscriptions_df()
-    netflix_subscriptions = subscriptions_df[subscriptions_df['name'].str.lower().str.contains('netflix', na=False)]
+    target_date = datetime(2025, 12, 31).date()
     
     if today >= target_date:
-        active_subscriptions = netflix_subscriptions[
-            (netflix_subscriptions['user_cancelled_date'].isna()) |
-            (pd.to_datetime(netflix_subscriptions['user_cancelled_date']).dt.date > today)
-        ]
-        if not active_subscriptions.empty:
-            return f"📅 REMINDER: Today is {{{{target_date.strftime('%B %d')}}}}! Don't forget to cancel your Netflix subscription.", None
-        else:
-            return None, None  # Already cancelled, no more checks needed
+        return f"📅 REMINDER: Today is {{target_date.strftime('%B %d')}}! Don't forget to cancel your Spotify subscription.", None
     else:
         # Not yet time, check again on target date
         return None, target_date
 '''
     
     # Check if reminder should trigger now
-    exec(should_remind_code)
-    trigger_message, next_check_date = should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df)
+    target_date = datetime(2025, 12, 31).date()
+    if today >= target_date:
+        trigger_message = f"📅 REMINDER: Today is {{target_date.strftime('%B %d')}}! Don't forget to cancel your Spotify subscription."
+        next_check_date = None
+    else:
+        trigger_message = None
+        next_check_date = target_date
     
-    # Save should_remind_code for later use (in a real system, this would be persisted to database)
-    # Build response message with reminder description
-    reminder_description = "cancel Netflix on August 31st"
-    result_message = f"Reminder \\"{{{{reminder_description}}}}\\" was successfully created."
+    # Build response message
+    reminder_description = "cancel Spotify subscription at the end of this year (December 31st)"
+    result_message = f"Reminder \\"{{{{reminder_description}}}}\\" was successfully created.\\n\\n" + "\\n".join(messages)
     if trigger_message:
-        result_message += f"\\n\\n{{trigger_message}}"
+        result_message += f"\\n\\n{{{{trigger_message}}}}"
     if next_check_date:
-        result_message += f"\\nNext check scheduled for: {{next_check_date}}"
-    result_message += f"\\n\\nShould remind code saved: {{should_remind_code}}"
+        result_message += f"\\nNext check scheduled for: {{{{next_check_date}}}}"
+    result_message += f"\\n\\nShould remind code saved: {{{{should_remind_code}}}}"
     return True, result_message
 ```
 
-input: **Last User Request**: create a monthly budget of $500 for dining out
-output:
-```python
-def process_input():
-    today = datetime.now()
-    goal_dicts = []
-    
-    goal_dicts.append({{
-        "category": "dining out",
-        "match_category": "meals_dining_out",
-        "match_caveats": None,
-        "clarification_needed": None,
-        "type": "category",
-        "granularity": "monthly",
-        "start_date": get_date_string(get_start_of_month(today)),
-        "end_date": "",
-        "amount": 500.0,
-        "title": "Monthly Dining Out Budget",
-        "budget_or_goal": "budget",
-    }})
-    
-    return create_budget_or_goal(goal_dicts)
-```
-
-input: **Last User Request**: remind me when my checking account balance drops below $1000
+input: **Creation Request**: Create a notification that alerts me immediately when my checking account balance drops below $1000.
+**Input Info from previous skill**:
+--- Checking Account Balances ---
+Asset Account 'Chase Total Checking **1563': Current: $4567, Available: $4567
+Asset Account 'Chase Checking **3052': Current: $1202, Available: $1202
+Total Checking Account Balance: $5769.
 output:
 ```python
 def process_input():
     # Validate reminder request
-    accounts_df = get_accounts_df()
-    
-    # Check if we have account data
-    if accounts_df.empty:
-        return False, "Unable to create reminder: No account data available. Please ensure your accounts are connected."
-    
-    # Check if checking account exists
-    checking_accounts = accounts_df[
-        (accounts_df['account_type'].str.contains('checking', case=False, na=False)) |
-        (accounts_df['name'].str.lower().str.contains('checking', na=False))
-    ]
-    
-    if checking_accounts.empty:
-        return False, "No checking account found. Please specify which account you'd like to monitor, or ensure your checking account is connected."
+    # Note: input_info from previous skill provides checking account balances.
+    # Based on input_info, checking accounts exist (Chase Total Checking and Chase Checking),
+    # so we can proceed with creating the reminder.
     
     # Generate should_remind code
     should_remind_code = '''
@@ -355,46 +379,121 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
 '''
     
     # Check if reminder should trigger now
-    namespace = {{'datetime': datetime, 'timedelta': timedelta, 'pd': pd, 'get_accounts_df': get_accounts_df, 'get_transactions_df': get_transactions_df, 'get_subscriptions_df': get_subscriptions_df}}
-    exec(should_remind_code, namespace)
-    should_remind_func = namespace['should_remind']
-    trigger_message, next_check_date = should_remind_func(get_accounts_df, get_transactions_df, get_subscriptions_df)
+    # Extract checking account balances from input_info and check if any are below threshold
+    # Note: Use balances from input_info (e.g., "Asset Account 'Chase Total Checking **1563': Current: $4567")
+    # Do NOT call get_accounts_df() - use the current balances provided in input_info
+    threshold = 1000.0
+    accounts_below_threshold = []
+    # Extract balances from input_info (derive extraction logic from input_info format shown above)
+    
+    if accounts_below_threshold:
+        trigger_message = f"⚠️ ALERT: Your checking account balance is already below ${{{{threshold:.2f}}}}:\\n"
+        for name, balance in accounts_below_threshold:
+            trigger_message += f"  - {{name}}: ${{{{balance:.2f}}}}\\n"
+        next_check_date = datetime.now().date() + timedelta(days=1)
+    else:
+        trigger_message = None
+        next_check_date = datetime.now().date() + timedelta(days=1)
     
     # Save should_remind_code for later use (in a real system, this would be persisted to database)
     # Build response message with reminder description
     reminder_description = "notify when checking account balance drops below $1000"
     result_message = f"Reminder \\"{{{{reminder_description}}}}\\" was successfully created."
     if trigger_message:
-        result_message += f"\\n\\n{{trigger_message}}"
+        result_message += f"\\n\\n{{{{trigger_message}}}}"
     if next_check_date:
-        result_message += f"\\nNext check scheduled for: {{next_check_date}}"
-    result_message += f"\\n\\nShould remind code saved: {{should_remind_code}}"
+        result_message += f"\\nNext check scheduled for: {{{{next_check_date}}}}"
+    result_message += f"\\n\\nShould remind code saved: {{{{should_remind_code}}}}"
     return True, result_message
 ```
 
-input: **Last User Request**: I want to save $5000 for a car by December 31st, 2025
-output:
+input: **Creation Request**: Notify me immediately whenever a new credit transaction is posted to my payroll account.
+**Input Info from previous skill**:
+--- Account Balances ---
+Depository Accounts:
+Asset Account 'Chase Total Checking **1563': Current: $567, Available: $567
+Asset Account 'Chase Savings **3052': Current: $1202, Available: $1202
+Total Depository Balance: $1769.
+
+--- Recent Income (Last 30 Days) ---
+Recent Income Transactions:
+$1440 was received from CA State Payroll on 2025-11-18 (Chase Total Checking **1563).
+$1340 was received from CA State Payroll on 2025-10-31 (Chase Total Checking **1563).
+Total recent income: earned $2880.
+
 ```python
 def process_input():
-    today = datetime.now()
-    goal_dicts = []
+    # Validate reminder request
+    # Note: input_info from previous skill provides account balances and recent transactions.
+    # Based on input_info, "Chase Total Checking **1563" is the payroll account,
+    # and it exists in the accounts data, so we can proceed with creating the reminder.
     
-    goal_dicts.append({{
-        "category": "",
-        "match_category": "",
-        "match_caveats": None,
-        "clarification_needed": None,
-        "type": "save_0",
-        "granularity": "monthly",
-        "start_date": get_date_string(get_start_of_month(today)),
-        "end_date": "2025-12-31",
-        "amount": 5000.0,
-        "title": "Save for Car 🚗",
-        "budget_or_goal": "goal",
-    }})
+    # Generate should_remind code
+    should_remind_code = '''
+def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
+    today = datetime.now().date()
     
-    return create_budget_or_goal(goal_dicts)
-```
+    transactions_df = get_transactions_df()
+    payroll_account_name = "Chase Total Checking **1563"
+    
+    # Find the account_id for the payroll account
+    accounts_df = get_accounts_df()
+    payroll_account = accounts_df[accounts_df['name'] == payroll_account_name]
+    if payroll_account.empty:
+        return "Payroll account not found.", None
+    payroll_account_id = payroll_account['account_id'].iloc[0]
+    
+    # Get new credit transactions for the payroll account
+    new_transactions = transactions_df[
+        (transactions_df['account_id'] == payroll_account_id) &
+        (transactions_df['amount'] < 0) &  # Credit transactions have negative amounts
+        (transactions_df['datetime'].dt.date == today)
+    ]
+    
+    if not new_transactions.empty:
+        # Format the transaction details into a message
+        message = "💰 New credit transaction(s) posted to your payroll account:\\n"
+        for index, row in new_transactions.iterrows():
+            transaction_date = row['datetime'].strftime('%Y-%m-%d')
+            transaction_name = row['name']
+            transaction_amount = row['amount']
+            message += f"  - Date: {{transaction_date}}, Name: {{transaction_name}}, Amount: ${{abs(transaction_amount):.2f}}\\n"
+        
+        # Check daily for new transactions
+        next_check = datetime.now().date() + timedelta(days=1)
+        return message, next_check
+    else:
+        # No new transactions, check again tomorrow
+        next_check = datetime.now().date() + timedelta(days=1)
+        return None, next_check
+'''
+    
+    # Check if reminder should trigger now
+    # Extract today's transactions from input_info and check if any new credit transactions exist
+    # Note: Use transactions from input_info (e.g., "$1440 was received from CA State Payroll on 2025-11-18")
+    # Do NOT call get_transactions_df() - use the current transactions provided in input_info
+    new_transactions = []
+    new_transactions.append(("2025-11-18", "CA State Payroll", 1440.0))
+    
+    if new_transactions:
+        trigger_message = "💰 New credit transaction(s) posted to your payroll account:\n"
+        for date, name, amount in new_transactions:
+            trigger_message += f"  - Date: {{date}}, Name: {{name}}, Amount: ${{amount:.2f}}\n"
+        next_check_date = datetime.now().date() + timedelta(days=1)
+    else:
+        trigger_message = None
+        next_check_date = datetime.now().date() + timedelta(days=1)
+    
+    # Save should_remind_code for later use (in a real system, this would be persisted to database)
+    # Build response message with reminder description
+    reminder_description = "notify whenever a new credit transaction is posted to payroll account"
+    result_message = f"Reminder \"{{reminder_description}}\" was successfully created."
+    if trigger_message:
+        result_message += f"\\n\\n{{{{trigger_message}}}}"
+    if next_check_date:
+        result_message += f"\\nNext check scheduled for: {{{{next_check_date}}}}"
+    result_message += f"\\n\\nShould remind code saved: {{{{should_remind_code}}}}"
+    return True, result_message
 
 </EXAMPLES>
 
@@ -731,7 +830,7 @@ def _run_test_with_logging(creation_request: str, input_info: str = None, genera
   
   # Construct LLM input
   input_info_text = f"\n\n**Input Info from previous skill**:\n{input_info}" if input_info else ""
-  llm_input = f"""**Last User Request**: {creation_request}{input_info_text}
+  llm_input = f"""{creation_request}{input_info_text}
 
 output:"""
   
@@ -846,6 +945,21 @@ def test_create_savings_goal(generator: CreateBudgetOrGoalOrReminder = None):
   input_info = "Based on your current spending patterns, you can save approximately $800 per month."
   
   return _run_test_with_logging(creation_request, input_info, generator)
+
+
+def test_create_year_end_10k_savings_goal(generator: CreateBudgetOrGoalOrReminder = None):
+  """
+  Test method for creating a specific savings goal named 'Year End $10k Savings'.
+  
+  Args:
+    generator: Optional CreateBudgetOrGoalOrReminder instance. If None, creates a new one.
+    
+  Returns:
+    The generated response string
+  """
+  creation_request = "Create a specific savings goal named 'Year End $10k Savings' to save $10000 by the end of the year"
+  
+  return _run_test_with_logging(creation_request, None, generator)
 
 
 def test_create_ambiguous_budget(generator: CreateBudgetOrGoalOrReminder = None):
@@ -964,20 +1078,25 @@ def main():
   # BUDGET/GOAL TESTS
   # ============================================================================
   
-#   print("Test 1: Creating gas and car insurance budget")
-#   print("-" * 80)
-#   test_create_gas_budget()
-#   print("\n")
+  # print("Test 1: Creating gas and car insurance budget")
+  # print("-" * 80)
+  # test_create_gas_budget()
+  # print("\n")
   
-#   print("Test 2: Creating dining out budget")
-#   print("-" * 80)
-#   test_create_dining_out_budget()
-#   print("\n")
+  # print("Test 2: Creating dining out budget")
+  # print("-" * 80)
+  # test_create_dining_out_budget()
+  # print("\n")
   
 #   print("Test 3: Creating savings goal with input info")
 #   print("-" * 80)
 #   test_create_savings_goal()
 #   print("\n")
+  
+  print("Test 3b: Creating Year End $10k Savings goal")
+  print("-" * 80)
+  test_create_year_end_10k_savings_goal()
+  print("\n")
   
 #   print("Test 4: Creating budget with ambiguous category (requires followup)")
 #   print("-" * 80)
@@ -1018,12 +1137,12 @@ def main():
 #   test_create_refund_reminder()
 #   print("\n")
   
-  print("Test 6: Creating reminder that triggers immediately")
-  print("-" * 80)
-  test_create_immediate_reminder()
-  print("\n")
+  # print("Test 6: Creating reminder that triggers immediately")
+  # print("-" * 80)
+  # test_create_immediate_reminder()
+  # print("\n")
   
-  print("All tests completed!")
+  # print("All tests completed!")
 
 
 if __name__ == "__main__":
