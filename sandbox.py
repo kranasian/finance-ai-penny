@@ -43,6 +43,11 @@ from penny.tool_funcs.date_utils import (
     get_date_string
 )
 from penny.tool_funcs.sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
+# Import planner skill functions
+from penny.tool_funcs.lookup_user_accounts_transactions_income_and_spending_patterns import lookup_user_accounts_transactions_income_and_spending_patterns
+from penny.tool_funcs.create_budget_or_goal_or_reminder import create_budget_or_goal_or_reminder
+from penny.tool_funcs.research_and_strategize_financial_outcomes import research_and_strategize_financial_outcomes
+from penny.tool_funcs.update_transaction_category_or_create_category_rules import update_transaction_category_or_create_category_rules
 
 
 def _write_(obj):
@@ -405,6 +410,33 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   }
   return safe_globals_dict
 
+def _get_safe_globals_planner(user_id, use_full_datetime=False):
+  """Create a safe globals dictionary with planner skill functions"""
+  # Start with the regular safe globals
+  safe_globals_dict = _get_safe_globals(user_id, use_full_datetime)
+  
+  # Add planner skill functions
+  def lookup_wrapper(lookup_request: str, input_info: str = None):
+    return lookup_user_accounts_transactions_income_and_spending_patterns(lookup_request, input_info)
+  
+  def create_budget_wrapper(creation_request: str, input_info: str = None):
+    return create_budget_or_goal_or_reminder(creation_request, input_info)
+  
+  def research_wrapper(strategize_request: str, input_info: str = None):
+    return research_and_strategize_financial_outcomes(strategize_request, input_info)
+  
+  def update_category_wrapper(categorize_request: str, input_info: str = None):
+    return update_transaction_category_or_create_category_rules(categorize_request, input_info)
+  
+  safe_globals_dict.update({
+    "lookup_user_accounts_transactions_income_and_spending_patterns": lookup_wrapper,
+    "create_budget_or_goal_or_reminder": create_budget_wrapper,
+    "research_and_strategize_financial_outcomes": research_wrapper,
+    "update_transaction_category_or_create_category_rules": update_category_wrapper,
+  })
+  
+  return safe_globals_dict
+
 def _check_code_for_full_datetime(code_str: str) -> bool:
   """Check if the code contains datetime.timedelta, datetime.date, or datetime.time"""
   return "datetime.timedelta" in code_str or "datetime.date" in code_str or "datetime.time" in code_str
@@ -577,6 +609,94 @@ def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, di
   sandboxed_code = sandboxed_code.replace('_print_', 'print')
   
   return _run_sandbox_process_input(sandboxed_code, user_id)
+
+
+def _create_restricted_process_input_planner(code_str: str, user_id: int = 1) -> callable:
+  """Compile and create a restricted function from a string for planner code"""
+  # Compile the code with restrictions
+  byte_code = compile_restricted(
+    code_str,
+    filename="<inline>",
+    mode="exec"
+  )
+  # Create namespace for execution
+  safe_locals = {}
+  safe_globals = _get_safe_globals_planner(user_id=user_id, use_full_datetime=_check_code_for_full_datetime(code_str))
+  # Execute the compiled code in restricted environment
+  exec(byte_code, safe_globals, safe_locals)
+  # Return the compiled function
+  return safe_locals["execute_plan"]
+
+
+def _run_sandbox_process_input_planner(code_str: str, user_id: int) -> tuple[bool, str, str, str]:
+  """
+  Run the provided planner code in a restricted sandbox environment
+  Returns (success, message, captured_output, logs)
+  """
+  # Clear any previous captured print output and logs
+  clear_captured_print_output()
+  clear_sandbox_logs()
+  
+  success = None
+  captured_logs = ""
+  try:
+    # Create the restricted function
+    restricted_func = _create_restricted_process_input_planner(code_str, user_id)
+  except Exception as e:
+    captured_output = f"**Compilation Error**: `{str(e)}`\n{traceback.format_exc()}"
+    success = False
+    message = {"error": traceback.format_exc()}
+    
+  # If the function was created successfully, run it
+  if success is None:
+    # Run the function - if it fails, capture logs before exception propagates
+    try:
+      success, message = restricted_func()
+      captured_output = get_captured_print_output()
+    except Exception as e:
+      captured_output = f"**Execution Error**: `{str(e)}`\n{traceback.format_exc()}"
+      success = False
+      message = {"error": traceback.format_exc()}
+  
+    # Get the captured print output and logs
+    captured_logs = get_logs_as_string()
+  
+  # Validate result is a bool
+  if not isinstance(success, bool):
+    raise ValueError(f"Restricted code must return a bool. Type: {type(success)}")
+  
+  if not (isinstance(message, str) or message is None):
+    if isinstance(message, list):
+      message = ""
+    else:
+      raise ValueError(f"Restricted code must return a str. Type: {type(message)}")
+  
+  return success, message, captured_output,captured_logs
+
+
+def execute_planner_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, str, str]:
+  """
+  Extract Python code from generated planner response and execute it in restricted Python sandbox
+  Returns: (success, message, captured_output, logs)
+  """
+  # Extract Python code from the response (look for ```python blocks)
+  code_start = code_str.find("```python")
+  if code_start != -1:
+    code_start += len("```python")
+    code_end = code_str.find("```", code_start)
+    if code_end != -1:
+      sandboxed_code = code_str[code_start:code_end].strip()
+    else:
+      # No closing ``` found, use the entire response as code
+      sandboxed_code = code_str[code_start:].strip()
+  else:
+    # No ```python found, try to use the entire response as code
+    sandboxed_code = code_str.strip()
+  
+  # Preprocess the code to replace _print_ with print (if needed)
+  sandboxed_code = sandboxed_code.replace('_print_', 'print')
+  
+  return _run_sandbox_process_input_planner(sandboxed_code, user_id)
 
 
 # Helper functions for agent code

@@ -1,6 +1,7 @@
 from database import Database
 from flask import Flask, request, jsonify
 from gemini_agent_code_gen import create_gemini_agent_code_gen
+from planner_code_gen import create_planner_code_gen
 from user_seeder import seed_users
 import json
 import logging
@@ -39,6 +40,7 @@ def chat():
     user_message = data.get('message', '')
     username = data.get('username', 'default_user')
     model_name = data.get('model', 'gemini-2.0-flash')
+    mode = data.get('mode', 'code_gen')  # Default to 'code_gen' (Fast mode)
     session_messages = data.get('messages', [])  # Get st.session_state.messages
     
     # Filter messages to only include those sent within the last 30 seconds
@@ -75,13 +77,23 @@ def chat():
       user_id = db.create_user(username, f"{username}@example.com")
       user = db.get_user(username)
 
-    # Use Gemini agent for code generation
-    gemini_agent_code_gen = create_gemini_agent_code_gen(model_name)
-    response_data = gemini_agent_code_gen.generate_response(
-      recent_messages, 
-      timing_data,
-      user['id']
-    )
+    # Route to appropriate code generator based on mode
+    if mode == 'planner':
+      # Use Planner mode
+      planner_agent = create_planner_code_gen(model_name)
+      response_data = planner_agent.generate_response(
+        recent_messages, 
+        timing_data,
+        user['id']
+      )
+    else:
+      # Use Fast mode (code_gen) - default
+      gemini_agent_code_gen = create_gemini_agent_code_gen(model_name)
+      response_data = gemini_agent_code_gen.generate_response(
+        recent_messages, 
+        timing_data,
+        user['id']
+      )
     
     # Calculate timing
     end_time = time.time()

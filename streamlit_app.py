@@ -15,7 +15,7 @@ st.set_page_config(
 # Flask backend URL
 FLASK_URL = "http://localhost:5001"
 
-def send_message_to_backend(message, username="default_user", mode="function_calling", model="gemini-2.0-flash", messages=None):
+def send_message_to_backend(message, username="default_user", mode="code_gen", model="gemini-2.0-flash", messages=None):
   """Send message to Flask backend"""
   try:
     # Include session messages if provided
@@ -249,10 +249,10 @@ def main():
     st.session_state.messages = []
   if "username" not in st.session_state:
     st.session_state.username = "EmptyUser"  # Default to first seeded user
-  
-  # Set AI Mode to Proposed option (Code Gen: Gemini Flash Lite Latest)
-  st.session_state.current_mode = "code_gen"
-  st.session_state.current_model = "gemini-flash-lite-latest"
+  if "current_mode" not in st.session_state:
+    st.session_state.current_mode = "code_gen"  # Default to Fast mode
+  if "current_model" not in st.session_state:
+    st.session_state.current_model = "gemini-flash-lite-latest"
 
   
   # Render the chat interface
@@ -275,6 +275,30 @@ def render_chat_interface():
     # Refresh UI button
     if st.button("🔄 Refresh UI", help="Reload the entire Streamlit app"):
       st.rerun()
+    
+    st.markdown("---")
+    st.header("Mode Selection")
+    
+    # Mode selector
+    mode_options = ["Fast", "Planner"]
+    mode_descriptions = {
+      "Fast": "Uses direct code generation (default)",
+      "Planner": "Uses planner-based approach with skill functions"
+    }
+    selected_mode_display = st.radio(
+      "Select Mode",
+      options=mode_options,
+      index=0 if st.session_state.current_mode == "code_gen" else 1,
+      help="Choose between Fast (direct code generation) or Planner (skill-based planning)"
+    )
+    
+    # Map display name to internal mode
+    if selected_mode_display == "Fast":
+      st.session_state.current_mode = "code_gen"
+    else:
+      st.session_state.current_mode = "planner"
+    
+    st.caption(mode_descriptions[selected_mode_display])
     
     st.markdown("---")
     st.header("Set Context")
