@@ -621,11 +621,12 @@ def main():
   # Option 3: Run a single test by passing test data directly
   run_test({
     "name": "custom_test",
-    # "last_user_request": "Alert me when my dining out spending exceeds $300 this week.",
+    "last_user_request": "Alert me when my dining out spending exceeds $300 this week.",
     # "last_user_request": "Remind me to pay my bills tomorrow.",
+    # "last_user_request": "Remind me to pay my streaming subscriptions tomorrow.",
     # "last_user_request": "remind me to pay my insurance every 10th of the month",
     # "last_user_request": "Notify me when new credits are posted to my payroll account.",
-    "last_user_request": "budget $60 for gas every week for the next 6 months and a yearly car insurance cost of 3500 starting next year",
+    # "last_user_request": "budget $60 for gas every week for the next 6 months and a yearly car insurance cost of 3500 starting next year",
     "previous_conversation": ""
   })
   

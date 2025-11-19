@@ -26,40 +26,40 @@ def lookup_user_accounts_transactions_income_and_spending_patterns(
         # General format
         sample_output = """--- Account Balances ---
 Depository Accounts:
-Asset Account 'Chase Total Checking **1563': Current: $567, Available: $567
-Asset Account 'Chase Savings **3052': Current: $1202, Available: $1202
+- Asset Account 'Chase Total Checking **1563': Current: $567, Available: $567
+- Asset Account 'Chase Savings **3052': Current: $1202, Available: $1202
 Total Depository Balance: $1769.
 
 --- Recent Income (Last 30 Days) ---
 Recent Income Transactions:
-$1440 was received from CA State Payroll on 2025-11-18 (Chase Total Checking **1563).
-$2 was received from Savings Interest on 2025-11-01 (Chase Savings **3052).
-$1340 was received from CA State Payroll on 2025-10-31 (Chase Total Checking **1563).
+- $1440 was received from CA State Payroll on 2025-11-18 (Chase Total Checking **1563).
+- $2 was received from Savings Interest on 2025-11-01 (Chase Savings **3052).
+- $1340 was received from CA State Payroll on 2025-10-31 (Chase Total Checking **1563).
 Total recent income: earned $2882.
 
 --- Recent Spending Patterns (Last 30 Days) ---
 Recent Spending Transactions:
-$2311 was paid to Credit Card Payment on 2025-11-17 (Chase Total Checking **1563).
-$368 was paid to Texas Roadhouse on 2025-11-17 (Chase Total Checking **1563).
-$150 was paid to Postmates on 2025-11-17 (Chase Total Checking **1563).
-$56 was paid to Costco Gas on 2025-10-17 (Chase Total Checking **1563).
-$150 was paid to Postmates on 2025-10-05 (Chase Total Checking **1563).
+- $2311 was paid to Credit Card Payment on 2025-11-17 (Chase Total Checking **1563).
+- $368 was paid to Texas Roadhouse on 2025-11-17 (Chase Total Checking **1563).
+- $150 was paid to Geico on 2025-11-17 (Chase Total Checking **1563).
+- $56 was paid to Costco Gas on 2025-10-17 (Chase Total Checking **1563).
+- $150 was paid to Target on 2025-10-05 (Chase Total Checking **1563).
 Total recent spending: spent $2435.
 """
     else:
         # Spotify-specific format
         sample_output = """
 --- Last 10 Spotify Spending Transactions ---
-$9.99 was paid to Spotify on 2025-11-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-10-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-09-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-08-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-07-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-06-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-05-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-04-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-03-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-02-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-11-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-10-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-09-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-08-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-07-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-06-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-05-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-04-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-03-01 (Chase Total Checking **1563).
+- $9.99 was paid to Spotify on 2025-02-01 (Chase Total Checking **1563).
 
 --- Spotify Subscription ---
 name: Spotify
