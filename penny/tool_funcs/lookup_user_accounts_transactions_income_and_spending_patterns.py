@@ -44,22 +44,19 @@ Recent Spending Transactions:
 - $150 was paid to Geico on 2025-11-17 (Chase Total Checking **1563).
 - $56 was paid to Costco Gas on 2025-10-17 (Chase Total Checking **1563).
 - $150 was paid to Target on 2025-10-05 (Chase Total Checking **1563).
+- $49.99 was paid to 24 Hour Fitness on 2025-11-15 (Chase Savings **3052).
 Total recent spending: spent $2435.
+
+--- Gym Membership Subscriptions ---
+24 Hour Fitness: next_amount: $49.99, next payment: 2025-12-15, user cancelled date: None, last transaction date: 2025-11-15
 """
     else:
         # Spotify-specific format
         sample_output = """
---- Last 10 Spotify Spending Transactions ---
+--- Last 3 Spotify Spending Transactions ---
 - $9.99 was paid to Spotify on 2025-11-01 (Chase Total Checking **1563).
 - $9.99 was paid to Spotify on 2025-10-01 (Chase Total Checking **1563).
 - $9.99 was paid to Spotify on 2025-09-01 (Chase Total Checking **1563).
-- $9.99 was paid to Spotify on 2025-08-01 (Chase Total Checking **1563).
-- $9.99 was paid to Spotify on 2025-07-01 (Chase Total Checking **1563).
-- $9.99 was paid to Spotify on 2025-06-01 (Chase Total Checking **1563).
-- $9.99 was paid to Spotify on 2025-05-01 (Chase Total Checking **1563).
-- $9.99 was paid to Spotify on 2025-04-01 (Chase Total Checking **1563).
-- $9.99 was paid to Spotify on 2025-03-01 (Chase Total Checking **1563).
-- $9.99 was paid to Spotify on 2025-02-01 (Chase Total Checking **1563).
 
 --- Spotify Subscription ---
 name: Spotify

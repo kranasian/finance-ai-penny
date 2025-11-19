@@ -18,6 +18,7 @@ if parent_dir not in sys.path:
 # Import from same package (tool_funcs) - use absolute imports to work both as module and when run directly
 from penny.tool_funcs.create_budget_or_goal import create_budget_or_goal, VALID_GRANULARITIES, VALID_GOAL_TYPES
 from penny.tool_funcs.date_utils import get_start_of_week, get_end_of_week, get_start_of_month, get_end_of_month, get_start_of_year, get_end_of_year, get_after_periods, get_date_string
+from penny.tool_funcs.create_reminder import create_reminder
 from database import Database
 
 # Load environment variables
@@ -28,6 +29,7 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budget
 ## Your Tasks
 
 1. Understand the **Creation Request** and the provided information in **Input Info from previous skill**.
+   - **IMPORTANT**: The **Input Info from previous skill** is provided in the prompt text. You must extract and use information from this text directly in your code. Do NOT try to access it as a variable - it is not available as a variable in `process_input()`. Instead, parse the information from the prompt text and hardcode the relevant values in your code.
 2. Determine whether the user wants to create a **budget/goal** or a **reminder** based on the request.
 3. For **budget/goal** requests:
    - Extract the goal parameters from the user's request.
@@ -41,20 +43,21 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budget
    - Validation should check:
      - **Presence**: Both "what" and "when" must be provided (not empty or None)
      - **Validity**: 
-       - What must be valid based on **Input Info from previous skill**: If the what references a specific subscription, transaction, or account, verify that it exists in the input_info.
-       - What must be specific and actionable. Add all necessary information from **Input Info from previous skill** to the what to make it more specific and actionable.
+       - What must be valid based on **Input Info from previous skill**: If the what references a specific subscription, transaction, or account, verify that it exists in the **Input Info from previous skill** text provided in the prompt. Extract the relevant information from the prompt text and use it in your validation logic.
+       - What must be specific and actionable. Extract all necessary information from **Input Info from previous skill** text and incorporate it into the what to make it more specific and actionable.
        - When must be specific and meaningful
-   - If validation fails (missing, invalid, or not found in input_info for "what" or "when" information), return `(False, clarification_message)` with a clear message asking for the missing, invalid, or clarifying the not found information.
-   - If validation passes, extract "what" and "when" from the **Creation Request** and **Input Info from previous skill** and call `create_reminder(what=what, when=when)`, then return `(True, result)` where `result` is the string returned by `create_reminder`.
-   - **IMPORTANT**: When constructing the `what` parameter, incorporate all relevant information from **Input Info from previous skill** (e.g., account names, current balances, last transaction dates, subscription details, transaction history) into the what string. This makes the what self-contained and eliminates the need for `create_reminder` to look up transactions, accounts, or subscriptions.
+   - If validation fails (missing, invalid, or not found in **Input Info from previous skill** for "what" or "when" information), return `(False, clarification_message)` with a clear message asking for the missing, invalid, or clarifying the not found information.
+   - If validation passes, extract "what" and "when" from the **Creation Request** and **Input Info from previous skill** text and call `create_reminder(what=what, when=when)`, which returns `(success, message)`. Then return `(success, message)` where `success` is the boolean from `create_reminder` and `message` is the string from `create_reminder`.
+   - **IMPORTANT**: When constructing the `what` parameter, extract and incorporate all relevant information from **Input Info from previous skill** text (e.g., account names, current balances, last transaction dates, subscription details, transaction history) into the what string. This makes the what self-contained and eliminates the need for `create_reminder` to look up transactions, accounts, or subscriptions.
 
 ## Your Output
 
 1. Write a function `process_input` that takes no arguments and returns a tuple:
    - The first element is a boolean indicating success or failure.
    - The second element is a string containing the output information (what was created or error message).
-2. Assume `import datetime` and `import pandas as pd` are already included. Do not include import statements in your code.
-3. Only output the Python code that implements the `process_input` function.
+2. **IMPORTANT**: The **Input Info from previous skill** is provided in the prompt text. Extract the relevant information from the prompt text and hardcode it directly in your code. Do NOT try to access it as a variable - it is not available as a variable in `process_input()`.
+3. Assume `import datetime` and `import pandas as pd` are already included. Do not include import statements in your code.
+4. Only output the Python code that implements the `process_input` function.
 
 <IMPLEMENTED_FUNCTIONS>
 
@@ -85,46 +88,16 @@ These functions are already implemented:
       - Second element (str): Success message describing what was created, or error/clarification message
   - Use helper functions: `get_start_of_week(date: datetime) -> datetime`, `get_end_of_week(date: datetime) -> datetime`, `get_start_of_month(date: datetime) -> datetime`, `get_end_of_month(date: datetime) -> datetime`, `get_start_of_year(date: datetime) -> datetime`, `get_end_of_year(date: datetime) -> datetime`, `get_after_periods(date: datetime, granularity: str, count: int) -> datetime`, `get_date_string(date: datetime) -> str`.
 
-- `get_accounts_df() -> pd.DataFrame`
-  - Retrieves Accounts dataframe with columns:
-    - `account_id`: unique numeric identifier
-    - `name`: Account name containing bank name, account name and last 4 digits
-    - `account_type`: One of: deposit_savings, deposit_money_market, deposit_checking, credit_card, loan_home_equity, loan_line_of_credit, loan_mortgage, loan_auto
-    - `balance_available`: amount withdrawable for deposit accounts
-    - `balance_current`: loaned amount in loans/credit accounts, usable amount in savings/checking
-    - `balance_limit`: credit limit of credit-type accounts
-  - Use this function to retrieve account data for validation and should_remind checks in reminder requests.
-
-- `get_transactions_df() -> pd.DataFrame`
-  - Retrieves Transactions dataframe with columns:
-    - `account_id`: account where this transaction is
-    - `transaction_id`: unique numeric identifier
-    - `datetime`: inflow or spending date
-    - `name`: establishment or service name
-    - `amount`: inflow amount will be negative, outflow/spending will be positive
-    - `category`: transaction category from Official Category List
-    - `output_category`: category used for display
-  - Use this function to retrieve transaction data for validation and should_remind checks in reminder requests.
-
-- `get_subscriptions_df() -> pd.DataFrame`
-  - Retrieves Subscriptions dataframe with columns:
-    - `name`: establishment or service name with the subscription
-    - `next_amount`: likely upcoming amount
-    - `next_likely_payment_date`: most likely upcoming payment date
-    - `next_earliest_payment_date`: earliest possible payment date
-    - `next_latest_payment_date`: latest possible payment date
-    - `user_cancelled_date`: date when user cancelled subscription
-    - `last_transaction_date`: date of the most recent transaction for this subscription
-  - Use this function to retrieve subscription data for validation in reminder requests.
-
-- `create_reminder(what: str, when: str) -> str`
+- `create_reminder(what: str, when: str) -> Tuple[bool, str]`
   - Creates a reminder to monitor and notify the user when specific criteria are met.
-  - **Method Signature**: `create_reminder(what: str, when: str) -> str`
+  - **Method Signature**: `create_reminder(what: str, when: str) -> Tuple[bool, str]`
   - **Parameters**:
     - `what`: (string) What to be reminded about: transaction coming in, subscription getting refunded, account balances, or a clear general task. **IMPORTANT**: Include all relevant information from **Input Info from previous skill** in the what string (e.g., account names, current balances, last transaction dates, subscription details) so that `create_reminder` has all necessary context without needing to look up transactions/accounts/subscriptions.
     - `when`: (string) When the reminder will be relevant: date, condition, or frequency (e.g., "at the end of this year (December 31st)", "immediately when condition is met", "whenever it happens").
-  - **Returns**: (string) A natural language string confirming the creation of the reminder, including what will be monitored and when notifications will be sent. May request clarification if the reminder request is ambiguous.
-  - **Usage**: Call this function after validating that both "what" and "when" are present. Extract "what" and "when" from the **Creation Request** and **Input Info from previous skill** and pass them as separate parameters.
+  - **Returns**: `Tuple[bool, str]` where:
+    - First element (bool): `True` if the reminder was created successfully, `False` if an error occurred
+    - Second element (str): A natural language string confirming the creation of the reminder, including what will be monitored and when notifications will be sent. If `False`, contains an error message.
+  - **Usage**: Call this function after validating that both "what" and "when" are present. Extract "what" and "when" from the **Creation Request** and **Input Info from previous skill** and pass them as separate parameters. The function returns `(success, message)` where `success` indicates whether the reminder was created successfully.
 
 </IMPLEMENTED_FUNCTIONS>
 
@@ -238,51 +211,22 @@ def process_input():
 
 input: **Creation Request**: Create a reminder to cancel Spotify subscription at the end of this year (December 31st).
 **Input Info from previous skill**:
---- Last 10 Spotify Spending Transactions ---
+--- Last Spotify Spending Transaction ---
 $9.99 was paid to Spotify on 2025-11-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-10-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-09-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-08-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-07-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-06-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-05-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-04-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-03-01 (Chase Total Checking **1563).
-$9.99 was paid to Spotify on 2025-02-01 (Chase Total Checking **1563).
 
 --- Spotify Subscription ---
-name: Spotify
-next_amount: 9.99
-next_likely_payment_date: 2025-12-01
-next_earliest_payment_date: 2025-12-01
-next_latest_payment_date: 2025-12-05
-user_cancelled_date: None
-last_transaction_date: 2025-11-01
+Spotify: next_amount: $9.99, next payment: 2025-12-01, user cancelled date: None, last transaction date: 2025-11-01
 
 output:
 ```python
 def process_input():
-    # Validate reminder request
-    # Check if "what" is provided: cancel Spotify subscription
-    # Check if "when" is provided: end of this year (December 31st)
-    creation_request = "Create a reminder to cancel Spotify subscription at the end of this year (December 31st)"
-    # Note: input_info from previous skill provides Spotify subscription and transaction data
-    # Based on input_info, Spotify subscription exists with last_transaction_date: 2025-11-01
-    # and transactions show recent Spotify payments, so we can proceed with creating the reminder.
-    
-    # Validate what against input_info
-    # What references "Spotify subscription" - check if Spotify exists in input_info
-    # From input_info: Spotify subscription exists, so what is valid
-    
-    # Both "what" and "when" are present and valid, so the request is valid
-    # Extract "what" and "when" from the creation_request and input_info
-    # Incorporate useful data from input_info into what to make it self-contained
-    what = "cancel Spotify subscription (last transaction: 2025-11-01, next payment: 2025-12-01, amount: $9.99)"
-    when = "at the end of this year (December 31st)"
-    
-    # Call create_reminder with what and when parameters
-    result = create_reminder(what=what, when=when)
-    return True, result
+    # Extract information from Input Info from previous skill text:
+    # - Last transaction: 2025-11-01
+    # - Next payment: 2025-12-01
+    # - Amount: $9.99
+    return create_reminder(
+        what="cancel Spotify subscription (last transaction: 2025-11-01, next payment: 2025-12-01, amount: $9.99)",
+        when="at the end of this year (December 31st)")
 ```
 
 input: **Creation Request**: Create a notification that alerts me immediately when my checking account balance drops below $1000.
@@ -294,27 +238,12 @@ Total Checking Account Balance: $5769.
 output:
 ```python
 def process_input():
-    # Validate reminder request
-    # Check if "what" is provided: checking account balance drops below $1000
-    # Check if "when" is provided: immediately (when condition is met)
-    creation_request = "Create a notification that alerts me immediately when my checking account balance drops below $1000"
-    # Note: input_info from previous skill provides checking account balances
-    # Based on input_info, checking accounts exist (Chase Total Checking and Chase Checking),
-    # so we can proceed with creating the reminder.
-    
-    # Validate what against input_info
-    # What references "checking account" - check if checking accounts exist in input_info
-    # From input_info: checking accounts exist, so what is valid
-    
-    # Both "what" and "when" are present and valid, so the request is valid
-    # Extract "what" and "when" from the creation_request and input_info
-    # Incorporate useful data from input_info into what to make it self-contained
-    what = "checking account balance drops below $1000 (accounts: Chase Total Checking **1563 current: $4567, Chase Checking **3052 current: $1202)"
-    when = "immediately when condition is met"
-    
-    # Call create_reminder with what and when parameters
-    result = create_reminder(what=what, when=when)
-    return True, result
+    # Extract information from Input Info from previous skill text:
+    # - Chase Total Checking **1563: Current: $4567
+    # - Chase Checking **3052: Current: $1202
+    return create_reminder(
+        what="checking account balance drops below $1000 (accounts: Chase Total Checking **1563 current: $4567, Chase Checking **3052 current: $1202)",
+        when="immediately when condition is met")
 ```
 
 input: **Creation Request**: Notify me immediately whenever a new credit transaction is posted to my payroll account.
@@ -333,32 +262,18 @@ Total recent income: earned $2880.
 
 ```python
 def process_input():
-    # Validate reminder request
-    # Check if "what" is provided: new credit transaction posted to payroll account
-    # Check if "when" is provided: immediately (whenever it happens)
-    creation_request = "Notify me immediately whenever a new credit transaction is posted to my payroll account"
-    
-    # Both "what" and "when" are present, so the request is valid
-    # Extract "what" and "when" from the creation_request and input_info
-    # Incorporate useful data from input_info into what to make it self-contained
-    what = "new credit transaction posted to payroll account (account: Chase Total Checking **1563, recent transactions: CA State Payroll $1440 on 2025-11-18, $1440 on 2025-11-18)"
-    when = "immediately whenever it happens"
-    
-    # Call create_reminder with what and when parameters
-    result = create_reminder(what=what, when=when)
-    return True, result
+    # Extract information from Input Info from previous skill text:
+    # - Account: Chase Total Checking **1563
+    # - Recent transactions: CA State Payroll $1440 on 2025-11-18, $1340 on 2025-10-31
+    return create_reminder(
+        what="new credit transaction posted to payroll account (account: Chase Total Checking **1563, recent transactions: CA State Payroll $1440 on 2025-11-18, $1340 on 2025-10-31)",
+        when="immediately whenever it happens")
 ```
 
 input: **Creation Request**: Create a reminder.
 output:
 ```python
 def process_input():
-    # Validate reminder request
-    # Check if "what" is provided: not specified
-    # Check if "when" is provided: not specified
-    creation_request = "Create a reminder"
-    
-    # Both "what" and "when" are missing, so the request is invalid
     return False, "I need more information to create a reminder. Please specify: (1) What should I remind you about? (2) When should I remind you?"
 ```
 
@@ -366,49 +281,20 @@ input: **Creation Request**: Remind me about something later.
 output:
 ```python
 def process_input():
-    # Validate reminder request
-    creation_request = "Remind me about something later"
-    
-    # Check presence and validity of what
-    # What is "something" - this is too vague and not actionable
-    what = "something"
-    if not what or what.strip() == "" or what.lower() in ["something", "stuff", "things", "that"]:
-        return False, "I need a specific what for the reminder. What exactly should I remind you about? (e.g., 'cancel Netflix subscription', 'checking account balance drops below $1000')"
-    
-    # Check presence and validity of when
-    # When is "later" - this is too vague and not meaningful
-    when = "later"
-    if not when or when.strip() == "" or when.lower() in ["later", "sometime", "eventually", "maybe"]:
-        return False, "I need a specific when for the reminder. When should I remind you? (e.g., 'at the end of this year (December 31st)', 'immediately when condition is met', 'whenever it happens')"
-    
-    # Both what and when are invalid
     return False, "I need more specific information to create a reminder. Please specify: (1) What exactly should I remind you about? (2) When specifically should I remind you?"
 ```
 
 input: **Creation Request**: Create a reminder to cancel Netflix subscription at the end of this year.
 **Input Info from previous skill**:
---- Last 10 Spending Transactions ---
-$9.99 was paid to Spotify on 2025-11-01 (Chase Total Checking **1563).
-$15.99 was paid to Hulu on 2025-11-01 (Chase Total Checking **1563).
+--- Last 10 Netflix Spending Transactions ---
+None
 
---- Subscriptions ---
-name: Spotify
-next_amount: 9.99
-name: Hulu
-next_amount: 15.99
+--- Nextflix Subscription ---
+None
 
 output:
 ```python
 def process_input():
-    # Validate reminder request
-    creation_request = "Create a reminder to cancel Netflix subscription at the end of this year"
-    # Note: input_info from previous skill provides spending transactions and subscriptions
-    # Based on input_info, I found Spotify and Hulu subscriptions, but no Netflix.
-    
-    # Validate what against input_info
-    # What references "Netflix subscription" - check if Netflix exists in input_info
-    # From input_info: Netflix subscription or transactions not found (only Spotify and Hulu found)
-    # What is invalid because Netflix doesn't exist in input_info
     return False, "Cannot create reminder: Netflix subscription or transactions not found in your account data. I found Spotify and Hulu subscriptions, but no Netflix. Please verify the service name or check if you have an active Netflix subscription."
 ```
 
@@ -693,15 +579,6 @@ def create_budget_or_goal_or_reminder(
           return df[available_cols]
         except Exception:
           return pd.DataFrame(columns=['name', 'next_amount', 'next_likely_payment_date', 'next_earliest_payment_date', 'next_latest_payment_date', 'user_cancelled_date', 'last_transaction_date'])
-      
-      # Import create_reminder function
-      try:
-        from penny.tool_funcs.create_reminder import create_reminder
-      except ImportError:
-        # Fallback: create a dummy implementation if import fails
-        def create_reminder(what: str, when: str) -> str:
-          """Dummy implementation of create_reminder"""
-          return f"Reminder created: {what} {when}"
       
       # Create a namespace for execution with available functions
       namespace = {
@@ -1020,10 +897,10 @@ def main():
 #   test_create_savings_goal()
 #   print("\n")
   
-  print("Test 3b: Creating Year End $10k Savings goal")
-  print("-" * 80)
-  test_create_year_end_10k_savings_goal()
-  print("\n")
+  # print("Test 3b: Creating Year End $10k Savings goal")
+  # print("-" * 80)
+  # test_create_year_end_10k_savings_goal()
+  # print("\n")
   
 #   print("Test 4: Creating budget with ambiguous category (requires followup)")
 #   print("-" * 80)
@@ -1049,15 +926,15 @@ def main():
 #   test_create_account_balance_reminder()
 #   print("\n")
   
-#   print("Test 3: Creating transaction reminder")
-#   print("-" * 80)
-#   test_create_transaction_reminder()
-#   print("\n")
+  # print("Test 3: Creating transaction reminder")
+  # print("-" * 80)
+  # test_create_transaction_reminder()
+  # print("\n")
   
-#   print("Test 4: Creating subscription renewal reminder")
-#   print("-" * 80)
-#   test_create_subscription_reminder()
-#   print("\n")
+  print("Test 4: Creating subscription renewal reminder")
+  print("-" * 80)
+  test_create_subscription_reminder()
+  print("\n")
   
 #   print("Test 5: Creating refund reminder")
 #   print("-" * 80)
