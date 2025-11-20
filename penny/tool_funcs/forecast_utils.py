@@ -606,6 +606,9 @@ def utter_income_forecast_amount(amount: float, template: str) -> str:
   # Create combined verb_and_amount string
   verb_and_amount_str = f"{verb} {amount_str}"
   
+  # Create combined verb_and_total_amount string
+  verb_and_total_amount_str = f"{verb} {amount_str} total"
+
   # Create combined amount_and_direction string
   amount_and_direction_str = f"{amount_str} {direction_display}".strip()
   
@@ -614,6 +617,7 @@ def utter_income_forecast_amount(amount: float, template: str) -> str:
     'direction': direction_display,
     'verb': verb,
     'verb_and_amount': verb_and_amount_str,
+    'verb_and_total_amount': verb_and_total_amount_str,
     'amount_and_direction': amount_and_direction_str,
   }
   
