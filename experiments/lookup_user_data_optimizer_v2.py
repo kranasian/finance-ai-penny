@@ -32,14 +32,14 @@ Today: |TODAY_DATE|.
 - `account_names_and_balances(df, template) -> tuple[str, list]`: Format account list.
 - `utter_account_totals(df, template) -> str`: Sum balances and format.
 - `utter_net_worth(total_assets, total_liabilities, template) -> str`: Format net worth. Placeholders: {net_worth_state_with_amount}, {total_asset_state_with_amount}, {total_liability_state_with_amount}
-- `retrieve_income_transactions() -> pd.DataFrame`: Cols: date, transaction_name, amount, category
-- `retrieve_spending_transactions() -> pd.DataFrame`: Cols: date, transaction_name, amount, category
+- `retrieve_income_transactions() -> pd.DataFrame`: Past income. Cols: date, transaction_name, amount, category
+- `retrieve_spending_transactions() -> pd.DataFrame`: Past spending. Cols: date, transaction_name, amount, category
 - `transaction_names_and_amounts(df, template) -> tuple[str, list]`: List transactions. Placeholder: {amount_and_direction}
 - `utter_spending_transaction_total(df, template) -> str`: Sum spending. Placeholder: {verb_and_total_amount}
 - `utter_income_transaction_total(df, template) -> str`: Sum income. Placeholder: {verb_and_total_amount}
 - `compare_spending(df, template, metadata=None) -> tuple[str, dict]`: Compare 2 groups. Placeholders: {difference}, {more_label}, {more_amount}, {less_label}, {less_amount}
-- `retrieve_spending_forecasts(granularity='monthly') -> pd.DataFrame`: Cols: start_date, forecasted_amount, category
-- `retrieve_income_forecasts(granularity='monthly') -> pd.DataFrame`: Cols: start_date, forecasted_amount, category
+- `retrieve_spending_forecasts(granularity='monthly') -> pd.DataFrame`: Future spending. Cols: start_date, forecasted_amount, category
+- `retrieve_income_forecasts(granularity='monthly') -> pd.DataFrame`: Future income. Cols: start_date, forecasted_amount, category
 - `forecast_dates_and_amount(df, template) -> tuple[str, list]`: List forecasts.
 - `utter_income_forecast_totals(df, template) -> str`: Sum income forecasts. Placeholders: {verb_and_total_amount}
 - `utter_spending_forecast_totals(df, template) -> str`: Sum spending forecasts. Placeholders: {verb_and_total_amount}
@@ -71,46 +71,19 @@ deposit_savings, deposit_money_market, deposit_checking, credit_card, loan_home_
 
 <CATEGORY>
 
-- `income` for salary, bonuses, interest, side hussles and business. Includes:
-    - `income_salary` for regular paychecks and bonuses.
-    - `income_sidegig` for side hussles like Uber, Etsy and other gigs.
-    - `income_business` for business income and spending.
-    - `income_interest` for interest income from savings or investments.
-- `meals` for all types of food spending includes groceries, dining-out and delivered food.
-    - `meals_groceries` for supermarkets and other unprepared food marketplaces.
-    - `meals_dining_out` for food prepared outside the home like restaurants and takeout.
-    - `meals_delivered_food` for prepared food delivered to the doorstep like DoorDash.
-- `leisure` for all relaxation or recreation and travel activities.
-    - `leisure_entertainment` for movies, concerts, cable and streaming services.
-    - `leisure_travel`for flights, hotels, and other travel expenses.
-- `bills` for essential payments for services and recurring costs.
-    - `bills_connectivity` for internet and phone bills.
-    - `bills_insurance` for life insurance and other insurance payments.
-    - `bills_tax`  for income, state tax and other payments.
-    - `bills_service_fees` for payments for services rendered like professional fees or fees for a product.
-- `shelter` for all housing-related expenses including rent, mortgage, property taxes and utilities.
-    - `shelter_home` for rent, mortgage, property taxes.
-    - `shelter_utilities` for electricity, water, gas and trash utility bills.
-    - `shelter_upkeep` for maintenance and repair and improvement costs for the home.
-- `education` for all learning spending including kids after care and activities.
-    - `education_kids_activities` for after school activities, sports and camps.
-    - `education_tuition` for school tuition, daycare and other education fees.
-- `shopping` for discretionary spending on clothes, electronics, home goods, etc.
-    - `shopping_clothing` for clothing, shoes, accessories and other wearable items.
-    - `shopping_gadgets` for electronics, gadgets, computers, software and other tech items.
-    - `shopping_kids` for kids clothing, toys, school supplies and other kid-related items.
-    - `shopping_pets` for pet food, toys, grooming, vet bills and other pet-related items.
-- `transportation` for public transportation, car payments, gas and maintenance and car insurance.
-    - `transportation_public` for bus, train, subway and other public transportation.
-    - `transportation_car` for car payments, gas, maintenance and car insurance.
-- `health` for medical bills, pharmacy spending, insurance, gym memberships and personal care.
-    - `health_medical_pharmacy` for doctor visits, hospital, meds and health insurance costs.
-    - `health_gym_wellness` for gym memberships, personal training and spa services.
-    - `health_personal_care` for haircuts, beauty products and beuaty services.
-- `donations_gifts` for charitable donations, gifts and other giving to friends and family.
-- `uncategorized` for explicitly tagged as not yet categorized or unknown.
-- `transfers` for moving money between accounts or paying off credit cards or loans.
-- `miscellaneous` for explicitly tagged as miscellaneous.
+- `income`: salary, bonuses, interest, side hussles. (`income_salary`, `income_sidegig`, `income_business`, `income_interest`)
+- `meals`: food spending. (`meals_groceries`, `meals_dining_out`, `meals_delivered_food`)
+- `leisure`: recreation/travel. (`leisure_entertainment`, `leisure_travel`)
+- `bills`: recurring costs. (`bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`)
+- `shelter`: housing. (`shelter_home`, `shelter_utilities`, `shelter_upkeep`)
+- `education`: learning/kids. (`education_kids_activities`, `education_tuition`)
+- `shopping`: discretionary. (`shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `shopping_pets`)
+- `transportation`: car/public. (`transportation_public`, `transportation_car`)
+- `health`: medical/wellness. (`health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`)
+- `donations_gifts`: charity/gifts.
+- `uncategorized`: unknown.
+- `transfers`: internal movements.
+- `miscellaneous`: other.
 
 </CATEGORY>
 
@@ -137,28 +110,7 @@ def process_input():
     return True, meta
 ```
 
-input: User: Compare dining out vs groceries spending last month.
-output:
-```python
-def process_input():
-    df = retrieve_spending_transactions()
-    meta = {}
-    if df.empty: print("No spending."); return True, meta
-
-    today = datetime.now()
-    start = get_start_of_month(get_after_periods(get_start_of_month(today), "monthly", -1))
-    end = get_end_of_month(start)
-    
-    df = df[(df['date'] >= start) & (df['date'] <= end)]
-    df = df[df['category'].isin(['meals_dining_out', 'meals_groceries'])]
-    if df.empty: print("No relevant spending."); return True, meta
-        
-    res, meta = compare_spending(df, "Spent ${difference} more on {more_label} (${more_amount}) than {less_label} (${less_amount}).")
-    print(res)
-    return True, meta
-```
-
-input: User: Can I afford a $500 trip next month?
+input: User: Can I afford $200 for concert tickets next week?
 output:
 ```python
 def process_input():
@@ -166,52 +118,99 @@ def process_input():
     liq = retrieve_depository_accounts()
     cash = liq['balance_available'].sum() if not liq.empty else 0
     
-    nxt = get_start_of_month(get_after_periods(get_start_of_month(datetime.now()), "monthly", 1))
-    inc = retrieve_income_forecasts('monthly')
-    sp = retrieve_spending_forecasts('monthly')
+    today = datetime.now()
+    sp = retrieve_spending_forecasts(granularity='weekly')
     
-    inc_val = inc[inc['start_date'] == nxt]['forecasted_amount'].sum() if not inc.empty else 0
-    sp_val = sp[sp['start_date'] == nxt]['forecasted_amount'].sum() if not sp.empty else 0
+    nxt = get_start_of_week(get_after_periods(today, 'weekly', 1))
+    sp = sp[sp['start_date'] == nxt] if not sp.empty else pd.DataFrame()
+    obligations = sp['forecasted_amount'].sum() if not sp.empty else 0
     
-    surplus = inc_val - sp_val
-    final = cash + surplus - 500
+    rem = cash - obligations - 200
     
-    c_str = utter_balance(cash, "{amount_with_direction}")
-    s_str = utter_balance(surplus, "{amount_with_direction}")
+    print(f"Cash: {utter_balance(cash, '{amount_with_direction}')}")
+    print(f"Next Week Expenses: {utter_amount(obligations, '{amount}')}")
     
-    if final >= 0:
-        print(f"Yes. Have {c_str}. Next month surplus {s_str}. After trip: ~${final:.0f}.")
+    if rem >= 0:
+        print(f"Yes. You'll have {utter_balance(rem, '{amount_with_direction}')} left.")
     else:
-        print(f"No. Have {c_str}. Next month surplus {s_str}. After trip: ${final:.0f}.")
+        print(f"No. You'll be short by {utter_balance(rem, '{amount_with_direction}')}.")
     return True, meta
 ```
 
-input: User: Savings last month vs this month?
+input: User: List subscriptions paid last month.
+output:
+```python
+def process_input():
+    meta = {}
+    subs = retrieve_subscriptions()
+    if subs.empty: print("No subscriptions."); return True, meta
+    
+    start = get_start_of_month(get_after_periods(datetime.now(), 'monthly', -1))
+    end = get_end_of_month(start)
+    
+    subs = subs[(subs['date'] >= start) & (subs['date'] <= end)]
+    if subs.empty: print("No subscriptions paid last month."); return True, meta
+        
+    print("Subscriptions paid last month:")
+    out, meta["subs"] = subscription_names_and_amounts(subs, "- {subscription_name}: {amount}")
+    print(out)
+    print(utter_subscription_totals(subs, "Total: {total_amount}"))
+    return True, meta
+```
+
+input: User: How did my income compare to my spending last year?
+output:
+```python
+def process_input():
+    meta = {}
+    start = get_start_of_year(get_after_periods(datetime.now(), 'yearly', -1))
+    end = get_end_of_year(start)
+    
+    inc = retrieve_income_transactions()
+    sp = retrieve_spending_transactions()
+    
+    inc = inc[(inc['date'] >= start) & (inc['date'] <= end)] if not inc.empty else pd.DataFrame()
+    sp = sp[(sp['date'] >= start) & (sp['date'] <= end)] if not sp.empty else pd.DataFrame()
+    
+    if inc.empty and sp.empty: print("No data last year."); return True, meta
+        
+    i_val = inc['amount'].sum() if not inc.empty else 0
+    s_val = sp['amount'].sum() if not sp.empty else 0
+    diff = i_val - s_val
+    
+    print(f"Last Year ({start.year}):")
+    print(f"Income: {utter_amount(i_val, '{amount}')}")
+    print(f"Spending: {utter_amount(s_val, '{amount}')}")
+    print(f"Net: {utter_balance(diff, '{amount_with_direction}')}")
+    return True, meta
+```
+
+input: User: Project my savings for the next 4 weeks.
 output:
 ```python
 def process_input():
     meta = {}
     today = datetime.now()
-    cur = get_start_of_month(today)
-    last = get_start_of_month(get_after_periods(cur, "monthly", -1))
+    inc = retrieve_income_forecasts('weekly')
+    sp = retrieve_spending_forecasts('weekly')
     
-    inc_act = retrieve_income_transactions()
-    sp_act = retrieve_spending_transactions()
+    if inc.empty and sp.empty: print("No forecasts."); return True, meta
     
-    i_last = inc_act[(inc_act['date'] >= last) & (inc_act['date'] <= get_end_of_month(last))]['amount'].sum() if not inc_act.empty else 0
-    s_last = sp_act[(sp_act['date'] >= last) & (sp_act['date'] <= get_end_of_month(last))]['amount'].sum() if not sp_act.empty else 0
-    sav_last = i_last - s_last
+    start_next = get_start_of_week(get_after_periods(today, 'weekly', 1))
+    dates = [get_after_periods(start_next, 'weekly', i) for i in range(4)]
     
-    inc_fc = retrieve_income_forecasts('monthly')
-    sp_fc = retrieve_spending_forecasts('monthly')
+    total_sav = 0
+    print("Projected Savings (Next 4 Weeks):")
     
-    i_cur = inc_fc[inc_fc['start_date'] == cur]['forecasted_amount'].sum() if not inc_fc.empty else 0
-    s_cur = sp_fc[sp_fc['start_date'] == cur]['forecasted_amount'].sum() if not sp_fc.empty else 0
-    sav_cur = i_cur - s_cur
-    
-    print(f"Last month saved {utter_balance(sav_last, '{amount_with_direction}')}.")
-    print(f"This month projected {utter_balance(sav_cur, '{amount_with_direction}')}.")
-    print(f"Diff: {utter_balance(sav_cur - sav_last, '{amount_with_direction}')}.")
+    for d in dates:
+        i_wk = inc[inc['start_date'] == d]['forecasted_amount'].sum() if not inc.empty else 0
+        s_wk = sp[sp['start_date'] == d]['forecasted_amount'].sum() if not sp.empty else 0
+        sav = i_wk - s_wk
+        total_sav += sav
+        d_str = get_date_string(d)
+        print(f"- Wk of {d_str}: Income {utter_amount(i_wk, '{amount}')} - Spending {utter_amount(s_wk, '{amount}')} = Savings {utter_balance(sav, '{amount_with_direction}')}")
+        
+    print(f"Total Projected Savings: {utter_balance(total_sav, '{amount_with_direction}')}")
     return True, meta
 ```
 
@@ -231,6 +230,10 @@ def process_input():
 """
 
 
+# - `retrieve_subscriptions() -> pd.DataFrame`: Cols: transaction_name, amount, category, subscription_name, date
+# - `subscription_names_and_amounts(df, template) -> tuple[str, list]`: List subscriptions.
+# - `utter_subscription_totals(df, template) -> str`: Sum subscriptions.
+# - `respond_to_app_inquiry(inquiry) -> str`: For general Qs.
 
 class LookupUserDataOptimizer:
   """Handles all Gemini API interactions for financial planning and optimization"""
@@ -241,13 +244,13 @@ class LookupUserDataOptimizer:
     self.client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
     
     # Model Configuration
-    self.thinking_budget = 4096
+    self.thinking_budget = 0
     self.model_name = model_name
     
     # Generation Configuration Constants
     self.temperature = 0.6
     self.top_p = 0.95
-    self.max_output_tokens = 2048
+    self.max_output_tokens = 4096
     
     # Safety Settings
     self.safety_settings = [
@@ -545,6 +548,12 @@ def test_checking_account_sufficient_for_rent(lookup_data: LookupUserDataOptimiz
   last_user_request = "Does my checking account have enough to pay for my rent next month?"
   return _run_test_with_logging(last_user_request, lookup_data)
 
+def test_list_subscriptions_last_month(lookup_data: LookupUserDataOptimizer = None):
+  """
+  Test method for listing subscriptions paid last month (exercises new example).
+  """
+  last_user_request = "List my subscriptions from last month."
+  return _run_test_with_logging(last_user_request, lookup_data)
 
 def main():
   """Main function to test the lookup_data optimizer"""
@@ -553,6 +562,7 @@ def main():
   test_analyze_income_and_spending_patterns_for_savings()
   test_compare_projected_income_across_months()
   test_checking_account_sufficient_for_rent()
+  test_list_subscriptions_last_month()
 
 
 if __name__ == "__main__":
