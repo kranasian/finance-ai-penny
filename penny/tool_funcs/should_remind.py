@@ -61,6 +61,16 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in generating remi
 2. Assume `import datetime` and `import pandas as pd` are already included. Do not include import statements in your code.
 3. Only output the Python code that implements the `should_remind` function.
 
+## Important Date/Time Type Guidelines
+
+- **Date helper functions (`get_after_periods`, `get_start_of_month`, etc.) return `datetime` objects**.
+- **DataFrame datetime columns** use `.dt.date` to extract the date part, which returns `date` objects.
+- **When comparing dates**: Convert datetime results to date using `.date()` method when comparing with DataFrame date columns.
+  - Example: `end_date = get_after_periods(today, "monthly", 3)` returns `datetime`, so use `end_date.date()` when comparing with `transactions_df['datetime'].dt.date`.
+- **Best practice**: Use `datetime.today()` to get today, then convert to date when needed: `today_date = datetime.today().date()`.
+- **For period comparisons**: Use `pd.Period(datetime_obj, freq='M')` to convert a datetime to a pandas Period for comparison with `transactions_df['datetime'].dt.to_period('M')`.
+  - Example: `pd.Period(today, freq='M')` instead of `today.to_period('M')`.
+
 <IMPLEMENTED_FUNCTIONS>
 
 These functions are available to use within `should_remind`:
