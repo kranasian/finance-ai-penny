@@ -43,20 +43,18 @@ def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   return df
 
 
-def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
-  """Generate a formatted string describing subscription transaction names and amounts using the provided template and return metadata.
+def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> str:
+  """Generate a formatted string describing subscription transaction names and amounts using the provided template.
   
   Returns:
-    tuple[str, list]: (formatted string, metadata list)
-      - formatted string: Newline-separated subscription descriptions (max MAX_SUBSCRIPTIONS). 
-        If there are more subscriptions, appends a message like "n more subscriptions."
-      - metadata list: List of subscription metadata dictionaries (only MAX_SUBSCRIPTIONS subscriptions included)
+    str: Newline-separated subscription descriptions (max MAX_SUBSCRIPTIONS). 
+      If there are more subscriptions, appends a message like "n more subscriptions."
   """
   log(f"**Subscription Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
-    log("- **`df` is empty**, returning empty string and metadata.")
-    return "", []
+    log("- **`df` is empty**, returning empty string.")
+    return ""
   
   # Check if required columns exist (subscription transaction columns)
   required_columns = ['transaction_name', 'amount', 'date', 'category', 'transaction_id']
@@ -216,10 +214,9 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str
     remaining_count = total_count - MAX_SUBSCRIPTIONS
     utterance_text += f"\n{remaining_count} more subscription{'s' if remaining_count != 1 else ''}."
   
-  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries. Has more: {has_more}")
+  log(f"**Returning** {len(utterances)} utterances. Has more: {has_more}")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
-  log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
-  return utterance_text, metadata
+  return utterance_text
 
 
 def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:

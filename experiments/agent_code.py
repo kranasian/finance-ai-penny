@@ -113,7 +113,7 @@ def process_input_how_much_left_in_checking():
       return True, metadata
     
     print("Here are your checking account balances:")
-    for_print, metadata["accounts"] = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
+    for_print = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
     print(for_print)
     print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
     
@@ -175,7 +175,7 @@ def process_input_did_i_spend_more_on_dining_out_over_groceries_last_month():
       return True, metadata
     
     # Compare spending between categories
-    result, _ = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+    result = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
     print(result)
     
     return True, metadata
@@ -358,7 +358,7 @@ def process_input_did_i_get_any_income_in_last_few_weeks_and_what_about_upcoming
         print("You did not receive any income in the past few weeks.")
       else:
         print("Here is your income from the past few weeks:")
-        for_print, metadata["transactions"] = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
+        for_print = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
         print(for_print)
         print(utter_income_transaction_total(past_income_df, "In total, you {verb_and_total_amount} from the past few weeks."))
     
@@ -378,7 +378,7 @@ def process_input_did_i_get_any_income_in_last_few_weeks_and_what_about_upcoming
         print("You have no income forecasts for the upcoming weeks.")
       else:
         print("Here is your forecasted income for upcoming weeks:")
-        for_print, metadata["forecasts"] = forecast_dates_and_amount(upcoming_income_df, "{amount_and_direction} {category} on {start_date}.")
+        for_print = forecast_dates_and_amount(upcoming_income_df, "{amount_and_direction} {category} on {start_date}.")
         print(for_print)
         print(utter_income_forecast_totals(upcoming_income_df, "In total, you are expected to {verb_and_total_amount} in upcoming weeks."))
     
@@ -527,7 +527,7 @@ def process_input_list_streaming_subscriptions_paid_last_month():
       print("You have no streaming subscription payments last month.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{amount_and_direction} {subscription_name} on {date}')
+    for_print = subscription_names_and_amounts(streaming_df, '{amount_and_direction} {subscription_name} on {date}')
     transaction_count = len(streaming_df)
     print(f"Your streaming subscription payments last month ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
@@ -550,7 +550,7 @@ def process_input_whats_the_total_across_account_types():
       return True, metadata
     
     print("Here are all your account balances:")
-    for_print, metadata["accounts"] = account_names_and_balances(df, "Account \"{account_name}\" ({account_type}) has {balance_current} left with {balance_available} available now.")
+    for_print = account_names_and_balances(df, "Account \"{account_name}\" ({account_type}) has {balance_current} left with {balance_available} available now.")
     print(for_print)
     
     # Calculate totals for different account types
@@ -581,7 +581,7 @@ def process_input_how_much_eating_out_have_I_done():
       return True, metadata
     
     print("Here are your eating out transactions:")
-    for_print, metadata["transactions"] = transaction_names_and_amounts(df, "{amount_and_direction} {transaction_name} on {date}.")
+    for_print = transaction_names_and_amounts(df, "{amount_and_direction} {transaction_name} on {date}.")
     print(for_print)
     print(utter_spending_transaction_total(df, "In total, you {verb_and_total_amount} on eating out."))
     
@@ -598,7 +598,7 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
     assets_df = retrieve_depository_accounts()
     if not assets_df.empty:
         print("\nDepository Accounts:")
-        _, metadata["depository_balances"] = account_names_and_balances(assets_df, "Account '{account_name}' ({account_type}): {balance_current} current.")
+        account_names_and_balances(assets_df, "Account '{account_name}' ({account_type}): {balance_current} current.")
         print(utter_account_totals(assets_df, "Total Assets: {balance_current}."))
     else:
         print("No depository accounts found.")
@@ -607,7 +607,7 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
     credit_df = retrieve_credit_accounts()
     if not credit_df.empty:
         print("\nCredit/Loan Accounts:")
-        _, metadata['credit_liabilities'] = account_names_and_balances(credit_df, "Account '{account_name}' ({account_type}): {balance_current} owed.")
+        account_names_and_balances(credit_df, "Account '{account_name}' ({account_type}): {balance_current} owed.")
         print(utter_account_totals(credit_df, "Total Liabilities: {balance_current}."))
     else:
         print("No credit or loan accounts found.")
@@ -680,7 +680,7 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
             if not travel_df.empty:
                 total_travel = travel_df['amount'].sum()
                 print(f"Travel Spending (Last 30 Days): {utter_spending_forecast_amount(total_travel, '{amount_and_direction}')}")
-                _, metadata['recent_travel'] = transaction_names_and_amounts(travel_df, " - {amount_and_direction} {transaction_name} on {date}.")
+                transaction_names_and_amounts(travel_df, " - {amount_and_direction} {transaction_name} on {date}.")
             else:
                 print("No recent travel spending.")
 
@@ -688,7 +688,7 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
             if not dining_df.empty:
                 total_dining = dining_df['amount'].sum()
                 print(f"Dining/Food Spending (Last 30 Days): {utter_spending_forecast_amount(total_dining, '{amount_and_direction}')}")
-                _, metadata['recent_dining'] = transaction_names_and_amounts(dining_df, " - {amount_and_direction} {transaction_name} on {date}.")
+                transaction_names_and_amounts(dining_df, " - {amount_and_direction} {transaction_name} on {date}.")
             else:
                 print("No recent dining/food spending.")
                 

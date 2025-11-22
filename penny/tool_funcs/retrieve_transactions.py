@@ -54,21 +54,19 @@ def retrieve_spending_transactions_function_code_gen(user_id: int = 1) -> pd.Dat
   return spending_df
 
 
-def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]:
-  """Generate a formatted string describing transaction names and amounts using the provided template and return metadata.
+def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> str:
+  """Generate a formatted string describing transaction names and amounts using the provided template.
   
   Returns:
-    tuple[str, list]: (formatted string, metadata list)
-      - formatted string: Newline-separated transaction descriptions (max MAX_TRANSACTIONS). 
-        If there are more transactions, appends a message like "n more transactions."
-      - metadata list: List of transaction metadata dictionaries (only MAX_TRANSACTIONS transactions included)
+    str: Newline-separated transaction descriptions (max MAX_TRANSACTIONS). 
+      If there are more transactions, appends a message like "n more transactions."
   """
   
   log(f"**Transaction Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
-    log("- **`df` is empty**, returning empty string and metadata.")
-    return "", []
+    log("- **`df` is empty**, returning empty string.")
+    return ""
   
   # Check if required columns exist (only transaction_name and amount are required)
   required_columns = ['transaction_name', 'amount']
@@ -252,10 +250,9 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     remaining_count = total_count - MAX_TRANSACTIONS
     utterance_text += f"\n{remaining_count} more transaction{'s' if remaining_count != 1 else ''}."
   
-  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries. Has more: {has_more}")
+  log(f"**Returning** {len(utterances)} utterances. Has more: {has_more}")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
-  log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
-  return utterance_text, metadata
+  return utterance_text
 
 
 def utter_spending_transaction_total(df: pd.DataFrame, template: str) -> str:

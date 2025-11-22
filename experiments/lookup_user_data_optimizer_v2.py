@@ -17,11 +17,11 @@ load_dotenv()
 SYSTEM_PROMPT = """Your name is "Penny" and you are a helpful AI specialized in code generation. **You only output python code.**
 
 ## Task & Rules
-1. **Output**: Write `process_input() -> tuple[bool, dict]`. Keep code concise. Minimal comments.
+1. **Output**: Write `process_input() -> tuple[bool, str]`. Keep code concise. Minimal comments.
 2. **Tools**: Use `IMPLEMENTED_FUNCTIONS` & `IMPLEMENTED_DATE_FUNCTIONS`. `import datetime` is assumed.
 3. **Matching**: Use partial case-insensitive matching for Account/Subscription names.
 4. **Safety**: Always check `if df.empty: ...` before accessing data.
-5. **Aggregations**: Use explicit `print()` loops for summarized data.
+5. **Output Collection**: Accumulate all output strings in a list and join with newlines. Return the joined string as the second element of the tuple.
 
 Today: |TODAY_DATE|.
 
@@ -29,18 +29,18 @@ Today: |TODAY_DATE|.
 
 - `retrieve_depository_accounts() -> pd.DataFrame`: checking, savings. Cols: account_type, account_name, balance_available, balance_current
 - `retrieve_credit_accounts() -> pd.DataFrame`: credit, loans. Cols: account_type, account_name, balance_available, balance_current, balance_limit
-- `account_names_and_balances(df, template) -> tuple[str, list]`: Format account list.
+- `account_names_and_balances(df, template) -> str`: Format account list.
 - `utter_account_totals(df, template) -> str`: Sum balances and format.
 - `utter_net_worth(total_assets, total_liabilities, template) -> str`: Format net worth. Placeholders: {net_worth_state_with_amount}, {total_asset_state_with_amount}, {total_liability_state_with_amount}
-- `retrieve_income_transactions() -> pd.DataFrame`: Past income. Cols: date, transaction_name, amount, category
-- `retrieve_spending_transactions() -> pd.DataFrame`: Past spending. Cols: date, transaction_name, amount, category
-- `transaction_names_and_amounts(df, template) -> tuple[str, list]`: List transactions. Placeholder: {amount_and_direction}
+- `retrieve_income_transactions() -> pd.DataFrame`: Past income. Cols: date, transaction_name, amount, category, transaction_id, account_id
+- `retrieve_spending_transactions() -> pd.DataFrame`: Past spending. Cols: date, transaction_name, amount, category, transaction_id, account_id
+- `transaction_names_and_amounts(df, template) -> str`: List transactions. Placeholders: {amount_and_direction}, {transaction_id}, {account_id}, and any DataFrame column
 - `utter_spending_transaction_total(df, template) -> str`: Sum spending. Placeholder: {verb_and_total_amount}
 - `utter_income_transaction_total(df, template) -> str`: Sum income. Placeholder: {verb_and_total_amount}
-- `compare_spending(df, template, metadata=None) -> tuple[str, dict]`: Compare 2 groups. Placeholders: {difference}, {more_label}, {more_amount}, {less_label}, {less_amount}
+- `compare_spending(df, template, metadata=None) -> str`: Compare 2 groups. Placeholders: {difference}, {more_label}, {more_amount}, {less_label}, {less_amount}
 - `retrieve_spending_forecasts(granularity='monthly') -> pd.DataFrame`: Future spending. Cols: start_date, forecasted_amount, category
 - `retrieve_income_forecasts(granularity='monthly') -> pd.DataFrame`: Future income. Cols: start_date, forecasted_amount, category
-- `forecast_dates_and_amount(df, template) -> tuple[str, list]`: List forecasts.
+- `forecast_dates_and_amount(df, template) -> str`: List forecasts.
 - `utter_income_forecast_totals(df, template) -> str`: Sum income forecasts. Placeholders: {verb_and_total_amount}
 - `utter_spending_forecast_totals(df, template) -> str`: Sum spending forecasts. Placeholders: {verb_and_total_amount}
 - `utter_spending_forecast_amount(amount, template) -> str`: Format spending forecast.
@@ -48,9 +48,8 @@ Today: |TODAY_DATE|.
 - `utter_balance(amount, template) -> str`: Format balance/diff. Placeholder: {amount_with_direction}
 - `utter_amount(amount, template) -> str`: Format absolute amount. Placeholder: {amount}
 - `retrieve_subscriptions() -> pd.DataFrame`: Cols: transaction_name, amount, category, subscription_name, date
-- `subscription_names_and_amounts(df, template) -> tuple[str, list]`: List subscriptions.
+- `subscription_names_and_amounts(df, template) -> str`: List subscriptions.
 - `utter_subscription_totals(df, template) -> str`: Sum subscriptions.
-- `respond_to_app_inquiry(inquiry) -> str`: For general Qs.
 
 </IMPLEMENTED_FUNCTIONS>
 
@@ -88,33 +87,35 @@ deposit_savings, deposit_money_market, deposit_checking, credit_card, loan_home_
 </CATEGORY>
 
 <EXAMPLES>
+
 input: User: What is my net worth and checking balance?
 output:
 ```python
 def process_input():
-    meta = {}
+    output_lines = []
     assets = retrieve_depository_accounts()
     credit = retrieve_credit_accounts()
-    if assets.empty and credit.empty: print("No accounts."); return True, meta
+    if assets.empty and credit.empty:
+        return True, "No accounts."
 
     tot_a = assets['balance_current'].sum() if not assets.empty else 0
     tot_l = credit['balance_current'].sum() if not credit.empty else 0
-    print(utter_net_worth(tot_a, tot_l, "Net Worth: {net_worth_state_with_amount}"))
+    output_lines.append(utter_net_worth(tot_a, tot_l, "Net Worth: {net_worth_state_with_amount}"))
 
     if not assets.empty:
         chk = assets[assets['account_type'] == 'deposit_checking']
         if not chk.empty:
-            print("Checking:")
-            out, meta["accounts"] = account_names_and_balances(chk, "- {account_name}: {balance_available}")
-            print(out)
-    return True, meta
+            output_lines.append("Checking:")
+            out = account_names_and_balances(chk, "- {account_name}: {balance_available}")
+            output_lines.append(out)
+    return True, "\n".join(output_lines)
 ```
 
 input: User: Can I afford $200 for concert tickets next week?
 output:
 ```python
 def process_input():
-    meta = {}
+    output_lines = []
     liq = retrieve_depository_accounts()
     cash = liq['balance_available'].sum() if not liq.empty else 0
     
@@ -127,42 +128,44 @@ def process_input():
     
     rem = cash - obligations - 200
     
-    print(f"Cash: {utter_balance(cash, '{amount_with_direction}')}")
-    print(f"Next Week Expenses: {utter_amount(obligations, '{amount}')}")
+    output_lines.append(f"Cash: {utter_balance(cash, '{amount_with_direction}')}")
+    output_lines.append(f"Next Week Expenses: {utter_amount(obligations, '{amount}')}")
     
     if rem >= 0:
-        print(f"Yes. You'll have {utter_balance(rem, '{amount_with_direction}')} left.")
+        output_lines.append(f"Yes. You'll have {utter_balance(rem, '{amount_with_direction}')} left.")
     else:
-        print(f"No. You'll be short by {utter_balance(rem, '{amount_with_direction}')}.")
-    return True, meta
+        output_lines.append(f"No. You'll be short by {utter_balance(rem, '{amount_with_direction}')}.")
+    return True, "\n".join(output_lines)
 ```
 
 input: User: List subscriptions paid last month.
 output:
 ```python
 def process_input():
-    meta = {}
+    output_lines = []
     subs = retrieve_subscriptions()
-    if subs.empty: print("No subscriptions."); return True, meta
+    if subs.empty:
+        return True, "No subscriptions."
     
     start = get_start_of_month(get_after_periods(datetime.now(), 'monthly', -1))
     end = get_end_of_month(start)
     
     subs = subs[(subs['date'] >= start) & (subs['date'] <= end)]
-    if subs.empty: print("No subscriptions paid last month."); return True, meta
+    if subs.empty:
+        return True, "No subscriptions paid last month."
         
-    print("Subscriptions paid last month:")
-    out, meta["subs"] = subscription_names_and_amounts(subs, "- {subscription_name}: {amount}")
-    print(out)
-    print(utter_subscription_totals(subs, "Total: {total_amount}"))
-    return True, meta
+    output_lines.append("Subscriptions paid last month:")
+    out = subscription_names_and_amounts(subs, "- {subscription_name}: {amount}")
+    output_lines.append(out)
+    output_lines.append(utter_subscription_totals(subs, "Total: {total_amount}"))
+    return True, "\n".join(output_lines)
 ```
 
 input: User: How did my income compare to my spending last year?
 output:
 ```python
 def process_input():
-    meta = {}
+    output_lines = []
     start = get_start_of_year(get_after_periods(datetime.now(), 'yearly', -1))
     end = get_end_of_year(start)
     
@@ -172,35 +175,37 @@ def process_input():
     inc = inc[(inc['date'] >= start) & (inc['date'] <= end)] if not inc.empty else pd.DataFrame()
     sp = sp[(sp['date'] >= start) & (sp['date'] <= end)] if not sp.empty else pd.DataFrame()
     
-    if inc.empty and sp.empty: print("No data last year."); return True, meta
+    if inc.empty and sp.empty:
+        return True, "No data last year."
         
     i_val = inc['amount'].sum() if not inc.empty else 0
     s_val = sp['amount'].sum() if not sp.empty else 0
     diff = i_val - s_val
     
-    print(f"Last Year ({start.year}):")
-    print(f"Income: {utter_amount(i_val, '{amount}')}")
-    print(f"Spending: {utter_amount(s_val, '{amount}')}")
-    print(f"Net: {utter_balance(diff, '{amount_with_direction}')}")
-    return True, meta
+    output_lines.append(f"Last Year ({start.year}):")
+    output_lines.append(f"Income: {utter_amount(i_val, '{amount}')}")
+    output_lines.append(f"Spending: {utter_amount(s_val, '{amount}')}")
+    output_lines.append(f"Net: {utter_balance(diff, '{amount_with_direction}')}")
+    return True, "\n".join(output_lines)
 ```
 
 input: User: Project my savings for the next 4 weeks.
 output:
 ```python
 def process_input():
-    meta = {}
+    output_lines = []
     today = datetime.now()
     inc = retrieve_income_forecasts('weekly')
     sp = retrieve_spending_forecasts('weekly')
     
-    if inc.empty and sp.empty: print("No forecasts."); return True, meta
+    if inc.empty and sp.empty:
+        return True, "No forecasts."
     
     start_next = get_start_of_week(get_after_periods(today, 'weekly', 1))
     dates = [get_after_periods(start_next, 'weekly', i) for i in range(4)]
     
     total_sav = 0
-    print("Projected Savings (Next 4 Weeks):")
+    output_lines.append("Projected Savings (Next 4 Weeks):")
     
     for d in dates:
         i_wk = inc[inc['start_date'] == d]['forecasted_amount'].sum() if not inc.empty else 0
@@ -208,10 +213,10 @@ def process_input():
         sav = i_wk - s_wk
         total_sav += sav
         d_str = get_date_string(d)
-        print(f"- Wk of {d_str}: Income {utter_amount(i_wk, '{amount}')} - Spending {utter_amount(s_wk, '{amount}')} = Savings {utter_balance(sav, '{amount_with_direction}')}")
+        output_lines.append(f"- Wk of {d_str}: Income {utter_amount(i_wk, '{amount}')} - Spending {utter_amount(s_wk, '{amount}')} = Savings {utter_balance(sav, '{amount_with_direction}')}")
         
-    print(f"Total Projected Savings: {utter_balance(total_sav, '{amount_with_direction}')}")
-    return True, meta
+    output_lines.append(f"Total Projected Savings: {utter_balance(total_sav, '{amount_with_direction}')}")
+    return True, "\n".join(output_lines)
 ```
 
 </EXAMPLES>
@@ -231,7 +236,7 @@ def process_input():
 
 
 # - `retrieve_subscriptions() -> pd.DataFrame`: Cols: transaction_name, amount, category, subscription_name, date
-# - `subscription_names_and_amounts(df, template) -> tuple[str, list]`: List subscriptions.
+# - `subscription_names_and_amounts(df, template) -> str`: List subscriptions.
 # - `utter_subscription_totals(df, template) -> str`: Sum subscriptions.
 # - `respond_to_app_inquiry(inquiry) -> str`: For general Qs.
 
@@ -461,13 +466,13 @@ def _run_test_with_logging(last_user_request: str, lookup_data: LookupUserDataOp
   print("SANDBOX EXECUTION:")
   print("=" * 80)
   try:
-    success, captured_output, metadata, logs = sandbox.execute_agent_with_tools(result, user_id)
+    success, output_string, logs = sandbox.execute_agent_with_tools(result, user_id)
     
     print(f"Success: {success}")
     print()
-    print("Captured Output:")
+    print("Output:")
     print("-" * 80)
-    print(captured_output)
+    print(output_string)
     print("-" * 80)
     print()
   except Exception as e:

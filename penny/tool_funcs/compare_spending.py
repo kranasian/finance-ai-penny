@@ -4,17 +4,13 @@ import re
 from penny.tool_funcs.sandbox_logging import log
 
 
-def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]:
-  """Compare spending data between categories or time periods and return formatted string with metadata"""
+def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> str:
+  """Compare spending data between categories or time periods and return formatted string"""
   log(f"**Compare Spending**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
-  # Initialize metadata dict if not provided
-  if metadata is None:
-    metadata = {}
-  
   if df.empty:
-    log("- **`df` is empty**, returning empty string and metadata.")
-    return "", metadata
+    log("- **`df` is empty**, returning empty string.")
+    return ""
   
   # Check if required columns exist
   # If 'group' column exists, we can work with aggregated data (no category needed)
@@ -93,7 +89,7 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       log(f"**Returning** single group result.")
       log(f"**Result**: `{result}`")
       
-      return result, metadata
+      return result
     elif len(groups) != 2:
       error_msg = f"- **`df` must have exactly 1 or 2 groups for comparison**. Found {len(groups)} groups: {list(groups)}"
       log(error_msg)
@@ -163,7 +159,7 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
       log(f"**Returning** single category result.")
       log(f"**Result**: `{result}`")
       
-      return result, metadata
+      return result
     elif len(categories) != 2:
       error_msg = f"- **`df` must have exactly 1 or 2 categories for comparison**. Found {len(categories)} categories: {list(categories)}. To compare groups of categories, create a 'group' column that maps categories to two groups."
       log(error_msg)
@@ -304,7 +300,7 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
   except (KeyError, ValueError) as e:
     # If template doesn't have all placeholders, try with minimal set
     try:
-      result = temp_template.format(
+      result = temp_template.format(  
         first_amount=first_amount_str,
         second_amount=second_amount_str,
         first_label=first_label,
@@ -317,9 +313,9 @@ def compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> 
   log(f"**Returning** comparison result.")
   log(f"**Result**: `{result}`")
   
-  # Ensure we always return a tuple
+  # Ensure we always return a string
   if result is None:
     result = f"{first_label}: {first_amount_str} | {second_label}: {second_amount_str}"
   
-  return result, metadata
+  return result
 

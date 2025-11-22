@@ -81,7 +81,7 @@ These functions are already implemented:
 - `retrieve_credit_accounts(): pd.DataFrame`
   - retrieves credit card and loan accounts (mortgage, auto, home equity, line of credit) and returns a pandas DataFrame. It may be empty if no credit card or loan accounts exist.
   - DataFrame columns: `account_type` (str), `account_name` (str), `balance_available` (float), `balance_current` (float), `balance_limit` (float)
-- `account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]`
+- `account_names_and_balances(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame
 - `utter_account_totals(df: pd.DataFrame, template: str) -> str`
@@ -96,7 +96,7 @@ These functions are already implemented:
 - `retrieve_spending_transactions() -> pd.DataFrame`
   - retrieves spending transactions and returns a pandas DataFrame. It may be empty if no spending transactions exist.
   - DataFrame columns: `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str)
-- `transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
+- `transaction_names_and_amounts(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame and `{{amount_and_direction}}`
   - use this method to list transactions
@@ -106,7 +106,7 @@ These functions are already implemented:
 - `utter_income_transaction_total(df: pd.DataFrame, template: str) -> str`
   - takes filtered income transaction `df` and `template` string, calculates total income transaction amounts and returns a formatted string.
   - Template placeholder: `{{verb_and_total_amount}}` (e.g., "earned $5000" or "returned $200")
-- `compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]`
+- `compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> str`
   - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
   - Template placeholders: `{{first_amount}}`, `{{second_amount}}`, `{{first_label}}`, `{{second_label}}`, `{{difference}}`, `{{first_total}}`, `{{second_total}}`, `{{first_count}}`, `{{second_count}}`, `{{count_difference}}`, `{{more_label}}`, `{{more_amount}}`, `{{more_total}}`, `{{more_count}}`, `{{less_label}}`, `{{less_amount}}`, `{{less_total}}`, `{{less_count}}`
 - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
@@ -118,7 +118,7 @@ These functions are already implemented:
   - retrieves income forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
   - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
   - DataFrame columns: `start_date` (datetime), `forecasted_amount` (float), `category` (str)
-- `forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]`
+- `forecast_dates_and_amount(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame
   - use this method to list forecasts
@@ -147,7 +147,7 @@ These functions are already implemented:
 - `retrieve_subscriptions() -> pd.DataFrame`
   - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
   - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `subscription_name` (str), `confidence_score_bills` (float), `reviewer_bills` (str)
-- `subscription_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str, list]`
+- `subscription_names_and_amounts(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame
   - use this method to list subscriptions
@@ -372,7 +372,7 @@ def process_input():
       return True, metadata
     
     print("Here are your checking account balances:")
-    for_print, metadata["accounts"] = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
+    for_print = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
     print(for_print)
     print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
     
@@ -441,7 +441,7 @@ def process_input():
       return True, metadata
     
     # Compare spending between categories
-    result, _ = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+    result = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
     print(result)
     
     return True, metadata
@@ -580,7 +580,7 @@ def process_input():
         print("You did not receive any income in the past few weeks.")
       else:
         print("Here is your income from the past few weeks:")
-        for_print, metadata["transactions"] = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
+        for_print = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
         print(for_print)
         print(utter_income_transaction_total(past_income_df, "In total, you {verb_and_total_amount} from the past few weeks."))
     
@@ -600,7 +600,7 @@ def process_input():
         print("You have no income forecasts for the upcoming weeks.")
       else:
         print("Here is your forecasted income for upcoming weeks:")
-        for_print, metadata["forecasts"] = forecast_dates_and_amount(upcoming_income_df, "{amount_and_direction} {category} on {start_date}.")
+        for_print = forecast_dates_and_amount(upcoming_income_df, "{amount_and_direction} {category} on {start_date}.")
         print(for_print)
         print(utter_income_forecast_totals(upcoming_income_df, "In total, you are expected to {verb_and_total_amount} in upcoming weeks."))
     
@@ -757,7 +757,7 @@ def process_input():
       print("You have no streaming subscription payments last month.")
       return True, metadata
     
-    for_print, metadata["subscriptions"] = subscription_names_and_amounts(streaming_df, '{amount_and_direction} {subscription_name} on {date}')
+    for_print = subscription_names_and_amounts(streaming_df, '{amount_and_direction} {subscription_name} on {date}')
     transaction_count = len(streaming_df)
     print(f"Your streaming subscription payments last month ({transaction_count} transaction{'s' if transaction_count != 1 else ''}):")
     print(for_print)
@@ -873,7 +873,7 @@ output:""")
     
     # Execute the generated code in sandbox
     try:
-      success, utter, metadata, logs = sandbox.execute_agent_with_tools(output_text, user_id)
+      success, output_string, logs = sandbox.execute_agent_with_tools(output_text, user_id)
     except Exception as e:
       # Extract logs from error message if available
       error_str = str(e)
@@ -881,8 +881,7 @@ output:""")
       if "Captured logs:" in error_str:
         logs = error_str.split("Captured logs:")[-1].strip()
       success = False
-      utter = f"Error executing code: {error_str}"
-      metadata = {"error": error_str}
+      output_string = f"Error executing code: {error_str}"
     
     execution_end = time.time()
     
@@ -901,10 +900,9 @@ output:""")
     })
     
     return {
-      'response': utter,
+      'response': output_string,
       'function_called': None,
       'execution_success': success,
-      'execution_metadata': metadata,
       'code_generated': output_text,
       'logs': logs
     }

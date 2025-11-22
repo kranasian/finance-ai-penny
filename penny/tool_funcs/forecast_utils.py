@@ -152,12 +152,12 @@ def _format_date_for_metadata(date_dt, template: str, temp_template: str) -> tup
         return '', temp_template
 
 
-def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, list]:
+def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> str:
   """Format forecast dates and amounts using the provided template"""
   
   if df.empty:
     log(f"**Forecast Dates and Amounts**: Empty DataFrame")
-    return "", []
+    return ""
   
   # Check if DataFrame has start_date column
   if 'start_date' not in df.columns:
@@ -345,10 +345,10 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> tuple[str, lis
     remaining_count = total_count - MAX_FORECASTS
     result += f"\n{remaining_count} more forecast{'s' if remaining_count != 1 else ''}."
   
-  log(f"**Forecast Dates and Amounts**: Returning {len(utterances)} utterances and {len(metadata)} metadata entries. Has more: {has_more}")
+  log(f"**Forecast Dates and Amounts**: Returning {len(utterances)} utterances. Has more: {has_more}")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
   
-  return result, metadata
+  return result
 
 
 def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> str:
@@ -405,9 +405,11 @@ def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> 
   # Check if template has format specifiers for total_amount or amount (like {total_amount:.0f} or {amount:.0f})
   total_amount_format_pattern = r'\{total_amount:([^}]+)\}'
   amount_format_pattern = r'\{amount:([^}]+)\}'
+  total_amount_and_verb_format_pattern = r'\{total_amount_and_verb:([^}]+)\}'
   verb_and_total_amount_format_pattern = r'\{verb_and_total_amount:([^}]+)\}'
   has_total_amount_format_specifier = bool(re.search(total_amount_format_pattern, template))
   has_amount_format_specifier = bool(re.search(amount_format_pattern, template))
+  has_total_amount_and_verb_format_specifier = bool(re.search(total_amount_and_verb_format_pattern, template))
   has_verb_and_total_amount_format_specifier = bool(re.search(verb_and_total_amount_format_pattern, template))
   
   # Check if template has dollar sign - if it does, format amount without $, otherwise with $
@@ -419,11 +421,15 @@ def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> 
     temp_template = re.sub(total_amount_format_pattern, '{total_amount}', temp_template)
   if has_amount_format_specifier:
     temp_template = re.sub(amount_format_pattern, '{total_amount}', temp_template)
+  if has_total_amount_and_verb_format_specifier:
+    temp_template = re.sub(total_amount_and_verb_format_pattern, '{verb_and_total_amount}', temp_template)
   if has_verb_and_total_amount_format_specifier:
     temp_template = re.sub(verb_and_total_amount_format_pattern, '{verb_and_total_amount}', temp_template)
   
   # Also replace any plain {amount} with {total_amount}
   temp_template = temp_template.replace('{amount}', '{total_amount}')
+  # Replace {total_amount_and_verb} with {verb_and_total_amount} (alias support)
+  temp_template = temp_template.replace('{total_amount_and_verb}', '{verb_and_total_amount}')
   
   # Format amount string - always use .0f format, with or without $ based on template
   display_amount = abs(total_amount)
@@ -442,6 +448,7 @@ def _format_forecast_total(df: pd.DataFrame, template: str, is_income: bool) -> 
     'direction': direction_display,  # Use direction_display which is empty for earned/spent
     'verb': verb,  # Verb for use in templates like "earn", "spend", "receive", "return"
     'verb_and_total_amount': verb_and_total_amount_str,  # Combined verb and amount (e.g., "earn $5000")
+    'total_amount_and_verb': verb_and_total_amount_str,  # Alias for verb_and_total_amount (e.g., "earn $5000")
   }
   
   try:

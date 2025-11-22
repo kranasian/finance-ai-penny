@@ -521,13 +521,12 @@ def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callabl
   return safe_locals["process_input"]
 
 
-def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, dict | None, str]:
+def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, str]:
   """
   Run the provided code in a restricted sandbox environment
-  Returns (success, captured_output, metadata, logs)
+  Returns (success, output_string, logs)
   """
-  # Clear any previous captured print output and logs
-  clear_captured_print_output()
+  # Clear any previous logs
   clear_sandbox_logs()
   
   success = None
@@ -536,60 +535,35 @@ def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, 
     # Create the restricted function
     restricted_func = _create_restricted_process_input(code_str, user_id)
   except Exception as e:
-    captured_output = f"**Compilation Error**: `{str(e)}`\n{traceback.format_exc()}"
+    output_string = f"**Compilation Error**: `{str(e)}`\n{traceback.format_exc()}"
     success = False
-    metadata = {"error": traceback.format_exc()}
     
   # If the function was created successfully, run it
   if success is None:
     # Run the function - if it fails, capture logs before exception propagates
     try:
-      success, metadata = restricted_func()
-      captured_output = get_captured_print_output()
+      success, output_string = restricted_func()
     except Exception as e:
-      captured_output = f"**Execution Error**: `{str(e)}`\n{traceback.format_exc()}"
+      output_string = f"**Execution Error**: `{str(e)}`\n{traceback.format_exc()}"
       success = False
-      metadata = {"error": traceback.format_exc()}
   
-    # Get the captured print output and logs
+    # Get the captured logs
     captured_logs = get_logs_as_string()
   
   # Validate result is a bool
   if not isinstance(success, bool):
     raise ValueError(f"Restricted code must return a bool. Type: {type(success)}")
   
-  if not (isinstance(metadata, dict) or metadata is None):
-    if isinstance(metadata, list):
-      metadata = {
-        # TODO: In case the wrapping is wrong, sometimes its a list of things and no outside wrapping.
-      }
-    else:
-      raise ValueError(f"Restricted code must return a dict. Type: {type(metadata)}")
+  if not isinstance(output_string, str):
+    raise ValueError(f"Restricted code must return a str. Type: {type(output_string)}")
   
-  # Filter out non-serializable objects from metadata
-  if metadata is not None:
-    serializable_metadata = {}
-    removed_keys = []
-    
-    for key, value in metadata.items():
-      if _is_json_serializable(value):
-        serializable_metadata[key] = value
-      else:
-        removed_keys.append(key)
-        print(f"Removed non-serializable key '{key}' (type: {type(value).__name__})")
-    
-    if removed_keys:
-      print(f"Removed {len(removed_keys)} non-serializable keys: {removed_keys}")
-    
-    metadata = serializable_metadata
-  
-  return success, captured_output, metadata, captured_logs
+  return success, output_string, captured_logs
 
 # Function to process DataFrame
-def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, dict | None, str]:
+def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, str]:
   """
   Extract Python code from generated response and execute it in restricted Python sandbox
-  Returns: (success, utter, metadata, logs)
+  Returns: (success, output_string, logs)
   """
   # Extract Python code from the response (look for ```python blocks)
   code_start = code_str.find("```python")

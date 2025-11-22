@@ -236,62 +236,6 @@ class PlannerCodeGen:
       # No ```python found, try to use the entire response as code
       return text.strip()
 
-  def _wrap_planner_code(self, planner_code: str) -> str:
-    """
-    Wrap the planner's execute_plan() code to work with the sandbox.
-    The sandbox expects process_input() that returns (bool, dict),
-    but planner generates execute_plan() that returns (bool, str).
-    
-    Args:
-      planner_code: The generated planner code with execute_plan()
-      
-    Returns:
-      Wrapped code with process_input() that calls execute_plan()
-    """
-    # Extract code from markdown if present
-    extracted_code = self._extract_python_code(planner_code)
-    
-    # Check if execute_plan function exists
-    if "def execute_plan" not in extracted_code:
-      # If no execute_plan found, try to use the code as-is
-      return f"""def process_input():
-    metadata = {{}}
-    
-    # Wrapped planner code
-{extracted_code}
-    
-    # Call execute_plan if it exists
-    try:
-        success, output_str = execute_plan()
-        print(output_str)
-        metadata["output"] = output_str
-        return success, metadata
-    except NameError:
-        # execute_plan not found, return error
-        print("Error: execute_plan() function not found in generated code")
-        return False, metadata
-"""
-    
-    # Create wrapper that includes the extracted code and adds process_input()
-    wrapped_code = f"""{extracted_code}
-
-def process_input():
-    metadata = {{}}
-    
-    # Call execute_plan
-    try:
-        success, output_str = execute_plan()
-        print(output_str)
-        metadata["output"] = output_str
-        return success, metadata
-    except Exception as e:
-        error_msg = f"Error executing plan: {{str(e)}}"
-        print(error_msg)
-        metadata["error"] = str(e)
-        return False, metadata
-"""
-    
-    return wrapped_code
 
   def generate_response(self, messages: List[Dict], timing_data: Dict, user_id: int = 1) -> Dict:
     """
@@ -376,14 +320,11 @@ output:""")
     # Store output tokens in timing data
     timing_data['output_tokens'] = output_tokens
     
-    # Wrap the planner code to work with sandbox
-    wrapped_code = self._wrap_planner_code(output_text)
-    
     # Execute the generated code in sandbox
     # Note: execute_planner_with_tools will extract code from markdown if needed,
     # but we've already wrapped it, so we pass the wrapped code directly
     try:
-      success, message, captured_output, logs = sandbox.execute_planner_with_tools(wrapped_code, user_id)
+      success, message, captured_output, logs = sandbox.execute_planner_with_tools(output_text, user_id)
     except Exception as e:
       # Extract logs from error message if available
       error_str = str(e)

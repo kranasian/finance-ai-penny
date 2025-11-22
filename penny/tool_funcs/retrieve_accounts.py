@@ -83,13 +83,13 @@ def retrieve_credit_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame
   return combined_df
 
 
-def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, list]:
-  """Generate a formatted string describing account names and balances using the provided template and return metadata"""
+def account_names_and_balances(df: pd.DataFrame, template: str) -> str:
+  """Generate a formatted string describing account names and balances using the provided template"""
   log(f"**Account Names/Balances**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
   
   if df.empty:
-    log("- **`df` is empty**, returning empty string and metadata.")
-    return "", []
+    log("- **`df` is empty**, returning empty string.")
+    return ""
   
   # Check if we have balance columns
   has_balance_available = 'balance_available' in df.columns
@@ -289,10 +289,9 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> tuple[str, li
     )
     utterances.append(utterance)
   
-  log(f"**Returning** {len(utterances)} utterances and {len(metadata)} metadata entries.")
+  log(f"**Returning** {len(utterances)} utterances.")
   log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
-  log(f"**Metadata**:\n```json\n{json.dumps(metadata, indent=2)}\n```")
-  return "\n".join(utterances), metadata
+  return "\n".join(utterances)
 
 
 def utter_account_totals(df: pd.DataFrame, template: str) -> str:

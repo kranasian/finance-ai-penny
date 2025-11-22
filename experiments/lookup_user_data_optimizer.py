@@ -39,7 +39,7 @@ These functions are already implemented:
 - `retrieve_credit_accounts() -> pd.DataFrame`
   - retrieves credit card and loan accounts like mortgage, auto, home equity, line of credit and returns a pandas DataFrame.
   - DataFrame columns: `account_type` (str), `account_name` (str), `balance_available` (float), `balance_current` (float), `balance_limit` (float)
-- `account_names_and_balances(df -> pd.DataFrame, template: str) -> tuple[str, list]`
+- `account_names_and_balances(df -> pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame
 - `utter_account_totals(df -> pd.DataFrame, template: str) -> str`
@@ -54,7 +54,7 @@ These functions are already implemented:
 - `retrieve_spending_transactions() -> pd.DataFrame`
   - retrieves spending transactions and returns a pandas DataFrame. It may be empty if no spending transactions exist.
   - DataFrame columns: `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str)
-- `transaction_names_and_amounts(df -> pd.DataFrame, template: str) -> tuple[str, list]`
+- `transaction_names_and_amounts(df -> pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame and `{amount_and_direction}`
   - use this method to list transactions
@@ -64,7 +64,7 @@ These functions are already implemented:
 - `utter_income_transaction_total(df -> pd.DataFrame, template: str) -> str`
   - takes filtered income transaction `df` and `template` string, calculates total income transaction amounts and returns a formatted string.
   - Template placeholder: `{verb_and_total_amount}` (e.g., "earned $5000" or "returned $200")
-- `compare_spending(df -> pd.DataFrame, template: str, metadata: dict = None) -> tuple[str, dict]`
+- `compare_spending(df -> pd.DataFrame, template: str, metadata: dict = None) -> str`
   - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
   - Template placeholders: `{first_amount}`, `{second_amount}`, `{first_label}`, `{second_label}`, `{difference}`, `{first_total}`, `{second_total}`, `{first_count}`, `{second_count}`, `{count_difference}`, `{more_label}`, `{more_amount}`, `{more_total}`, `{more_count}`, `{less_label}`, `{less_amount}`, `{less_total}`, `{less_count}`
 - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
@@ -76,7 +76,7 @@ These functions are already implemented:
   - retrieves income forecasts from the database and returns a pandas DataFrame. May be empty if no forecasts exist.
   - `granularity` parameter can be 'monthly' or 'weekly' to specify forecast granularity.
   - DataFrame columns: `start_date` (datetime), `forecasted_amount` (float), `category` (str)
-- `forecast_dates_and_amount(df -> pd.DataFrame, template: str) -> tuple[str, list]`
+- `forecast_dates_and_amount(df -> pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame
   - use this method to list forecasts
@@ -105,7 +105,7 @@ These functions are already implemented:
 - `retrieve_subscriptions() -> pd.DataFrame`
   - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
   - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `subscription_name` (str), `confidence_score_bills` (float), `reviewer_bills` (str)
-- `subscription_names_and_amounts(df -> pd.DataFrame, template: str) -> tuple[str, list]`
+- `subscription_names_and_amounts(df -> pd.DataFrame, template: str) -> str`
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame
   - use this method to list subscriptions
@@ -225,7 +225,7 @@ def process_input():
       return True, metadata
     
     print("Here are your checking account balances:")
-    for_print, metadata["accounts"] = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
+    for_print = account_names_and_balances(df, "Account '{account_name}' has {balance_current} left with {balance_available} available now.")
     print(for_print)
     print(utter_account_totals(df, "Across all checking accounts, you have {balance_current} left."))
     
@@ -294,7 +294,7 @@ def process_input():
       return True, metadata
     
     # Compare spending between categories
-    result, metadata = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+    result = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
     print(result)
     
     return True, metadata
@@ -490,7 +490,7 @@ def process_input():
         print("You did not receive any income in the past few weeks.")
       else:
         print("Here is your income from the past few weeks:")
-        for_print, metadata["transactions"] = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
+        for_print = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
         print(for_print)
         print(utter_income_transaction_total(past_income_df, "In total, you {total_amount_and_verb} from the past few weeks."))
     
@@ -510,7 +510,7 @@ def process_input():
         print("You have no income forecasts for the upcoming weeks.")
       else:
         print("Here is your forecasted income for upcoming weeks:")
-        for_print, metadata["forecasts"] = forecast_dates_and_amount(upcoming_income_df, "{amount_and_direction} {category} on {start_date}.")
+        for_print = forecast_dates_and_amount(upcoming_income_df, "{amount_and_direction} {category} on {start_date}.")
         print(for_print)
         print(utter_income_forecast_totals(upcoming_income_df, "In total, you are expected to {verb_and_total_amount} in upcoming weeks."))
     
@@ -875,13 +875,13 @@ def _run_test_with_logging(last_user_request: str, lookup_data: LookupUserDataOp
   print("SANDBOX EXECUTION:")
   print("=" * 80)
   try:
-    success, captured_output, metadata, logs = sandbox.execute_agent_with_tools(result, user_id)
+    success, output_string, logs = sandbox.execute_agent_with_tools(result, user_id)
     
     print(f"Success: {success}")
     print()
-    print("Captured Output:")
+    print("Output:")
     print("-" * 80)
-    print(captured_output)
+    print(output_string)
     print("-" * 80)
     print()
   except Exception as e:
