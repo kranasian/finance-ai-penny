@@ -3,3 +3,4 @@ __pycache__/*
 .env
 *.db
 penny/tool_funcs/__pycache__/*
+penny/tools/__pycache__/*
