@@ -95,9 +95,10 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     date = transaction.get('date', 'Unknown Date')
     category = transaction.get('category', 'Unknown Category')
     transaction_id = transaction.get('transaction_id', None)
+    account_id = transaction.get('account_id', None)
     
     amount_log = f"${abs(amount):.0f}" if amount else "Unknown"
-    log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`")
+    log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`  |  **Account ID**: `{account_id}`")
     
     # Determine amount_and_direction based on amount sign and category
     # Rules:
@@ -190,7 +191,9 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
       'transaction_name': transaction_name_cleaned,
       'amount_and_direction': amount_and_direction,
       'date': date_str,
-      'category': category
+      'category': category,
+      'transaction_id': transaction_id if transaction_id is not None else None,
+      'account_id': account_id if account_id is not None else None
     }
     
     # Check for any additional columns in the DataFrame that might be referenced in the template
@@ -230,7 +233,8 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> tuple[str,
     # Add to metadata only if under the limit (max MAX_TRANSACTIONS)
     if len(metadata) < MAX_TRANSACTIONS:
       metadata.append({
-        "transaction_id": int(transaction_id),
+        "transaction_id": int(transaction_id) if transaction_id is not None else None,
+        "account_id": int(account_id) if account_id is not None else None,
         "transaction_name": transaction_name_cleaned
       })
     

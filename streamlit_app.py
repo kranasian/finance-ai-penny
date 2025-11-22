@@ -125,13 +125,14 @@ def render_example_prompts():
   st.markdown("##### 💡 Example Prompts")
   
   # Create tabs for each category
-  tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+  tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "📊 Account Balance",
     "💳 Transactions",
     "📈 Comparison",
     "🔮 Forecast",
     "🔗 Subscriptions",
     "❓ App Inquiry",
+    "🏷️ Update Category",
     "🔀 Combination"
   ])
   
@@ -214,6 +215,23 @@ def render_example_prompts():
     )
   
   with tab7:
+    # Update Category requests
+    render_prompt_section(
+      [
+        "Recategorize the last Costco purchase as groceries",
+        "Change all Target purchases to shopping for clothes",
+        "Recategorize all Amazon purchases last month as electronics",
+        "Change all dining out transactions last week to food delivery",
+        "Recategorize all gas station purchases as gas",
+        "Recategorize all Starbucks purchases as dining out",
+        "Change all Uber rides to public transportation",
+        "Recategorize purchases over $200 last month as taxes",
+        "Recategorize all Walmart purchases as shopping for clothes",
+      ],
+      "update_transaction_category"
+    )
+  
+  with tab8:
     # Combination questions
     render_prompt_section(
       [
