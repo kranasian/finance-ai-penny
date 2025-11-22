@@ -8,6 +8,29 @@ from datetime import datetime, timedelta, date
 from typing import Tuple, Optional, Callable, Callable
 import pandas as pd
 
+# Import date helper functions
+try:
+    from penny.tool_funcs.date_utils import (
+        get_start_of_week,
+        get_end_of_week,
+        get_start_of_month,
+        get_end_of_month,
+        get_start_of_year,
+        get_end_of_year,
+        get_after_periods,
+        get_date_string
+    )
+except ImportError:
+    # Fallback if date_utils not available
+    get_start_of_week = None
+    get_end_of_week = None
+    get_start_of_month = None
+    get_end_of_month = None
+    get_start_of_year = None
+    get_end_of_year = None
+    get_after_periods = None
+    get_date_string = None
+
 
 # Add the parent directory to the path so we can import database and other modules
 # From penny/tool_funcs/, we need to go up two levels to get to the root
@@ -73,20 +96,39 @@ These functions are available to use within `should_remind`:
 
 </IMPLEMENTED_FUNCTIONS>
 
+<IMPLEMENTED_DATE_FUNCTIONS>
+
+Use these date helper functions for date calculations:
+
+- `get_start_of_week(date: datetime) -> datetime`: Returns the Sunday of the week for the given date.
+- `get_end_of_week(date: datetime) -> datetime`: Returns the Saturday of the week for the given date.
+- `get_start_of_month(date: datetime) -> datetime`: Returns the first day of the month for a given date.
+- `get_end_of_month(date: datetime) -> datetime`: Returns the last day of the month for a given date.
+- `get_start_of_year(date: datetime) -> datetime`: Returns January 1st for the year of the given date.
+- `get_end_of_year(date: datetime) -> datetime`: Returns December 31st for the year of the given date.
+- `get_after_periods(date: datetime, granularity: str, count: int) -> datetime`: Adds periods ("daily" | "weekly" | "monthly" | "yearly") and returns date.
+- `get_date_string(date: datetime) -> str`: Returns date in "YYYY-MM-DD" format.
+
+</IMPLEMENTED_DATE_FUNCTIONS>
+
 <EXAMPLES>
 
 input: **What**: cancel Spotify subscription (last transaction: 2025-11-01, next payment: 2025-12-01, amount: $9.99)
 **When**: at the end of this year (December 31st)
+
 output: 
 ```python
 def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
     # Accumulate reminder messages in reminder_messages
     reminder_messages = []
     
-    today = date.today()
-    trigger_date = date(2025, 12, 31)
-    trigger_today = (today == trigger_date)
-    trigger_in_future = (today < trigger_date)
+    today = datetime.today()
+    trigger_date = datetime(2025, 12, 31)
+    
+    today_date = today.date()
+    trigger_date_date = trigger_date.date()
+    trigger_today = (today_date == trigger_date_date)
+    trigger_in_future = (today_date < trigger_date_date)
     
     # Retrieve subscriptions data to check Spotify status
     subscriptions_df = get_subscriptions_df()
@@ -99,7 +141,7 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
         if trigger_today:
             return None, None
         elif trigger_in_future:
-            return None, trigger_date
+            return None, trigger_date_date
         else:
             return None, None
     
@@ -122,7 +164,7 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
     # If December 31st, 2025 is in the future
     elif trigger_in_future:
         # Return no reminder and return date
-        return None, trigger_date
+        return None, trigger_date_date
     # If December 31st, 2025 is in the past
     else:
         # Return neither reminder nor date
@@ -131,18 +173,23 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
 
 input: **What**: checking account balance drops below $1000 (accounts: Chase Total Checking **1563 current: $4567, Chase Checking **3052 current: $1202)
 **When**: immediately when condition is met for the next 3 months
+
 output:
 ```python
 def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
     # Accumulate reminder messages in reminder_messages
     reminder_messages = []
     
-    # Hardcode Reminder Start Date from Today's date
-    reminder_start_date = date(2025, 11, 1)
-    reminder_end_date = reminder_start_date + timedelta(months=3)
+    # Hardcode Reminder Start Date from a specific date (convert to datetime for get_after_periods)
+    reminder_start_date = datetime(2025, 11, 1)
+    reminder_end_date = get_after_periods(reminder_start_date, "monthly", 3)
     
-    today = date.today()
-    tomorrow = today + timedelta(days=1)
+    today = datetime.today()
+    tomorrow = get_after_periods(today, "daily", 1)
+    
+    today_date = today.date()
+    reminder_end_date_date = reminder_end_date.date()
+    tomorrow_date = tomorrow.date()
     threshold = 1000.0
     
     # Retrieve accounts data to check checking account balances
@@ -151,8 +198,8 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
     
     if checking_accounts.empty:
         reminder_messages.append("No checking accounts found.")
-        if tomorrow <= reminder_end_date:
-            return None, tomorrow
+        if tomorrow_date <= reminder_end_date_date:
+            return None, tomorrow_date
         else:
             return None, None
     
@@ -166,8 +213,8 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
         return chr(10).join(reminder_messages), None
     else:
         reminder_messages.append(f"Your checking account balance is currently ${{min_balance:.2f}}, which is above the threshold of ${{threshold:.2f}}.")
-        if tomorrow <= reminder_end_date:
-            return None, tomorrow
+        if tomorrow_date <= reminder_end_date_date:
+            return None, tomorrow_date
         else:
             return None, None
 ```
@@ -188,7 +235,7 @@ class ShouldRemindGenerator:
     
     # Model Configuration
     if "-thinking" in model_name:
-      self.thinking_budget = 2048
+      self.thinking_budget = 4096
       self.model_name = model_name.replace("-thinking", "")
     else:
       self.thinking_budget = 0
@@ -197,7 +244,7 @@ class ShouldRemindGenerator:
     # Generation Configuration Constants
     self.temperature = 0.2
     self.top_p = 0.95
-    self.max_output_tokens = 2048
+    self.max_output_tokens = 4096
     
     # Safety Settings
     self.safety_settings = [
@@ -453,6 +500,14 @@ def should_remind(what: str, when: str, get_accounts_df=None, get_transactions_d
         'date': date,
         'pd': pd,
         'chr': chr,  # For chr(10) to join messages
+        'get_start_of_week': get_start_of_week,
+        'get_end_of_week': get_end_of_week,
+        'get_start_of_month': get_start_of_month,
+        'get_end_of_month': get_end_of_month,
+        'get_start_of_year': get_start_of_year,
+        'get_end_of_year': get_end_of_year,
+        'get_after_periods': get_after_periods,
+        'get_date_string': get_date_string,
       }
       
       # Execute the code to define the should_remind function
