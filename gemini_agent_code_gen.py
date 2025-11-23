@@ -87,9 +87,6 @@ These functions are already implemented:
 - `utter_account_totals(df: pd.DataFrame, template: str) -> str`
   - takes filtered `df` and calculates total balances and returns a formatted string based on `template`.
   - Template placeholders: any column from the DataFrame
-- `utter_net_worth(total_assets: float, total_liabilities: float, template: str) -> str`
-  - calculates net worth and returns a formatted string with state descriptions.
-  - Template placeholders: `{{net_worth_state_with_amount}}`, `{{total_asset_state_with_amount}}`, `{{total_liability_state_with_amount}}`
 - `retrieve_income_transactions() -> pd.DataFrame`
   - retrieves income transactions and returns a pandas DataFrame. It may be empty if no income transactions exist.
   - DataFrame columns: `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str)
@@ -100,13 +97,12 @@ These functions are already implemented:
   - takes filtered `df` and generates a formatted string based on `template` and returns metadata.
   - Template placeholders: any column from the DataFrame and `{{amount_and_direction}}`
   - use this method to list transactions
-- `utter_spending_transaction_total(df: pd.DataFrame, template: str) -> str`
-  - takes filtered spending transaction `df` and `template` string, calculates total spending transaction amounts and returns a formatted string.
-  - Template placeholder: `{{verb_and_total_amount}}` (e.g., "spent $500" or "received $100")
-- `utter_income_transaction_total(df: pd.DataFrame, template: str) -> str`
-  - takes filtered income transaction `df` and `template` string, calculates total income transaction amounts and returns a formatted string.
-  - Template placeholder: `{{verb_and_total_amount}}` (e.g., "earned $5000" or "returned $200")
-- `compare_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> str`
+- `utter_transaction_total(df: pd.DataFrame, template: str) -> str`
+  - takes filtered transaction `df` and `template` string, calculates total transaction amounts and returns a formatted string.
+  - Automatically determines if transactions are income or spending based on category column.
+  - Template placeholders: `{{income_total_amount}}`, `{{spending_total_amount}}`.
+  - Example: "Total income: {{income_total_amount}}" or "Total spending: {{spending_total_amount}}"
+- `compare_income_or_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> str`
   - compares spending between two categories or groups. If `df` has 'group' column, compares by groups; otherwise by category.
   - Template placeholders: `{{first_amount}}`, `{{second_amount}}`, `{{first_label}}`, `{{second_label}}`, `{{difference}}`, `{{first_total}}`, `{{second_total}}`, `{{first_count}}`, `{{second_count}}`, `{{count_difference}}`, `{{more_label}}`, `{{more_amount}}`, `{{more_total}}`, `{{more_count}}`, `{{less_label}}`, `{{less_amount}}`, `{{less_total}}`, `{{less_count}}`
 - `retrieve_spending_forecasts(granularity: str = 'monthly') -> pd.DataFrame`
@@ -136,14 +132,10 @@ These functions are already implemented:
   - formats an income forecast amount with appropriate verb and direction.
   - `amount`: Income forecast amount (negative = inflow/earned, positive = outflow/returned)
   - Template placeholders: `{{verb_and_amount}}`, `{{amount_and_direction}}`, `{{verb}}`, `{{amount}}`, `{{direction}}`
-- `utter_balance(amount: float, template: str) -> str`
-  - formats a balance amount (positive or negative) with appropriate sign and direction.
-  - Use for: account balances (balance_available, balance_current, remaining_balance), balance differences (shortfall, deficit_after), or any financial amount representing a balance that can be positive or negative.
-  - Template placeholder: `{{amount_with_direction}}` (e.g., "$1000" or "$500 deficit")
-- `utter_amount(amount: float, template: str) -> str`
-  - formats a transaction total amount as a positive number (always displays as positive, no sign indicators).
-  - Use for: transaction totals or any financial amount that should be displayed as a simple positive number.
-  - Template placeholder: `{{amount}}`
+- `utter_absolute_amount(amount: float, template: str) -> str`
+  - formats an absolute amount with support for both simple and directional formatting.
+  - Use for: account balances (balance_available, balance_current, remaining_balance), balance differences (shortfall, deficit_after), transaction totals, or any financial amount that should be displayed as an absolute value.
+  - Template placeholders: `{{amount}}` (absolute value), `{{amount_with_direction}}` (e.g., "$1000" or "$500 deficit")
 - `retrieve_subscriptions() -> pd.DataFrame`
   - Returns a pandas DataFrame with subscription transaction data. May be empty if no subscription transactions exist.
   - DataFrame columns: `transaction_id` (int), `user_id` (int), `account_id` (int), `date` (datetime), `transaction_name` (str), `amount` (float), `category` (str), `subscription_name` (str), `confidence_score_bills` (float), `reviewer_bills` (str)
@@ -399,9 +391,12 @@ def process_input():
     # Calculate totals
     total_assets = assets_df['balance_current'].sum() if not assets_df.empty else 0.0
     total_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
+    net_worth = total_assets - total_liabilities
     
-    # Use utter_net_worth to format the message
-    print(utter_net_worth(total_assets, total_liabilities, "You have a {net_worth_state_with_amount}, with a {total_asset_state_with_amount} and a {total_liability_state_with_amount}."))
+    # Output assets, liabilities, and net worth
+    print(f"Assets: {utter_absolute_amount(total_assets, '{amount_with_direction}')}")
+    print(f"Liabilities: {utter_absolute_amount(total_liabilities, '{amount_with_direction}')}")
+    print(f"Net Worth: {utter_absolute_amount(net_worth, '{amount_with_direction}')}")
 
     return True, metadata
 ```
@@ -441,7 +436,7 @@ def process_input():
       return True, metadata
     
     # Compare spending between categories
-    result = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+    result = compare_income_or_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
     print(result)
     
     return True, metadata
@@ -487,27 +482,27 @@ def process_input():
     # Calculate remaining balance after spending
     remaining_balance = current_balance - total_spending
     
-    # Format amounts using utter_balance
-    current_balance_str = utter_balance(current_balance, "{amount_with_direction}")
+    # Format amounts using utter_absolute_amount
+    current_balance_str = utter_absolute_amount(current_balance, "{amount_with_direction}")
     total_spending_str = utter_spending_forecast_amount(total_spending, "{amount_and_direction}")
     
     # Determine affordability and format message
     if current_balance < 0:
       if total_spending < 0:
         # Refund would reduce the deficit
-        deficit_after_str = utter_balance(remaining_balance, "{amount_with_direction}")
+        deficit_after_str = utter_absolute_amount(remaining_balance, "{amount_with_direction}")
         print(f"You have {current_balance_str} in your checking and savings accounts. However, your projected refunds of {total_spending_str} would leave you with {deficit_after_str}.")
       else:
         # Additional spending would increase the deficit
-        deficit_after_str = utter_balance(remaining_balance, "{amount_with_direction}")
+        deficit_after_str = utter_absolute_amount(remaining_balance, "{amount_with_direction}")
         print(f"You have {current_balance_str} in your checking and savings accounts. You cannot afford additional spending. Your projected total spending is {total_spending_str}, which would leave you with {deficit_after_str}.")
     elif current_balance >= total_spending:
-      remaining_balance_str = utter_balance(remaining_balance, "{amount_with_direction}")
+      remaining_balance_str = utter_absolute_amount(remaining_balance, "{amount_with_direction}")
       print(f"You can afford a couple months of fun. Your checking and savings accounts have {current_balance_str} available. Your projected total spending is {total_spending_str}, leaving you with {remaining_balance_str} remaining.")
     else:
       # Need more money
       shortfall = total_spending - current_balance
-      shortfall_str = utter_balance(shortfall, "{amount_with_direction}")
+      shortfall_str = utter_absolute_amount(shortfall, "{amount_with_direction}")
       print(f"You cannot afford a couple months of fun. Your checking and savings accounts have {current_balance_str} available. However, your projected total spending is {total_spending_str}, so you would need {shortfall_str} more.")
     
     return True, metadata
@@ -582,7 +577,7 @@ def process_input():
         print("Here is your income from the past few weeks:")
         for_print = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
         print(for_print)
-        print(utter_income_transaction_total(past_income_df, "In total, you {verb_and_total_amount} from the past few weeks."))
+        print(utter_transaction_total(past_income_df, "In total, you {income_total_amount} from the past few weeks."))
     
     # Check upcoming weeks (forecasts)
     print("\nUpcoming weeks:")
@@ -701,11 +696,11 @@ def process_input():
     total_income = past_4_months_income_df['amount'].sum() if not past_4_months_income_df.empty else 0.0
     total_spending = past_4_months_spending_df['amount'].sum() if not past_4_months_spending_df.empty else 0.0
     transaction_total = total_income + total_spending
-    transaction_total_str = utter_amount(transaction_total, "{amount}")
+    transaction_total_str = utter_absolute_amount(transaction_total, "{amount}")
     
     # Format messages
-    income_msg = utter_income_transaction_total(past_4_months_income_df, "Total income: {verb_and_total_amount}") if not past_4_months_income_df.empty else "No income transactions found."
-    spending_msg = utter_spending_transaction_total(past_4_months_spending_df, "Total spending: {verb_and_total_amount}") if not past_4_months_spending_df.empty else "No spending transactions found."
+    income_msg = utter_transaction_total(past_4_months_income_df, "Total income: {income_total_amount}") if not past_4_months_income_df.empty else "No income transactions found."
+    spending_msg = utter_transaction_total(past_4_months_spending_df, "Total spending: {spending_total_amount}") if not past_4_months_spending_df.empty else "No spending transactions found."
     
     print(f"Checking monthly savings over the past 4 months:")
     print(f"  {income_msg}")

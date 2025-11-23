@@ -21,19 +21,17 @@ from penny.tool_funcs.retrieve_accounts import (
     retrieve_depository_accounts_function_code_gen,
     retrieve_credit_accounts_function_code_gen,
     account_names_and_balances,
-    utter_account_totals,
-    utter_net_worth
+    utter_account_totals
 )
 from penny.tool_funcs.retrieve_transactions import (
     retrieve_income_transactions_function_code_gen,
     retrieve_spending_transactions_function_code_gen,
     transaction_names_and_amounts,
-    utter_spending_transaction_total,
-    utter_income_transaction_total
+    utter_transaction_total
 )
-from penny.tool_funcs.compare_spending import compare_spending
+from penny.tool_funcs.compare_income_or_spending import compare_income_or_spending
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
-from penny.tool_funcs.forecast_utils import utter_amount, utter_income_forecast_totals, utter_spending_forecast_totals, forecast_dates_and_amount, utter_spending_forecast_amount, utter_income_forecast_amount, utter_balance
+from penny.tool_funcs.forecast_utils import utter_absolute_amount, utter_income_forecast_totals, utter_spending_forecast_totals, forecast_dates_and_amount, utter_spending_forecast_amount, utter_income_forecast_amount
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from penny.tool_funcs.date_utils import get_start_of_month, get_end_of_month, get_start_of_week, get_end_of_week, get_after_periods, get_date_string
 user_id = 1
@@ -137,9 +135,12 @@ def process_input_what_is_my_net_worth():
     # Calculate totals
     total_assets = assets_df['balance_current'].sum() if not assets_df.empty else 0.0
     total_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
+    net_worth = total_assets - total_liabilities
     
-    # Use utter_net_worth to format the message
-    print(utter_net_worth(total_assets, total_liabilities, "You have a {net_worth_state_with_amount}, with a {total_asset_state_with_amount} and a {total_liability_state_with_amount}."))
+    # Output assets, liabilities, and net worth
+    print(f"Assets: {utter_absolute_amount(total_assets, '{amount_with_direction}')}")
+    print(f"Liabilities: {utter_absolute_amount(total_liabilities, '{amount_with_direction}')}")
+    print(f"Net Worth: {utter_absolute_amount(net_worth, '{amount_with_direction}')}")
 
     return True, metadata
 
@@ -175,7 +176,7 @@ def process_input_did_i_spend_more_on_dining_out_over_groceries_last_month():
       return True, metadata
     
     # Compare spending between categories
-    result = compare_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
+    result = compare_income_or_spending(df, 'You spent ${difference} more on {more_label} (${more_amount}, {more_count} transactions) over {less_label} (${less_amount}, {less_count} transactions).')
     print(result)
     
     return True, metadata
@@ -218,10 +219,10 @@ def process_input_can_i_afford_to_pay_a_couple_months_of_fun_with_what_i_have_no
     # Calculate remaining balance after spending
     remaining_balance = current_balance - total_spending
     
-    # Format amounts using utter_balance
-    current_balance_str = utter_balance(current_balance, "{amount_with_direction}")
+    # Format amounts using utter_absolute_amount
+    current_balance_str = utter_absolute_amount(current_balance, "{amount_with_direction}")
     total_spending_str = utter_spending_forecast_amount(total_spending, "{amount_and_direction}")
-    remaining_balance_str = utter_balance(remaining_balance, "{amount_with_direction}")
+    remaining_balance_str = utter_absolute_amount(remaining_balance, "{amount_with_direction}")
     
     # Determine affordability and format message
     if current_balance < 0:
@@ -237,7 +238,7 @@ def process_input_can_i_afford_to_pay_a_couple_months_of_fun_with_what_i_have_no
     else:
       # Need more money
       shortfall = total_spending - current_balance
-      shortfall_str = utter_balance(shortfall, "{amount_with_direction}")
+      shortfall_str = utter_absolute_amount(shortfall, "{amount_with_direction}")
       print(f"You cannot afford a couple months of fun. Your checking and savings accounts have {current_balance_str} available. However, your projected total spending is {total_spending_str}, so you would need {shortfall_str} more.")
     
     return True, metadata
@@ -277,11 +278,11 @@ def process_input_have_i_been_saving_anything_monthly_in_the_past_4_months():
     total_income = past_4_months_income_df['amount'].sum() if not past_4_months_income_df.empty else 0.0
     total_spending = past_4_months_spending_df['amount'].sum() if not past_4_months_spending_df.empty else 0.0
     transaction_total = total_income + total_spending
-    transaction_total_str = utter_amount(transaction_total, "{amount}")
+    transaction_total_str = utter_absolute_amount(transaction_total, "{amount}")
     
     # Format messages
-    income_msg = utter_income_transaction_total(past_4_months_income_df, "Total income: {verb_and_total_amount}") if not past_4_months_income_df.empty else "No income transactions found."
-    spending_msg = utter_spending_transaction_total(past_4_months_spending_df, "Total spending: {verb_and_total_amount}") if not past_4_months_spending_df.empty else "No spending transactions found."
+    income_msg = utter_transaction_total(past_4_months_income_df, "Total income: {income_total_amount}") if not past_4_months_income_df.empty else "No income transactions found."
+    spending_msg = utter_transaction_total(past_4_months_spending_df, "Total spending: {spending_total_amount}") if not past_4_months_spending_df.empty else "No spending transactions found."
     
     print(f"Checking monthly savings over the past 4 months:")
     print(f"  {income_msg}")
@@ -360,7 +361,7 @@ def process_input_did_i_get_any_income_in_last_few_weeks_and_what_about_upcoming
         print("Here is your income from the past few weeks:")
         for_print = transaction_names_and_amounts(past_income_df, "{amount_and_direction} {transaction_name} on {date}.")
         print(for_print)
-        print(utter_income_transaction_total(past_income_df, "In total, you {verb_and_total_amount} from the past few weeks."))
+        print(utter_transaction_total(past_income_df, "In total, you {income_total_amount} from the past few weeks."))
     
     # Check upcoming weeks (forecasts)
     print("\nUpcoming weeks:")
@@ -583,7 +584,7 @@ def process_input_how_much_eating_out_have_I_done():
     print("Here are your eating out transactions:")
     for_print = transaction_names_and_amounts(df, "{amount_and_direction} {transaction_name} on {date}.")
     print(for_print)
-    print(utter_spending_transaction_total(df, "In total, you {verb_and_total_amount} on eating out."))
+    print(utter_transaction_total(df, "In total, you {spending_total_amount} on eating out."))
     
     return True, metadata
 
@@ -615,7 +616,10 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
     # Net Worth
     total_assets = assets_df['balance_current'].sum() if not assets_df.empty else 0.0
     total_liabilities = credit_df['balance_current'].sum() if not credit_df.empty else 0.0
-    print(utter_net_worth(total_assets, total_liabilities, "Net Worth: {net_worth_state_with_amount}."))
+    net_worth = total_assets - total_liabilities
+    print(f"Assets: {utter_absolute_amount(total_assets, '{amount_with_direction}')}")
+    print(f"Liabilities: {utter_absolute_amount(total_liabilities, '{amount_with_direction}')}")
+    print(f"Net Worth: {utter_absolute_amount(net_worth, '{amount_with_direction}')}")
 
     # --- 2. Income vs Spending Comparison (Last Month) ---
     print("\n--- Income vs Spending Comparison (Last Month) ---")
@@ -637,8 +641,8 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
         total_income_last_month = last_month_income_df['amount'].sum() if not last_month_income_df.empty else 0.0
         total_spending_last_month = last_month_spending_df['amount'].sum() if not last_month_spending_df.empty else 0.0
         
-        income_msg = utter_income_transaction_total(last_month_income_df, "Total Income: {verb_and_total_amount}")
-        spending_msg = utter_spending_transaction_total(last_month_spending_df, "Total Spending: {verb_and_total_amount}")
+        income_msg = utter_transaction_total(last_month_income_df, "Total Income: {income_total_amount}")
+        spending_msg = utter_transaction_total(last_month_spending_df, "Total Spending: {spending_total_amount}")
         
         net_flow = total_income_last_month + total_spending_last_month # Since spending amounts are positive (outflow)
         

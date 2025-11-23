@@ -29,24 +29,22 @@ Today: |TODAY_DATE|.
 
 - `retrieve_depository_accounts() -> pd.DataFrame`: checking, savings. Cols: account_type, account_name, balance_available, balance_current
 - `retrieve_credit_accounts() -> pd.DataFrame`: credit, loans. Cols: account_type, account_name, balance_available, balance_current, balance_limit
-- `account_names_and_balances(df, template) -> str`: Format account list.
-- `utter_account_totals(df, template) -> str`: Sum balances and format.
+- `account_names_and_balances(df, template) -> str`: Format account list. Placeholders: any df col.
 - `retrieve_income_transactions() -> pd.DataFrame`: Past income. Cols: date, transaction_name, amount, category, transaction_id, account_id
 - `retrieve_spending_transactions() -> pd.DataFrame`: Past spending. Cols: date, transaction_name, amount, category, transaction_id, account_id
-- `transaction_names_and_amounts(df, template) -> str`: List transactions. Placeholders: {amount_with_direction}, {transaction_id}, {account_id}, and any DataFrame column
-- `utter_transaction_total(df, template) -> str`: Sum transactions (auto-detects income vs spending from category). Placeholders: {income_total_amount}, {spending_total_amount}. Example: "Total income: {income_total_amount}" or "Total spending: {spending_total_amount}"
-- `compare_income_or_spending(df, template, metadata=None) -> str`: Compare 2 groups. Placeholders: {difference}, {more_label}, {more_amount}, {less_label}, {less_amount}
+- `transaction_names_and_amounts(df, template) -> str`: List transactions. Placeholders: {amount}, and any df col.
+- `utter_transaction_total(df, template) -> str`: Sum transactions then use correct placeholder for income or spending. Placeholders: {income_total_amount}, {spending_total_amount}. Example: "Total income: {income_total_amount}" or "Total spending: {spending_total_amount}"
 - `retrieve_spending_forecasts(granularity='monthly') -> pd.DataFrame`: Future spending. Cols: start_date, forecasted_amount, category
 - `retrieve_income_forecasts(granularity='monthly') -> pd.DataFrame`: Future income. Cols: start_date, forecasted_amount, category
-- `forecast_dates_and_amount(df, template) -> str`: List forecasts.
-- `utter_income_forecast_totals(df, template) -> str`: Sum income forecasts. Placeholders: {verb_and_total_amount}
-- `utter_spending_forecast_totals(df, template) -> str`: Sum spending forecasts. Placeholders: {verb_and_total_amount}
-- `utter_spending_forecast_amount(amount, template) -> str`: Format spending forecast.
-- `utter_income_forecast_amount(amount, template) -> str`: Format income forecast.
+- `forecast_dates_and_amount(df, template) -> str`: List forecasts. Placeholders: any df col.
+- `utter_income_forecast_totals(df, template) -> str`: Sum income forecasts. Placeholders: {total_amount}. Example: "Total forecast: {total_amount}"
+- `utter_spending_forecast_totals(df, template) -> str`: Sum spending forecasts. Placeholders: {total_amount}. Example: "Total forecast: {total_amount}"
+- `utter_spending_forecast_amount(amount, template) -> str`: Format spending forecast. Placeholders: {amount}
+- `utter_income_forecast_amount(amount, template) -> str`: Format income forecast. Placeholders: {amount}
 - `utter_absolute_amount(amount, template) -> str`: Format absolute amount. Placeholders: {amount}, {amount_with_direction}
 - `retrieve_subscriptions() -> pd.DataFrame`: Cols: transaction_name, amount, category, subscription_name, date
-- `subscription_names_and_amounts(df, template) -> str`: List subscriptions.
-- `utter_subscription_totals(df, template) -> str`: Sum subscriptions.
+- `subscription_names_and_amounts(df, template) -> str`: List subscriptions. Placeholders: {amount}, and any df col.
+- `utter_subscription_totals(df, template) -> str`: Sum subscriptions. Placeholders: {total_amount}. Example: "Total subscriptions: {total_amount}"
 
 </IMPLEMENTED_FUNCTIONS>
 
@@ -159,7 +157,7 @@ def process_input():
     return True, chr(10).join(output_lines)
 ```
 
-input: User: How did my income compare to my spending last year?
+input: User: How did my income compare to my discretionary spending last year?
 output:
 ```python
 def process_input():
@@ -173,6 +171,11 @@ def process_input():
     inc = inc[(inc['date'] >= start) & (inc['date'] <= end)] if not inc.empty else pd.DataFrame()
     sp = sp[(sp['date'] >= start) & (sp['date'] <= end)] if not sp.empty else pd.DataFrame()
     
+    if not sp.empty:
+        sp = sp[sp['category'].str.startswith('meals') | sp['category'].str.startswith('shopping') | sp['category'].str.startswith('leisure') | (sp['category'] == 'donations_gifts')]
+    else:
+        sp = pd.DataFrame()
+    
     if inc.empty and sp.empty:
         return True, "No data last year."
         
@@ -182,7 +185,17 @@ def process_input():
     
     output_lines.append(f"Last Year ({start.year}):")
     output_lines.append(f"Income: {utter_absolute_amount(i_val, '{amount}')}")
-    output_lines.append(f"Spending: {utter_absolute_amount(s_val, '{amount}')}")
+    output_lines.append("Discretionary Spending:")
+    
+    if not sp.empty:
+        for cat in sorted(sp['category'].unique()):
+            cat_sp = sp[sp['category'] == cat]
+            cat_val = cat_sp['amount'].sum()
+            output_lines.append(f"  - {cat}: {utter_absolute_amount(cat_val, '{amount}')}")
+    else:
+        output_lines.append("  (No discretionary spending)")
+    
+    output_lines.append(f"Total Discretionary: {utter_absolute_amount(s_val, '{amount}')}")
     output_lines.append(f"Net: {utter_absolute_amount(diff, '{amount_with_direction}')}")
     return True, chr(10).join(output_lines)
 ```
@@ -572,6 +585,90 @@ def test_comprehensive_financial_health_overview(lookup_data: LookupUserDataOpti
   """
   last_user_request = "Provide a comprehensive overview of current account balances, recent income, and spending patterns to assess financial health."
   return _run_test_with_logging(last_user_request, lookup_data)
+
+
+def test_discretionary_spending_example_snippet(user_id: int = None):
+  """
+  Test method that directly tests the discretionary spending example snippet.
+  
+  Args:
+    user_id: User ID for sandbox execution (default: HeavyDataUser ID from database)
+  """
+  # Get HeavyDataUser ID if not provided
+  if user_id is None:
+    user_id = _get_heavy_data_user_id()
+  
+  # Extract the code snippet from the example
+  example_code = """def process_input():
+    output_lines = []
+    start = get_start_of_year(get_after_periods(datetime.now(), 'yearly', -1))
+    end = get_end_of_year(start)
+    
+    inc = retrieve_income_transactions()
+    sp = retrieve_spending_transactions()
+    
+    inc = inc[(inc['date'] >= start) & (inc['date'] <= end)] if not inc.empty else pd.DataFrame()
+    sp = sp[(sp['date'] >= start) & (sp['date'] <= end)] if not sp.empty else pd.DataFrame()
+    
+    if not sp.empty:
+        sp = sp[sp['category'].str.startswith('meals') | sp['category'].str.startswith('shopping') | sp['category'].str.startswith('leisure') | (sp['category'] == 'donations_gifts')]
+    else:
+        sp = pd.DataFrame()
+    
+    if inc.empty and sp.empty:
+        return True, "No data last year."
+        
+    i_val = inc['amount'].sum() if not inc.empty else 0
+    s_val = sp['amount'].sum() if not sp.empty else 0
+    diff = i_val - s_val
+    
+    output_lines.append(f"Last Year ({start.year}):")
+    output_lines.append(f"Income: {utter_absolute_amount(i_val, '{amount}')}")
+    output_lines.append("Discretionary Spending:")
+    
+    if not sp.empty:
+        for cat in sorted(sp['category'].unique()):
+            cat_sp = sp[sp['category'] == cat]
+            cat_val = cat_sp['amount'].sum()
+            output_lines.append(f"  - {cat}: {utter_absolute_amount(cat_val, '{amount}')}")
+    else:
+        output_lines.append("  (No discretionary spending)")
+    
+    output_lines.append(f"Total Discretionary: {utter_absolute_amount(s_val, '{amount}')}")
+    output_lines.append(f"Net: {utter_absolute_amount(diff, '{amount_with_direction}')}")
+    return True, chr(10).join(output_lines)"""
+  
+  print("=" * 80)
+  print("TESTING DISCRETIONARY SPENDING EXAMPLE SNIPPET:")
+  print("=" * 80)
+  print()
+  
+  # Execute the code in sandbox
+  print("Executing code snippet...")
+  print("-" * 80)
+  try:
+    success, output_string, logs = sandbox.execute_agent_with_tools(example_code, user_id)
+    
+    print(f"Success: {success}")
+    print()
+    print("Output:")
+    print("-" * 80)
+    print(output_string)
+    print("-" * 80)
+    print()
+    if logs:
+      print("Logs:")
+      print("-" * 80)
+      print(logs)
+      print("-" * 80)
+      print()
+  except Exception as e:
+    print(f"**Sandbox Execution Error**: {str(e)}")
+    import traceback
+    print(traceback.format_exc())
+  print("=" * 80)
+  
+  return example_code
 
 def main(batch: int = 1):
   """

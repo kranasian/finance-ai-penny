@@ -633,75 +633,51 @@ def utter_income_forecast_amount(amount: float, template: str) -> str:
   return result
 
 
-def utter_balance(amount: float, template: str) -> str:
-  """Format a balance amount (positive or negative) with appropriate sign and direction.
+def utter_absolute_amount(amount: float, template: str) -> str:
+  """Format an absolute amount with support for both simple and directional formatting.
   
   Use this method for:
   - Account balances (balance_available, balance_current, remaining_balance)
   - Balance differences (shortfall, deficit_after)
-  - Any financial amount representing a balance or difference that can be positive or negative
+  - Transaction totals (always displays as positive, no sign indicators)
+  - Any financial amount that should be displayed as an absolute value
   
   Args:
-    amount: Balance value (positive or negative)
-    template: Template string with placeholder:
+    amount: Amount value (positive or negative, will be displayed as absolute value)
+    template: Template string with placeholders:
+      - {amount}: Amount formatted as positive number. If template doesn't include "$", dollar sign will be added automatically.
       - {amount_with_direction}: Amount with direction indicator (e.g., "$1000" or "$500 deficit")
   
   Returns:
-    Formatted string with balance amount.
+    Formatted string with amount. Supports both {amount} and {amount_with_direction} placeholders.
   """
-  log(f"**Balance**: Amount: ${amount:.0f}")
+  log(f"**Absolute Amount**: Amount: ${amount:.0f}")
   
   # Determine if negative
   is_negative = amount < 0
-  
-  # Format amount strings
-  amount_abs = abs(amount)
-  amount_str = f"${amount_abs:.0f}"
-  
-  # Amount with direction: "$X deficit" for negative, "$X" for positive
-  if is_negative:
-    amount_with_direction_str = f"{amount_str} deficit"
-  else:
-    amount_with_direction_str = amount_str
-  
-  format_dict = {
-    'amount_with_direction': amount_with_direction_str,
-  }
-  
-  result = template.format(**format_dict)
-  log(f"**Balance Utterance**: `{result}`")
-  return result
-
-
-def utter_amount(amount: float, template: str) -> str:
-  """Format a transaction total amount as a positive number.
-  
-  Use this method for:
-  - Transaction totals (always displays as positive, no sign indicators)
-  - Any financial amount that should be displayed as a simple positive number
-  
-  Args:
-    amount: Transaction amount (positive or negative, will be displayed as absolute value)
-    template: Template string with placeholder:
-      - {amount}: Amount formatted as positive number. If template doesn't include "$", dollar sign will be added automatically.
-  
-  Returns:
-    Formatted string with amount (always positive, no commas, 0 decimals). Dollar sign added if not in template.
-  """
-  log(f"**Amount**: Amount: ${amount:.0f}")
   
   # Format as positive number (absolute value), no commas, 0 decimals
   amount_abs = abs(amount)
   amount_str = f"{amount_abs:.0f}"
   
-  # Add dollar sign if template doesn't already include it
+  # Add dollar sign if template doesn't already include it (for {amount} placeholder)
   if "$" not in template:
-    amount_str = f"${amount_str}"
+    amount_str_with_dollar = f"${amount_str}"
+  else:
+    amount_str_with_dollar = amount_str
+  
+  # Amount with direction: "$X deficit" for negative, "$X" for positive
+  if is_negative:
+    amount_with_direction_str = f"{amount_str_with_dollar} deficit"
+  else:
+    amount_with_direction_str = amount_str_with_dollar
   
   format_dict = {
-    'amount': amount_str,
+    'amount': amount_with_direction_str,
+    "total_amount": amount_with_direction_str,
+    'amount_with_direction': amount_with_direction_str,
   }
   
   result = template.format(**format_dict)
-  log(f"**Amount Utterance**: `{result}`")
+  log(f"**Absolute Amount Utterance**: `{result}`")
   return result

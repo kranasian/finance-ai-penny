@@ -16,20 +16,18 @@ from penny.tool_funcs.retrieve_accounts import (
     retrieve_depository_accounts_function_code_gen,
     retrieve_credit_accounts_function_code_gen,
     account_names_and_balances,
-    utter_account_totals,
-    utter_net_worth
+    utter_account_totals
 )
 from penny.tool_funcs.retrieve_transactions import (
     retrieve_income_transactions_function_code_gen,
     retrieve_spending_transactions_function_code_gen,
     transaction_names_and_amounts,
-    utter_spending_transaction_total,
-    utter_income_transaction_total
+    utter_transaction_total
 )
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
-from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_income_forecast_totals, utter_spending_forecast_totals, utter_spending_forecast_amount, utter_income_forecast_amount, utter_balance, utter_amount
-from penny.tool_funcs.compare_spending import compare_spending
+from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_income_forecast_totals, utter_spending_forecast_totals, utter_spending_forecast_amount, utter_income_forecast_amount, utter_absolute_amount
+from penny.tool_funcs.compare_income_or_spending import compare_income_or_spending
 from penny.tool_funcs.respond_to_app_inquiry import respond_to_app_inquiry
 from penny.tool_funcs.date_utils import (
     get_date,
@@ -283,9 +281,6 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_account_totals_wrapper(df: pd.DataFrame, template: str):
     return utter_account_totals(df, template)
   
-  def utter_net_worth_wrapper(total_assets: float, total_liabilities: float, template: str):
-    return utter_net_worth_internal(total_assets, total_liabilities, template)
-  
   # Create wrapper functions for transaction retrieval
   def retrieve_income_transactions_wrapper():
     return retrieve_income_transactions(user_id)
@@ -315,11 +310,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def transaction_names_and_amounts_wrapper(df: pd.DataFrame, template: str):
     return transaction_names_and_amounts(df, template)
   
-  def utter_spending_transaction_total_wrapper(df: pd.DataFrame, template: str):
-    return utter_spending_transaction_total(df, template)
-  
-  def utter_income_transaction_total_wrapper(df: pd.DataFrame, template: str):
-    return utter_income_transaction_total(df, template)
+  def utter_transaction_total_wrapper(df: pd.DataFrame, template: str):
+    return utter_transaction_total(df, template)
   
   def forecast_dates_and_amount_wrapper(df: pd.DataFrame, template: str):
     return forecast_dates_and_amount(df, template)
@@ -336,14 +328,11 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def utter_income_forecast_amount_wrapper(amount: float, template: str):
     return utter_income_forecast_amount(amount, template)
   
-  def utter_balance_wrapper(amount: float, template: str):
-    return utter_balance(amount, template)
+  def utter_absolute_amount_wrapper(amount: float, template: str):
+    return utter_absolute_amount(amount, template)
   
-  def utter_amount_wrapper(amount: float, template: str):
-    return utter_amount(amount, template)
-  
-  def compare_spending_wrapper(df: pd.DataFrame, template: str, metadata: dict = None):
-    return compare_spending(df, template, metadata)
+  def compare_income_or_spending_wrapper(df: pd.DataFrame, template: str, metadata: dict = None):
+    return compare_income_or_spending(df, template, metadata)
   
   def respond_to_app_inquiry_wrapper(inquiry: str):
     return respond_to_app_inquiry(inquiry)
@@ -375,7 +364,6 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "retrieve_credit_accounts": retrieve_credit_accounts_wrapper,
     "account_names_and_balances": account_names_and_balances_wrapper,
     "utter_account_totals": utter_account_totals_wrapper,
-    "utter_net_worth": utter_net_worth_wrapper,
     "retrieve_income_transactions": retrieve_income_transactions_wrapper,
     "retrieve_spending_transactions": retrieve_spending_transactions_wrapper,
     "retrieve_spending_forecasts": retrieve_spending_forecasts_wrapper,
@@ -384,16 +372,14 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "subscription_names_and_amounts": subscription_names_and_amounts_wrapper,
     "utter_subscription_totals": utter_subscription_totals_wrapper,
     "transaction_names_and_amounts": transaction_names_and_amounts_wrapper,
-    "utter_spending_transaction_total": utter_spending_transaction_total_wrapper,
-    "utter_income_transaction_total": utter_income_transaction_total_wrapper,
+    "utter_transaction_total": utter_transaction_total_wrapper,
     "forecast_dates_and_amount": forecast_dates_and_amount_wrapper,
     "utter_income_forecast_totals": utter_income_forecast_totals_wrapper,
     "utter_spending_forecast_totals": utter_spending_forecast_totals_wrapper,
     "utter_spending_forecast_amount": utter_spending_forecast_amount_wrapper,
     "utter_income_forecast_amount": utter_income_forecast_amount_wrapper,
-    "utter_balance": utter_balance_wrapper,
-    "utter_amount": utter_amount_wrapper,
-    "compare_spending": compare_spending_wrapper,
+    "utter_absolute_amount": utter_absolute_amount_wrapper,
+    "compare_income_or_spending": compare_income_or_spending_wrapper,
     "respond_to_app_inquiry": respond_to_app_inquiry_wrapper,
     "utter_delta_from_now": utter_delta_from_now,
     "reminder_data": reminder_data,
@@ -472,11 +458,6 @@ def retrieve_depository_accounts(user_id: int = 1):
 def retrieve_credit_accounts(user_id: int = 1):
   """Internal function to retrieve credit accounts - available to executed code"""
   return retrieve_credit_accounts_function_code_gen(user_id)
-
-
-def utter_net_worth_internal(total_assets: float, total_liabilities: float, template: str):
-  """Internal function to utter net worth - available to executed code"""
-  return utter_net_worth(total_assets, total_liabilities, template)
 
 
 def retrieve_income_transactions(user_id: int = 1):
