@@ -74,13 +74,13 @@ def get_after_periods(date: datetime, granularity: str, count: int) -> datetime:
     date_obj = pd.to_datetime(date)
     g = (granularity or "").lower()
     
-    if g == "daily" or g == "day":
+    if g == "daily" or g == "day" or g == "days":
         result = date_obj + pd.DateOffset(days=count)
-    elif g == "weekly" or g == "week":
+    elif g == "weekly" or g == "week" or g == "weeks":
         result = date_obj + pd.DateOffset(weeks=count)
-    elif g == "monthly" or g == "month":
+    elif g == "monthly" or g == "month" or g == "months":
         result = date_obj + pd.DateOffset(months=count)
-    elif g == "yearly" or g == "year":
+    elif g == "yearly" or g == "year" or g == "years":
         result = date_obj + pd.DateOffset(years=count)
     else:
         # Fallback: return original date when granularity not recognized
