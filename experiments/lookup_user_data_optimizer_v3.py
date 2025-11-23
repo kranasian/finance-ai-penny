@@ -37,13 +37,10 @@ Today: |TODAY_DATE|.
 - `retrieve_spending_forecasts(granularity='monthly') -> pd.DataFrame`: Future spending. Cols: start_date, forecasted_amount, category
 - `retrieve_income_forecasts(granularity='monthly') -> pd.DataFrame`: Future income. Cols: start_date, forecasted_amount, category
 - `forecast_dates_and_amount(df, template) -> str`: List forecasts. Placeholders: any df col.
-- `utter_income_forecast_totals(df, template) -> str`: Sum income forecasts. Placeholders: {total_amount}. Example: "Total forecast: {total_amount}"
-- `utter_spending_forecast_totals(df, template) -> str`: Sum spending forecasts. Placeholders: {total_amount}. Example: "Total forecast: {total_amount}"
-- `utter_spending_forecast_amount(amount, template) -> str`: Format spending forecast. Placeholders: {amount}
-- `utter_income_forecast_amount(amount, template) -> str`: Format income forecast. Placeholders: {amount}
-- `utter_absolute_amount(amount, template) -> str`: Format absolute amount. Placeholders: {amount}, {amount_with_direction}
+- `utter_forecast_amount(amount, template) -> str`: Format forecast amount. Placeholders: {income_total_amount}, {spending_total_amount}. Example: "Total Expected Income: {income_total_amount}" or "Spending: {spending_total_amount}"
+- `utter_absolute_amount(amount, template) -> str`: Format absolute amount. Placeholders: {amount}, {amount_with_direction}, {income_total_amount}, {spending_total_amount}
 - `retrieve_subscriptions() -> pd.DataFrame`: Cols: transaction_name, amount, category, subscription_name, date
-- `subscription_names_and_amounts(df, template) -> str`: List subscriptions. Placeholders: {amount}, and any df col.
+- `subscription_names_and_amounts(df, template) -> str`: List subscriptions. Placeholders: any df col.
 - `utter_subscription_totals(df, template) -> str`: Sum subscriptions. Placeholders: {total_amount}. Example: "Total subscriptions: {total_amount}"
 
 </IMPLEMENTED_FUNCTIONS>
@@ -126,7 +123,7 @@ def process_input():
     rem = cash - obligations - 200
     
     output_lines.append(f"Cash: {utter_absolute_amount(cash, '{amount_with_direction}')}")
-    output_lines.append(f"Next Week Expenses: {utter_absolute_amount(obligations, '{amount}')}")
+    output_lines.append(f"Next Week Expenses: {utter_absolute_amount(obligations, '{spending_total_amount}')}")
     
     if rem >= 0:
         output_lines.append(f"Yes. You'll have {utter_absolute_amount(rem, '{amount_with_direction}')} left.")
@@ -152,7 +149,7 @@ def process_input():
         return True, "No subscriptions paid last month."
         
     output_lines.append("Subscriptions paid last month:")
-    output_lines.append(subscription_names_and_amounts(subs, "- {amount_with_direction} {subscription_name} on {date}."))
+    output_lines.append(subscription_names_and_amounts(subs, "- {amount} {subscription_name} on {date}."))
     output_lines.append(utter_subscription_totals(subs, "Total: {total_amount}"))
     return True, chr(10).join(output_lines)
 ```
@@ -224,7 +221,7 @@ def process_input():
         sav = i_wk - s_wk
         total_sav += sav
         d_str = get_date_string(d)
-        output_lines.append(f"- Wk of {d_str}: Income {utter_absolute_amount(i_wk, '{amount}')} - Spending {utter_absolute_amount(s_wk, '{amount}')} = Savings {utter_absolute_amount(sav, '{amount_with_direction}')}")
+        output_lines.append(f"- Wk of {d_str}: Income {utter_absolute_amount(i_wk, '{income_total_amount}')} - Spending {utter_absolute_amount(s_wk, '{spending_total_amount}')} = Savings {utter_absolute_amount(sav, '{amount_with_direction}')}")
         
     output_lines.append(f"Total Projected Savings: {utter_absolute_amount(total_sav, '{amount_with_direction}')}")
     return True, chr(10).join(output_lines)

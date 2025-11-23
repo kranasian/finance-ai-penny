@@ -39,10 +39,7 @@ Today: |TODAY_DATE|.
 - `retrieve_spending_forecasts(granularity='monthly') -> pd.DataFrame`: Future spending. Cols: start_date, forecasted_amount, category
 - `retrieve_income_forecasts(granularity='monthly') -> pd.DataFrame`: Future income. Cols: start_date, forecasted_amount, category
 - `forecast_dates_and_amount(df, template) -> str`: List forecasts.
-- `utter_income_forecast_totals(df, template) -> str`: Sum income forecasts. Placeholders: {verb_and_total_amount}
-- `utter_spending_forecast_totals(df, template) -> str`: Sum spending forecasts. Placeholders: {verb_and_total_amount}
-- `utter_spending_forecast_amount(amount, template) -> str`: Format spending forecast.
-- `utter_income_forecast_amount(amount, template) -> str`: Format income forecast.
+- `utter_forecast_amount(amount, template) -> str`: Format forecast amount. Placeholders: {income_total_amount}, {spending_total_amount}. Example: "Total Expected Income: {income_total_amount}" or "Spending: {spending_total_amount}"
 - `utter_absolute_amount(amount, template) -> str`: Format absolute amount. Placeholders: {amount}, {amount_with_direction}
 - `retrieve_subscriptions() -> pd.DataFrame`: Cols: transaction_name, amount, category, subscription_name, date
 - `subscription_names_and_amounts(df, template) -> str`: List subscriptions.

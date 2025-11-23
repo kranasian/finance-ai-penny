@@ -31,7 +31,7 @@ from penny.tool_funcs.retrieve_transactions import (
 )
 from penny.tool_funcs.compare_income_or_spending import compare_income_or_spending
 from penny.tool_funcs.retrieve_forecasts import retrieve_spending_forecasts_function_code_gen, retrieve_income_forecasts_function_code_gen
-from penny.tool_funcs.forecast_utils import utter_absolute_amount, utter_income_forecast_totals, utter_spending_forecast_totals, forecast_dates_and_amount, utter_spending_forecast_amount, utter_income_forecast_amount
+from penny.tool_funcs.forecast_utils import utter_absolute_amount, forecast_dates_and_amount, utter_forecast_amount
 from penny.tool_funcs.retrieve_subscriptions import retrieve_subscriptions_function_code_gen, subscription_names_and_amounts, utter_subscription_totals
 from penny.tool_funcs.date_utils import get_start_of_month, get_end_of_month, get_start_of_week, get_end_of_week, get_after_periods, get_date_string
 user_id = 1
@@ -221,7 +221,7 @@ def process_input_can_i_afford_to_pay_a_couple_months_of_fun_with_what_i_have_no
     
     # Format amounts using utter_absolute_amount
     current_balance_str = utter_absolute_amount(current_balance, "{amount_with_direction}")
-    total_spending_str = utter_spending_forecast_amount(total_spending, "{amount_and_direction}")
+    total_spending_str = utter_forecast_amount(total_spending, "{spending_total_amount}")
     remaining_balance_str = utter_absolute_amount(remaining_balance, "{amount_with_direction}")
     
     # Determine affordability and format message
@@ -327,8 +327,10 @@ def process_input_how_much_am_i_expected_to_save_next_week():
     expected_savings = total_income - total_spending
     
     # Format messages using forecast totals
-    income_msg = utter_income_forecast_totals(income_df, "${total_amount}")
-    expenses_msg = utter_spending_forecast_totals(spending_df, "${total_amount}")
+    total_income = income_df['forecasted_amount'].sum() if not income_df.empty else 0.0
+    total_spending = spending_df['forecasted_amount'].sum() if not spending_df.empty else 0.0
+    income_msg = utter_forecast_amount(total_income, "${income_total_amount}")
+    expenses_msg = utter_forecast_amount(total_spending, "${spending_total_amount}")
     
     # Format and print expected savings message
     if expected_savings > 0:
@@ -381,7 +383,8 @@ def process_input_did_i_get_any_income_in_last_few_weeks_and_what_about_upcoming
         print("Here is your forecasted income for upcoming weeks:")
         for_print = forecast_dates_and_amount(upcoming_income_df, "{amount_and_direction} {category} on {start_date}.")
         print(for_print)
-        print(utter_income_forecast_totals(upcoming_income_df, "In total, you are expected to {verb_and_total_amount} in upcoming weeks."))
+        total_upcoming_income = upcoming_income_df['forecasted_amount'].sum() if not upcoming_income_df.empty else 0.0
+        print(utter_forecast_amount(total_upcoming_income, "In total, you are expected to {income_total_amount} in upcoming weeks."))
     
     return True, metadata
 
@@ -487,10 +490,10 @@ def process_input_what_is_my_forecasted_discretionary_spending_breakdown_for_the
     
     # Format and print breakdown
     print(f"Your forecasted discretionary spending breakdown for the next 3 months:")
-    print(f"  Leisure: {utter_spending_forecast_amount(total_leisure, '{amount_and_direction}')}")
-    print(f"  Shopping: {utter_spending_forecast_amount(total_shopping, '{amount_and_direction}')}")
-    print(f"  Gifts: {utter_spending_forecast_amount(total_gifts, '{amount_and_direction}')}")
-    print(f"  Total: {utter_spending_forecast_amount(total_discretionary, '{amount_and_direction}')}")
+    print(f"  Leisure: {utter_forecast_amount(total_leisure, '{spending_total_amount}')}")
+    print(f"  Shopping: {utter_forecast_amount(total_shopping, '{spending_total_amount}')}")
+    print(f"  Gifts: {utter_forecast_amount(total_gifts, '{spending_total_amount}')}")
+    print(f"  Total: {utter_forecast_amount(total_discretionary, '{spending_total_amount}')}")
     
     return True, metadata
 
@@ -683,7 +686,7 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
             # Travel Summary
             if not travel_df.empty:
                 total_travel = travel_df['amount'].sum()
-                print(f"Travel Spending (Last 30 Days): {utter_spending_forecast_amount(total_travel, '{amount_and_direction}')}")
+                print(f"Travel Spending (Last 30 Days): {utter_forecast_amount(total_travel, '{spending_total_amount}')}")
                 transaction_names_and_amounts(travel_df, " - {amount_and_direction} {transaction_name} on {date}.")
             else:
                 print("No recent travel spending.")
@@ -691,7 +694,7 @@ def process_input_provide_a_comprehensive_summary_of_my_financial_situation():
             # Dining Summary
             if not dining_df.empty:
                 total_dining = dining_df['amount'].sum()
-                print(f"Dining/Food Spending (Last 30 Days): {utter_spending_forecast_amount(total_dining, '{amount_and_direction}')}")
+                print(f"Dining/Food Spending (Last 30 Days): {utter_forecast_amount(total_dining, '{spending_total_amount}')}")
                 transaction_names_and_amounts(dining_df, " - {amount_and_direction} {transaction_name} on {date}.")
             else:
                 print("No recent dining/food spending.")

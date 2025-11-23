@@ -111,6 +111,9 @@ def retrieve_income_forecasts_function_code_gen(user_id: int = 1, granularity: s
   # Filter for income category IDs only
   df = df[df['ai_category_id'].isin(income_category_ids)]
   
+  # Flip amount for income forecasts
+  df['forecasted_amount'] = df['forecasted_amount'] * -1
+  
   if df.empty:
     log(f"**Retrieved Income Forecasts** of `U-{user_id}` (granularity: {granularity}): No income forecasts found")
     return pd.DataFrame()
