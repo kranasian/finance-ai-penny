@@ -29,10 +29,10 @@ Today: |TODAY_DATE|.
 
 - `retrieve_depository_accounts() -> pd.DataFrame`: checking, savings. Cols: account_type, account_name, balance_available, balance_current
 - `retrieve_credit_accounts() -> pd.DataFrame`: credit, loans. Cols: account_type, account_name, balance_available, balance_current, balance_limit
-- `account_names_and_balances(df, template) -> str`: Format account list. Placeholders: any df col.
+- `account_names_and_balances(df, template) -> str`: Format account list. Placeholders: any df col.  When listing accounts, include account_id in the template.
 - `retrieve_income_transactions() -> pd.DataFrame`: Past income. Cols: date, transaction_name, amount, category, transaction_id, account_id
 - `retrieve_spending_transactions() -> pd.DataFrame`: Past spending. Cols: date, transaction_name, amount, category, transaction_id, account_id
-- `transaction_names_and_amounts(df, template) -> str`: List transactions. Placeholders: {amount}, and any df col.
+- `transaction_names_and_amounts(df, template) -> str`: List transactions. Placeholders: any df col.  When listing transactions, include account_id and transaction_id in the template.
 - `utter_transaction_total(df, template) -> str`: Sum transactions then use correct placeholder for income or spending. Placeholders: {income_total_amount}, {spending_total_amount}. Example: "Total income: {income_total_amount}" or "Total spending: {spending_total_amount}"
 - `retrieve_spending_forecasts(granularity='monthly') -> pd.DataFrame`: Future spending. Cols: start_date, forecasted_amount, category
 - `retrieve_income_forecasts(granularity='monthly') -> pd.DataFrame`: Future income. Cols: start_date, forecasted_amount, category
@@ -101,11 +101,11 @@ def process_input():
         chk = assets[assets['account_type'] == 'deposit_checking']
         if not chk.empty:
             output_lines.append("Checking:")
-            output_lines.append(account_names_and_balances(chk, "Account '{account_name}' has {balance_current} left with {balance_available} available now."))
+            output_lines.append(account_names_and_balances(chk, "Account '{account_name}' (account_id: {account_id}) has {balance_current} left with {balance_available} available now."))
     return True, chr(10).join(output_lines)
 ```
 
-input: User: Can I afford $200 for concert tickets next week?
+input: User: Can I afford $200 for concert tickets next week and what was my past few fun things I spent on?
 output:
 ```python
 def process_input():
@@ -129,6 +129,19 @@ def process_input():
         output_lines.append(f"Yes. You'll have {utter_absolute_amount(rem, '{amount_with_direction}')} left.")
     else:
         output_lines.append(f"No. You'll be short by {utter_absolute_amount(rem, '{amount_with_direction}')}.")
+    
+    past_spending = retrieve_spending_transactions()
+    if not past_spending.empty:
+        fun_spending = past_spending[(past_spending['category'].str.startswith('leisure'))]
+        if not fun_spending.empty:
+            fun_spending = fun_spending.sort_values('date', ascending=False).head(5)
+            output_lines.append("Recent fun spending:")
+            output_lines.append(transaction_names_and_amounts(fun_spending, "- {transaction_name}: {amount} on {date} in {category} (account_id: {account_id}, transaction_id: {transaction_id})"))
+        else:
+            output_lines.append("No recent fun spending found.")
+    else:
+        output_lines.append("No past spending data available.")
+    
     return True, chr(10).join(output_lines)
 ```
 
@@ -566,6 +579,21 @@ def test_list_subscriptions_last_month(lookup_data: LookupUserDataOptimizer = No
   Test method for listing subscriptions paid last month (exercises new example).
   """
   last_user_request = "List my subscriptions from last month."
+  return _run_test_with_logging(last_user_request, lookup_data)
+
+
+def test_afford_concert_tickets_and_past_fun_spending(lookup_data: LookupUserDataOptimizer = None):
+  """
+  Test method for checking affordability of concert tickets and listing past fun spending.
+  This tests the updated example in the SYSTEM_PROMPT.
+  
+  Args:
+    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
+    
+  Returns:
+    The generated response string
+  """
+  last_user_request = "Can I afford $200 for concert tickets next week and what was my past few fun things I spent on?"
   return _run_test_with_logging(last_user_request, lookup_data)
 
 

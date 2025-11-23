@@ -102,46 +102,43 @@ def transaction_category_grouped(df: pd.DataFrame, template: str) -> str:
     amount_log = f"${abs(amount):.0f}" if amount else "Unknown"
     log(f"  - **Category**: `{category}`  |  **Total Amount**: `{amount_log}`")
     
-    # Determine amount_and_direction based on amount sign and category
-    # Rules:
-    # - Spending (Outflow): amount > 0 → "$X.XX was paid to"
-    # - Income (Inflow): amount < 0, category is income → "$X.XX was received from"
-    # - Spending (Inflow): amount < 0, category is spending → "$X.XX was refunded from"
-    # - Income Outflow (Refund): amount > 0, category is income → "$X.XX was returned to"
+    # Determine category based on amount sign and category
     income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
     is_income = category in income_categories
     
     # Format amount as positive for display
     amount_abs = abs(amount)
-    amount_str_for_direction = f"${amount_abs:.0f}"
     
     # Determine the verb phrase based on amount sign and category
     if is_income:
-      if amount > 0:
-        # Income Outflow (Refund): amount > 0, category is income → "was returned to"
-        verb_phrase = "was returned"
-      else:  # amount < 0
-        # Income (Inflow): amount < 0, category is income → "was received from"
-        verb_phrase = "was received"
+      verb_phrase = "earned" if amount >= 0 else "lost"
     else:  # spending categories
-      if amount > 0:
-        # Spending (Outflow): amount > 0 → "was paid to"
-        verb_phrase = "was paid"
-      else:  # amount < 0
-        # Spending (Inflow): amount < 0, category is spending → "was refunded from"
-        verb_phrase = "was refunded"
-    
-    # Build amount_and_direction string
-    amount_and_direction = f"{amount_str_for_direction} {verb_phrase}"
+      verb_phrase = "spent" if amount >= 0 else "received"
+
+    if amount >= 0:
+      income_verb = "earned"
+      spending_verb = "spent"
+    else:  # amount < 0
+      income_verb = "lost"
+      spending_verb = "received"
+
+    # Build amount_with_direction string
+    amount_str = f"${amount_abs:.0f}"
+    amount_with_direction = f"{amount_str} {verb_phrase}"
+    income_amount_str = f"{income_verb} {amount_str}"
+    spending_amount_str = f"{spending_verb} {amount_str}"
     
     temp_template = template
     
     # Build format dictionary with available columns
     format_dict = {
       'category': category,
-      'amount': amount,
-      'amount_abs': amount_abs,
-      'amount_with_direction': amount_and_direction,
+      'amount_with_direction': amount_with_direction,
+      'amount': amount_str,
+      'income_amount': income_amount_str,
+      'spending_amount': spending_amount_str,
+      'income_total_amount': income_amount_str,
+      'spending_total_amount': spending_amount_str,
     }
     
     # Check for any additional columns in the DataFrame that might be referenced in the template
@@ -225,7 +222,7 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> str:
     amount_log = f"${abs(amount):.0f}" if amount else "Unknown"
     log(f"  - `T-{transaction_id}`]  **Name**: `{transaction_name}`  |  **Amount**: `{amount_log}`  |  **Date**: `{date}`  |  **Category**: `{category}`  |  **Account ID**: `{account_id}`")
     
-    # Determine amount_and_direction based on amount sign and category
+    # Determine amount_with_direction based on amount sign and category
     # Rules:
     # - Spending (Outflow): amount > 0 → "$X.XX was paid to"
     # - Income (Inflow): amount < 0, category is income → "$X.XX was received from"
@@ -236,26 +233,25 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> str:
     
     # Format amount as positive for display
     amount_abs = abs(amount)
-    amount_str_for_direction = f"${amount_abs:.0f}"
     
     # Determine the verb phrase based on amount sign and category
     if is_income:
-      if amount > 0:
-        # Income Outflow (Refund): amount > 0, category is income → "was returned to"
-        verb_phrase = "was returned to"
-      else:  # amount < 0
-        # Income (Inflow): amount < 0, category is income → "was received from"
-        verb_phrase = "was received from"
+      verb_phrase = "earned" if amount >= 0 else "lost"
     else:  # spending categories
-      if amount > 0:
-        # Spending (Outflow): amount > 0 → "was paid to"
-        verb_phrase = "was paid to"
-      else:  # amount < 0
-        # Spending (Inflow): amount < 0, category is spending → "was refunded from"
-        verb_phrase = "was refunded from"
-    
-    # Build amount_and_direction string
-    amount_and_direction = f"{amount_str_for_direction} {verb_phrase}"
+      verb_phrase = "spent" if amount >= 0 else "received"
+
+    if amount >= 0:
+      income_verb = "earned"
+      spending_verb = "spent"
+    else:  # amount < 0
+      income_verb = "lost"
+      spending_verb = "received"
+
+    # Build amount_with_direction string
+    amount_str = f"${amount_abs:.0f}"
+    amount_with_direction = f"{amount_str} {verb_phrase}"
+    income_amount_str = f"{income_verb} {amount_str}"
+    spending_amount_str = f"{spending_verb} {amount_str}"
     
     temp_template = template
     
@@ -314,11 +310,16 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> str:
     format_dict = {
       'name': transaction_name,
       'transaction_name': transaction_name_cleaned,
-      'amount_with_direction': amount_and_direction,
+      'amount_with_direction': amount_with_direction,
       'date': date_str,
       'category': category,
       'transaction_id': transaction_id if transaction_id is not None else None,
-      'account_id': account_id if account_id is not None else None
+      'account_id': account_id if account_id is not None else None,
+      'amount': amount_str,
+      'income_total_amount': income_amount_str,
+      'income_amount': income_amount_str,
+      'spending_total_amount': spending_amount_str,
+      'spending_amount': spending_amount_str,
     }
     
     # Check for any additional columns in the DataFrame that might be referenced in the template
