@@ -1,30 +1,19 @@
 from google import genai
 from google.genai import types
-import sys
 import os
+import sys
+from datetime import datetime
 from dotenv import load_dotenv
-import datetime as dt_module
-from datetime import datetime, timedelta, date
-from typing import Tuple, Optional
-import pandas as pd
 
-
-# Add the parent directory to the path so we can import database and other modules
-# From penny/tool_funcs/, we need to go up two levels to get to the root
-parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if parent_dir not in sys.path:
-  sys.path.insert(0, parent_dir)
-
-# Import from same package (tool_funcs) - use absolute imports to work both as module and when run directly
-from penny.tool_funcs.create_budget_or_goal import create_budget_or_goal, VALID_GRANULARITIES, VALID_GOAL_TYPES
-from penny.tool_funcs.date_utils import get_start_of_week, get_end_of_week, get_start_of_month, get_end_of_month, get_start_of_year, get_end_of_year, get_after_periods, get_date_string
-from penny.tool_funcs.create_reminder import create_reminder
+# Add parent directory to path to import sandbox
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sandbox
 from database import Database
 
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budgets, goals, and reminders based on user requests. **You only output python code.**
+SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budgets, goals, and reminders based on creation request. **You only output python code.**
 
 ## Your Tasks
 
@@ -68,7 +57,7 @@ These functions are already implemented:
   - **Method Signature**: `create_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str) -> tuple[bool, str]`
   - **Parameters**:
     - `category`: (string) The raw spending category text extracted from user input (e.g., "gas", "eating out"). Can be empty string if not provided.
-    - `match_category`: (string) The category from the OFFICIAL CATEGORY LIST that best matches the user's goal category. Can be empty string if not provided.
+    - `match_category`: (string) The category from the CATEGORY LIST that best matches the user's goal category. Can be empty string if not provided.
     - `match_caveats`: (string or None) Explanation of matching constraints and any generalization made. Only provide if the input is a more specific item that falls under a broader category, or if there's any ambiguity in the match. Otherwise use None.
     - `type`: (string) The type of goal. Must be one of: "category", "credit_X_amount", "save_X_amount", "credit_0", "save_0". Defaults to "category" for spending goals based on category inflow/spending.
       - `category`: based on category inflow/spending
@@ -101,50 +90,23 @@ These functions are already implemented:
 
 </IMPLEMENTED_FUNCTIONS>
 
-<OFFICIAL_CATEGORY_LIST>
+<CATEGORY>
 
-* `meals` for all types of food spending. *Includes:*
-  * `meals_groceries` for supermarkets and other unprepared food marketplaces.
-  * `meals_dining_out` for food prepared outside the home like restaurants and takeout.
-  * `meals_delivered_food` for prepared food delivered to the doorstep like DoorDash.
-* `leisure` for relaxation, recreation and travel activities. *Includes:*
-  * `leisure_entertainment` for movies, concerts, cable and streaming services.
-  * `leisure_travel` for flights, hotels, and other travel expenses.
-* `bills` for essential payments for services and recurring costs. *Includes:*
-  * `bills_connectivity` for internet and phone bills.
-  * `bills_insurance` for life insurance and other insurance payments.
-  * `bills_tax` for income, state tax and other payments.
-  * `bills_service_fees` for payments for services rendered like professional fees or fees for a product.
-* `shelter` for all housing-related expenses including rent, mortgage, property taxes and utilities. *Includes:*
-  * `shelter_home` for rent, mortgage, property taxes.
-  * `shelter_utilities` for electricity, water, gas and trash utility bills.
-  * `shelter_upkeep` for maintenance and repair and improvement costs for the home.
-* `education` for all learning spending including kids after care and activities. *Includes:*
-  * `education_kids_activities` for after school activities, sports and camps.
-  * `education_tuition` for school tuition, daycare and other education fees.
-* `shopping` for discretionary spending on clothes, electronics, home goods, etc. *Includes:*
-  * `shopping_clothing` for clothing, shoes, accessories and other wearable items.
-  * `shopping_gadgets` for electronics, gadgets, computers and other tech items.
-  * `shopping_kids` for kids clothing, toys, school supplies and other kid-related items.
-  * `shopping_pets` for pet food, toys, grooming, vet bills and other pet-related items.
-* `transportation` for public transportation, car payments, gas and maintenance and car insurance. *Includes:*
-  * `transportation_public` for bus, train, subway and other public transportation.
-  * `transportation_car` for car payments, gas, maintenance and car insurance.
-* `health` for medical bills, pharmacy spending, insurance, gym memberships and personal care. *Includes:*
-  * `health_medical_pharmacy` for doctor visits, hospital, meds and health insurance costs.
-  * `health_gym_wellness` for gym memberships, personal training and spa services.
-  * `health_personal_care` for haircuts, beauty products and beauty services.
-* `donations_gifts` for charitable donations, gifts and other giving to friends and family.
-* `income` for salary, bonuses, interest, side hussles and business. *Includes:*
-  * `income_salary` for regular paychecks and bonuses.
-  * `income_sidegig` for side hussles like Uber, Etsy and other gigs.
-  * `income_business` for business income and spending.
-  * `income_interest` for interest income from savings or investments.
-* `uncategorized` for explicitly tagged as not yet categorized or unknown.
-* `transfers` for moving money between accounts or paying off credit cards or loans.
-* `miscellaneous` for explicitly tagged as miscellaneous.
+- `income`: salary, bonuses, interest, side hussles. (`income_salary`, `income_sidegig`, `income_business`, `income_interest`)
+- `meals`: food spending. (`meals_groceries`, `meals_dining_out`, `meals_delivered_food`)
+- `leisure`: recreation/travel. (`leisure_entertainment`, `leisure_travel`)
+- `bills`: recurring costs. (`bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`)
+- `shelter`: housing. (`shelter_home`, `shelter_utilities`, `shelter_upkeep`)
+- `education`: learning/kids. (`education_kids_activities`, `education_tuition`)
+- `shopping`: discretionary. (`shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `shopping_pets`)
+- `transportation`: car/public. (`transportation_public`, `transportation_car`)
+- `health`: medical/wellness. (`health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`)
+- `donations_gifts`: charity/gifts.
+- `uncategorized`: unknown.
+- `transfers`: internal movements.
+- `miscellaneous`: other.
 
-</OFFICIAL_CATEGORY_LIST>
+</CATEGORY>
 
 <EXAMPLES>
 
@@ -300,30 +262,25 @@ def process_input():
 
 </EXAMPLES>
 
-Today's date is {today_date}.
-"""
+Today's date is |TODAY_DATE|."""
 
 
 class CreateBudgetOrGoalOrReminder:
   """Handles all Gemini API interactions for creating budgets, goals, and reminders"""
   
-  def __init__(self, model_name="gemini-2.0-flash"):
+  def __init__(self, model_name="gemini-flash-lite-latest"):
     """Initialize the Gemini agent with API configuration"""
     # API Configuration
     self.client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
     
     # Model Configuration
-    if "-thinking" in model_name:
-      self.thinking_budget = 2048
-      self.model_name = model_name.replace("-thinking", "")
-    else:
-      self.thinking_budget = 0
-      self.model_name = model_name
+    self.thinking_budget = 0
+    self.model_name = model_name
     
     # Generation Configuration Constants
-    self.temperature = 0.2
+    self.temperature = 0.6
     self.top_p = 0.95
-    self.max_output_tokens = 2048
+    self.max_output_tokens = 4096
     
     # Safety Settings
     self.safety_settings = [
@@ -334,10 +291,18 @@ class CreateBudgetOrGoalOrReminder:
     ]
     
     # System Prompt
-    today_date = datetime.now().strftime("%Y-%m-%d")
-    self.system_prompt = SYSTEM_PROMPT.format(today_date=today_date)
+    self.system_prompt = SYSTEM_PROMPT
 
-  
+  def _get_today_date_string(self) -> str:
+    """
+    Get today's date formatted as "YYYY-MM-DD"
+    
+    Returns:
+      String containing today's date in the specified format
+    """
+    today = datetime.now()
+    return today.strftime("%Y-%m-%d")
+
   def generate_response(self, creation_request: str, input_info: str = None) -> str:
     """
     Generate a response using Gemini API for creating budgets, goals, or reminders.
@@ -349,6 +314,12 @@ class CreateBudgetOrGoalOrReminder:
     Returns:
       Generated code as a string
     """
+    # Get today's date
+    today_date = self._get_today_date_string()
+    
+    # Replace placeholders in system prompt
+    full_system_prompt = self.system_prompt.replace("|TODAY_DATE|", today_date)
+    
     # Create request text
     input_info_text = f"\n\n**Input Info from previous skill**:\n{input_info}" if input_info else ""
     request_text = types.Part.from_text(text=f"""**Creation Request**: {creation_request}{input_info_text}
@@ -363,7 +334,7 @@ output:""")
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
-      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      system_instruction=[types.Part.from_text(text=full_system_prompt)],
       thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
     )
 
@@ -393,231 +364,27 @@ output:""")
       raise Exception(f"Failed to get models: {str(e)}")
 
 
-
-
-class _DateTimeNamespace:
-  """Namespace that supports both datetime.datetime() and datetime.now() patterns."""
-  def __init__(self, module, dt_class):
-    self._module = module
-    self._dt_class = dt_class
+def _get_heavy_data_user_id() -> int:
+  """
+  Get the user ID for HeavyDataUser from the database.
   
-  def __getattr__(self, name):
-    # Delegate to module for all attributes (datetime.datetime, datetime.date, etc.)
-    return getattr(self._module, name)
-  
-  # Expose datetime class methods directly
-  def now(self, tz=None):
-    return self._dt_class.now(tz)
-  
-  def today(self):
-    return self._dt_class.today()
-  
-  def utcnow(self):
-    return self._dt_class.utcnow()
-  
-  def fromtimestamp(self, timestamp, tz=None):
-    return self._dt_class.fromtimestamp(timestamp, tz)
-  
-  def fromordinal(self, ordinal):
-    return self._dt_class.fromordinal(ordinal)
-  
-  def combine(self, date, time):
-    return self._dt_class.combine(date, time)
-  
-  def strptime(self, date_string, format):
-    return self._dt_class.strptime(date_string, format)
-  
-  def __call__(self, *args, **kwargs):
-    # Allow datetime(...) to work as datetime.datetime(...)
-    return self._dt_class(*args, **kwargs)
-
-
-def extract_python_code(text: str) -> str:
-    """Extract Python code from generated response (look for ```python blocks).
-    
-    Args:
-        text: The generated response containing Python code
-        
-    Returns:
-        str: Extracted Python code
-    """
-    code_start = text.find("```python")
-    if code_start != -1:
-        code_start += len("```python")
-        code_end = text.find("```", code_start)
-        if code_end != -1:
-            return text[code_start:code_end].strip()
-        else:
-            # No closing ``` found, use the entire response as code
-            return text[code_start:].strip()
+  Returns:
+    The user ID for HeavyDataUser, or 1 if not found
+  """
+  try:
+    db = Database()
+    heavy_user = db.get_user("HeavyDataUser")
+    if heavy_user and 'id' in heavy_user:
+      return heavy_user['id']
     else:
-        # No ```python found, try to use the entire response as code
-        return text.strip()
+      print("Warning: HeavyDataUser not found, using default user_id=1")
+      return 1
+  except Exception as e:
+    print(f"Warning: Error getting HeavyDataUser: {e}, using default user_id=1")
+    return 1
 
 
-def create_budget_or_goal_or_reminder(
-    creation_request: str, 
-    input_info: str = None
-) -> Tuple[bool, str]:
-    """
-    Create a budget, goal, or reminder based on the creation request.
-    
-    Args:
-        creation_request: What needs to be created factoring in the information from input_info
-        input_info: Optional input from another skill function
-        
-    Returns:
-        Tuple[bool, str]: (success, output_info)
-    """
-    generator = CreateBudgetOrGoalOrReminder()
-    code = generator.generate_response(creation_request, input_info)
-    
-    # Extract Python code from markdown code blocks if present
-    code = extract_python_code(code)
-    
-    # Execute the generated code
-    try:
-      # Import pandas if available
-      try:
-        import pandas as pd
-      except ImportError:
-        pd = None
-      
-      # Create a namespace that supports both datetime.datetime() and datetime.now()
-      datetime_ns = _DateTimeNamespace(dt_module, datetime)
-      
-      # Create functions for dataframe retrieval from test database
-      def get_accounts_df():
-        """Retrieve accounts from test database and format according to expected structure."""
-        if pd is None:
-          return None
-        try:
-          db = Database()
-          user_id = 1  # Default test user
-          accounts = db.get_accounts_by_user(user_id=user_id)
-          if not accounts:
-            return pd.DataFrame(columns=['account_id', 'name', 'account_type', 'balance_available', 'balance_current', 'balance_limit'])
-          
-          df = pd.DataFrame(accounts)
-          # Combine account_name and account_mask into 'name' column
-          if 'account_name' in df.columns and 'account_mask' in df.columns:
-            df['name'] = df['account_name'] + ' *' + df['account_mask']
-          elif 'account_name' in df.columns:
-            df['name'] = df['account_name']
-          else:
-            df['name'] = ''
-          
-          # Select and reorder columns to match expected format
-          expected_cols = ['account_id', 'name', 'account_type', 'balance_available', 'balance_current', 'balance_limit']
-          available_cols = [col for col in expected_cols if col in df.columns]
-          return df[available_cols]
-        except Exception:
-          return pd.DataFrame(columns=['account_id', 'name', 'account_type', 'balance_available', 'balance_current', 'balance_limit'])
-      
-      def get_transactions_df():
-        """Retrieve transactions from test database and format according to expected structure."""
-        if pd is None:
-          return None
-        try:
-          db = Database()
-          user_id = 1  # Default test user
-          transactions = db.get_transactions_by_user(user_id=user_id)
-          if not transactions:
-            return pd.DataFrame(columns=['account_id', 'transaction_id', 'datetime', 'name', 'amount', 'category', 'output_category'])
-          
-          df = pd.DataFrame(transactions)
-          # Rename 'date' to 'datetime' and 'transaction_name' to 'name'
-          if 'date' in df.columns:
-            df['datetime'] = pd.to_datetime(df['date'])
-          if 'transaction_name' in df.columns:
-            df['name'] = df['transaction_name']
-          
-          # Add output_category column (format category for display)
-          if 'category' in df.columns:
-            def format_category(cat):
-              if not cat:
-                return 'Unknown'
-              # Replace underscores with spaces and title case
-              formatted = cat.replace('_', ' ').title()
-              # Remove common prefixes
-              for prefix in ['meals ', 'income ', 'bills ', 'leisure ', 'shelter ']:
-                if formatted.lower().startswith(prefix):
-                  formatted = formatted[len(prefix):]
-                  break
-              return formatted
-            df['output_category'] = df['category'].apply(format_category)
-          
-          # Select and reorder columns to match expected format
-          expected_cols = ['account_id', 'transaction_id', 'datetime', 'name', 'amount', 'category', 'output_category']
-          available_cols = [col for col in expected_cols if col in df.columns]
-          return df[available_cols]
-        except Exception:
-          return pd.DataFrame(columns=['account_id', 'transaction_id', 'datetime', 'name', 'amount', 'category', 'output_category'])
-      
-      def get_subscriptions_df():
-        """Retrieve subscriptions from test database and format according to expected structure."""
-        if pd is None:
-          return None
-        try:
-          db = Database()
-          user_id = 1  # Default test user
-          subscriptions = db.get_subscriptions(user_id=user_id)
-          if not subscriptions:
-            return pd.DataFrame(columns=['name', 'next_amount', 'next_likely_payment_date', 'next_earliest_payment_date', 'next_latest_payment_date', 'user_cancelled_date', 'last_transaction_date'])
-          
-          df = pd.DataFrame(subscriptions)
-          
-          # Convert date columns to datetime
-          date_cols = ['next_likely_payment_date', 'next_earliest_payment_date', 'next_latest_payment_date', 'user_cancelled_date', 'last_transaction_date']
-          for col in date_cols:
-            if col in df.columns:
-              df[col] = pd.to_datetime(df[col], errors='coerce')
-          
-          # Select and reorder columns to match expected format
-          expected_cols = ['name', 'next_amount', 'next_likely_payment_date', 'next_earliest_payment_date', 'next_latest_payment_date', 'user_cancelled_date', 'last_transaction_date']
-          available_cols = [col for col in expected_cols if col in df.columns]
-          return df[available_cols]
-        except Exception:
-          return pd.DataFrame(columns=['name', 'next_amount', 'next_likely_payment_date', 'next_earliest_payment_date', 'next_latest_payment_date', 'user_cancelled_date', 'last_transaction_date'])
-      
-      # Create a namespace for execution with available functions
-      namespace = {
-        'datetime': datetime_ns,  # Supports both datetime.datetime() and datetime.now()
-        'timedelta': timedelta,
-        'date': date,
-        'pd': pd,
-        'create_budget_or_goal': create_budget_or_goal,
-        'get_accounts_df': get_accounts_df,
-        'get_transactions_df': get_transactions_df,
-        'get_subscriptions_df': get_subscriptions_df,
-        'create_reminder': create_reminder,
-        'list': list,
-        'dict': dict,
-        # Date helper functions
-        'get_start_of_week': get_start_of_week,
-        'get_end_of_week': get_end_of_week,
-        'get_start_of_month': get_start_of_month,
-        'get_end_of_month': get_end_of_month,
-        'get_start_of_year': get_start_of_year,
-        'get_end_of_year': get_end_of_year,
-        'get_after_periods': get_after_periods,
-        'get_date_string': get_date_string,
-      }
-      
-      # Execute the code
-      exec(code, namespace)
-      
-      # Call the process_input function
-      if 'process_input' in namespace:
-        success, output = namespace['process_input']()
-        return success, output
-      else:
-        return False, "Generated code does not contain process_input function"
-    except Exception as e:
-      return False, f"Error executing generated code: {str(e)}"
-
-
-def _run_test_with_logging(creation_request: str, input_info: str = None, generator: CreateBudgetOrGoalOrReminder = None):
+def _run_test_with_logging(creation_request: str, input_info: str = None, generator: CreateBudgetOrGoalOrReminder = None, user_id: int = None):
   """
   Internal helper function that runs a test with consistent logging.
   
@@ -625,6 +392,7 @@ def _run_test_with_logging(creation_request: str, input_info: str = None, genera
     creation_request: The creation request as a string
     input_info: Optional input info from previous skill
     generator: Optional CreateBudgetOrGoalOrReminder instance. If None, creates a new one.
+    user_id: User ID for sandbox execution (default: HeavyDataUser ID from database)
     
   Returns:
     The generated response string
@@ -632,9 +400,13 @@ def _run_test_with_logging(creation_request: str, input_info: str = None, genera
   if generator is None:
     generator = CreateBudgetOrGoalOrReminder()
   
+  # Get HeavyDataUser ID if not provided
+  if user_id is None:
+    user_id = _get_heavy_data_user_id()
+  
   # Construct LLM input
   input_info_text = f"\n\n**Input Info from previous skill**:\n{input_info}" if input_info else ""
-  llm_input = f"""{creation_request}{input_info_text}
+  llm_input = f"""**Creation Request**: {creation_request}{input_info_text}
 
 output:"""
   
@@ -656,17 +428,22 @@ output:"""
   print("=" * 80)
   print()
   
-  # Execute the generated code
+  # Execute the generated code in sandbox
   print("=" * 80)
-  print("EXECUTION RESULT:")
+  print("SANDBOX EXECUTION:")
   print("=" * 80)
   try:
-    success, output_info = create_budget_or_goal_or_reminder(creation_request, input_info)
+    success, output_string, logs = sandbox.execute_agent_with_tools(result, user_id)
+    
     print(f"Success: {success}")
-    print(f"Output Info:")
-    print(output_info)
+    print()
+    print("Output:")
+    print("-" * 80)
+    print(output_string)
+    print("-" * 80)
+    print()
   except Exception as e:
-    print(f"Error during execution: {str(e)}")
+    print(f"**Sandbox Execution Error**: {str(e)}")
     import traceback
     print(traceback.format_exc())
   print("=" * 80)
@@ -749,21 +526,6 @@ def test_create_savings_goal(generator: CreateBudgetOrGoalOrReminder = None):
   input_info = "Based on your current spending patterns, you can save approximately $800 per month."
   
   return _run_test_with_logging(creation_request, input_info, generator)
-
-
-def test_create_year_end_10k_savings_goal(generator: CreateBudgetOrGoalOrReminder = None):
-  """
-  Test method for creating a specific savings goal named 'Year End $10k Savings'.
-  
-  Args:
-    generator: Optional CreateBudgetOrGoalOrReminder instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  creation_request = "Create a specific savings goal named 'Year End $10k Savings' to save $10000 by the end of the year"
-  
-  return _run_test_with_logging(creation_request, None, generator)
 
 
 def test_create_ambiguous_budget(generator: CreateBudgetOrGoalOrReminder = None):
@@ -874,80 +636,84 @@ def test_with_inputs(creation_request: str, input_info: str = None, generator: C
   return _run_test_with_logging(creation_request, input_info, generator)
 
 
-def main():
-  """Main function to test the create budget/goal/reminder generator"""
+def main(batch: int = 1):
+  """
+  Main function to test the create budget/goal/reminder generator
+  
+  Args:
+    batch: Batch number (1, 2, 3, or 4) to determine which tests to run
+  """
   print("Testing CreateBudgetOrGoalOrReminder\n")
   
-  # ============================================================================
-  # BUDGET/GOAL TESTS
-  # ============================================================================
+  if batch == 1:
+    # Basic budget/goal creation tests
+    print("Test 1: Creating gas and car insurance budget")
+    print("-" * 80)
+    test_create_gas_budget()
+    print("\n")
+    
+    print("Test 2: Creating dining out budget")
+    print("-" * 80)
+    test_create_dining_out_budget()
+    print("\n")
+    
+    print("Test 3: Creating savings goal with input info")
+    print("-" * 80)
+    test_create_savings_goal()
+    print("\n")
+  elif batch == 2:
+    # Budget edge cases
+    print("Test 1: Creating budget with ambiguous category (requires followup)")
+    print("-" * 80)
+    test_create_ambiguous_budget()
+    print("\n")
+    
+    print("Test 2: Creating budget with missing information (requires followup)")
+    print("-" * 80)
+    test_create_incomplete_budget()
+    print("\n")
+    
+    print("Test 3: Creating account balance reminder")
+    print("-" * 80)
+    test_create_account_balance_reminder()
+    print("\n")
+  elif batch == 3:
+    # Reminder tests part 1
+    print("Test 1: Creating Netflix cancellation reminder")
+    print("-" * 80)
+    test_create_netflix_reminder()
+    print("\n")
+    
+    print("Test 2: Creating transaction reminder")
+    print("-" * 80)
+    test_create_transaction_reminder()
+    print("\n")
+    
+    print("Test 3: Creating subscription renewal reminder")
+    print("-" * 80)
+    test_create_subscription_reminder()
+    print("\n")
+  elif batch == 4:
+    # Reminder tests part 2
+    print("Test 1: Creating refund reminder")
+    print("-" * 80)
+    test_create_refund_reminder()
+    print("\n")
+    
+    print("Test 2: Creating reminder that triggers immediately")
+    print("-" * 80)
+    test_create_immediate_reminder()
+    print("\n")
+  else:
+    raise ValueError("batch must be 1, 2, 3, or 4")
   
-  # print("Test 1: Creating gas and car insurance budget")
-  # print("-" * 80)
-  # test_create_gas_budget()
-  # print("\n")
-  
-  # print("Test 2: Creating dining out budget")
-  # print("-" * 80)
-  # test_create_dining_out_budget()
-  # print("\n")
-  
-#   print("Test 3: Creating savings goal with input info")
-#   print("-" * 80)
-#   test_create_savings_goal()
-#   print("\n")
-  
-  # print("Test 3b: Creating Year End $10k Savings goal")
-  # print("-" * 80)
-  # test_create_year_end_10k_savings_goal()
-  # print("\n")
-  
-#   print("Test 4: Creating budget with ambiguous category (requires followup)")
-#   print("-" * 80)
-#   test_create_ambiguous_budget()
-#   print("\n")
-  
-#   print("Test 5: Creating budget with missing information (requires followup)")
-#   print("-" * 80)
-#   test_create_incomplete_budget()
-#   print("\n")
-  
-  # ============================================================================
-  # REMINDER TESTS
-  # ============================================================================
-  
-#   print("Test 1: Creating Netflix cancellation reminder")
-#   print("-" * 80)
-#   test_create_netflix_reminder()
-#   print("\n")
-  
-#   print("Test 2: Creating account balance reminder")
-#   print("-" * 80)
-#   test_create_account_balance_reminder()
-#   print("\n")
-  
-  # print("Test 3: Creating transaction reminder")
-  # print("-" * 80)
-  # test_create_transaction_reminder()
-  # print("\n")
-  
-  print("Test 4: Creating subscription renewal reminder")
-  print("-" * 80)
-  test_create_subscription_reminder()
-  print("\n")
-  
-#   print("Test 5: Creating refund reminder")
-#   print("-" * 80)
-#   test_create_refund_reminder()
-#   print("\n")
-  
-  # print("Test 6: Creating reminder that triggers immediately")
-  # print("-" * 80)
-  # test_create_immediate_reminder()
-  # print("\n")
-  
-  # print("All tests completed!")
+  print("All tests completed!")
 
 
 if __name__ == "__main__":
-  main()
+  import argparse
+  parser = argparse.ArgumentParser(description='Run tests in batches')
+  parser.add_argument('--batch', type=int, default=1, choices=[1, 2, 3, 4],
+                      help='Batch number to run (1, 2, 3, or 4)')
+  args = parser.parse_args()
+  main(batch=args.batch)

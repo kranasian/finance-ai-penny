@@ -43,9 +43,11 @@ from penny.tool_funcs.date_utils import (
 from penny.tool_funcs.sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
 # Import planner skill functions
 from penny.tool_funcs.lookup_user_accounts_transactions_income_and_spending_patterns import lookup_user_accounts_transactions_income_and_spending_patterns
-from penny.tool_funcs.create_budget_or_goal_or_reminder import create_budget_or_goal_or_reminder
 from penny.tool_funcs.research_and_strategize_financial_outcomes import research_and_strategize_financial_outcomes
 from penny.tool_funcs.update_transaction_category_or_create_category_rules import update_transaction_category_or_create_category_rules
+# Import functions for create_budget_or_goal_or_reminder skill
+from penny.tool_funcs.create_budget_or_goal import create_budget_or_goal
+from penny.tool_funcs.create_reminder import create_reminder
 
 
 def _write_(obj):
@@ -328,6 +330,13 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def respond_to_app_inquiry_wrapper(inquiry: str):
     return respond_to_app_inquiry(inquiry)
   
+  # Create wrapper functions for create_budget_or_goal and create_reminder
+  def create_budget_or_goal_wrapper(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
+    return create_budget_or_goal(category, match_category, match_caveats, type, granularity, start_date, end_date, amount, title, budget_or_goal)
+  
+  def create_reminder_wrapper(what: str, when: str):
+    return create_reminder(what, when)
+  
   safe_globals_dict = {
     "__builtins__": all_builtins,
     "pd": pd,
@@ -381,6 +390,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "get_end_of_week": get_end_of_week,
     "get_after_periods": get_after_periods,
     "get_date_string": get_date_string,
+    "create_budget_or_goal": create_budget_or_goal_wrapper,
+    "create_reminder": create_reminder_wrapper,
   }
   return safe_globals_dict
 
