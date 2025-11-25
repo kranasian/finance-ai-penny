@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 from AccessControl.ZopeGuards import guarded_filter, guarded_reduce, guarded_max, guarded_min, guarded_map, guarded_zip, guarded_getitem, guarded_hasattr
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -334,6 +334,90 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def create_budget_or_goal_wrapper(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
     return create_budget_or_goal(category, match_category, match_caveats, type, granularity, start_date, end_date, amount, title, budget_or_goal)
   
+  # validate_budget_or_goal function (used by generated code from P:Func:CreateBudgetOrGoal)
+  def validate_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
+    """Validate a budget or goal with individual parameters.
+    
+    This function validates the goal parameters and returns success/error message.
+    Implementation copied from finance-ai-llm-server/penny/tools/create_budget_or_goal_combined.py
+    """
+    from datetime import datetime
+    
+    VALID_GRANULARITIES = ["weekly", "monthly", "yearly"]
+    
+    # Build goal dictionary from parameters
+    goal = {
+      "category": category,
+      "match_category": match_category,
+      "match_caveats": match_caveats,
+      "type": type,
+      "granularity": granularity,
+      "start_date": start_date,
+      "end_date": end_date,
+      "amount": amount,
+      "title": title,
+      "budget_or_goal": budget_or_goal
+    }
+    
+    goal_name = (goal["title"] if "title" in goal and goal["title"]
+                 else goal["category"] if "category" in goal and goal["category"] else "")
+    user_asks = []
+    
+    # Check granularity
+    if "granularity" not in goal or goal["granularity"] not in VALID_GRANULARITIES:
+      suffix = f" {goal_name} budget" if goal_name else ""
+      user_asks.append(f"What time periods are you looking to track for this{suffix}, like monthly?")
+    
+    # Check amount
+    if "amount" not in goal or goal["amount"] is None or int(goal["amount"]) < 0:
+      suffix = f" of the {goal_name}?" if goal_name else "?"
+      user_asks.append(f"What is the target amount{suffix}")
+
+    # Check category - only required for category type goals
+    goal_type = goal.get("type", "category")
+    if goal_type == "category":
+      # Category is required for category type goals
+      if ("match_category" not in goal or not goal["match_category"]):
+        user_asks.append(f"Could you clarify the category for {goal_name}?")
+    
+    # Check dates
+    if "start_date" in goal and goal["start_date"]:
+      try:
+        starting_date = datetime.strptime(goal["start_date"], "%Y-%m-%d")
+      except ValueError:
+        user_asks.append("Please clarify when do you want this to start?")
+    
+    if "end_date" in goal and goal["end_date"]:
+      try:
+        ending_date = datetime.strptime(goal["end_date"], "%Y-%m-%d")
+      except ValueError:
+        user_asks.append("Please clarify when do you want this to end?")
+
+    # Check date range validity
+    if ("start_date" in goal and goal["start_date"]
+        and "end_date" in goal and goal["end_date"]):
+      try:
+        starting_date = datetime.strptime(goal["start_date"], "%Y-%m-%d")
+        ending_date = datetime.strptime(goal["end_date"], "%Y-%m-%d")
+        if ending_date < starting_date:
+          user_asks.append("Please clarify the start and end dates for this, we might have reversed it.")
+        else:
+          # For weekly goals, a Sunday-to-Saturday range is 6 days difference (inclusive).
+          # Allow 6+ days for weekly; keep 7+ default for others.
+          min_days = 6 if goal.get("granularity") == "weekly" else 7
+          if (ending_date - starting_date).days < min_days:
+            user_asks.append("Please clarify the start and end dates as it is too short.  It needs to cover the full selected period.")
+      except ValueError:
+        pass
+    
+    # Return validation result
+    if user_asks:
+      return False, "\n".join(user_asks)
+    
+    # If validation passes, return success message
+    goal_name = title if title else (category if category else "goal")
+    return True, f"Successfully validated {budget_or_goal} '{goal_name}' from {start_date} to {end_date} with target amount ${amount:.2f}."
+  
   def create_reminder_wrapper(what: str, when: str):
     return create_reminder(what, when)
   
@@ -391,6 +475,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "get_after_periods": get_after_periods,
     "get_date_string": get_date_string,
     "create_budget_or_goal": create_budget_or_goal_wrapper,
+    "validate_budget_or_goal": validate_budget_or_goal,
     "create_reminder": create_reminder_wrapper,
   }
   return safe_globals_dict
@@ -405,7 +490,7 @@ def _get_safe_globals_planner(user_id, use_full_datetime=False):
     return lookup_user_accounts_transactions_income_and_spending_patterns(lookup_request, input_info)
   
   def create_budget_wrapper(creation_request: str, input_info: str = None):
-    return create_budget_or_goal_or_reminder(creation_request, input_info)
+    return create_budget_or_goal(creation_request, input_info)
   
   def research_wrapper(strategize_request: str, input_info: str = None):
     return research_and_strategize_financial_outcomes(strategize_request, input_info)
@@ -501,16 +586,17 @@ def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callabl
   return safe_locals["process_input"]
 
 
-def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, str]:
+def _run_sandbox_process_input(code_str: str, user_id: int) -> Tuple[bool, str, str, Optional[list]]:
   """
   Run the provided code in a restricted sandbox environment
-  Returns (success, output_string, logs)
+  Returns (success, output_string, logs, goals_list)
   """
   # Clear any previous logs
   clear_sandbox_logs()
   
   success = None
   captured_logs = ""
+  goals_list = None
   try:
     # Create the restricted function
     restricted_func = _create_restricted_process_input(code_str, user_id)
@@ -522,13 +608,22 @@ def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, 
   if success is None:
     # Run the function - if it fails, capture logs before exception propagates
     try:
-      success, output_string = restricted_func()
+      result = restricted_func()
+      # Handle both 2-value and 3-value returns for backward compatibility
+      if isinstance(result, tuple) and len(result) == 3:
+        success, output_string, goals_list = result
+      elif isinstance(result, tuple) and len(result) == 2:
+        success, output_string = result
+        goals_list = None
+      else:
+        raise ValueError(f"process_input must return tuple[bool, str] or tuple[bool, str, list], got {type(result)}")
     except Exception as e:
       output_string = f"**Execution Error**: `{str(e)}`\n{traceback.format_exc()}"
       success = False
+      goals_list = None
   
-    # Get the captured logs
-    captured_logs = get_logs_as_string()
+  # Get the captured logs
+  captured_logs = get_logs_as_string()
   
   # Validate result is a bool
   if not isinstance(success, bool):
@@ -537,13 +632,13 @@ def _run_sandbox_process_input(code_str: str, user_id: int) -> tuple[bool, str, 
   if not isinstance(output_string, str):
     raise ValueError(f"Restricted code must return a str. Type: {type(output_string)}")
   
-  return success, output_string, captured_logs
+  return success, output_string, captured_logs, goals_list
 
 # Function to process DataFrame
-def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, str]:
+def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, str, Optional[list]]:
   """
   Extract Python code from generated response and execute it in restricted Python sandbox
-  Returns: (success, output_string, logs)
+  Returns: (success, output_string, logs, goals_list)
   """
   # Extract Python code from the response (look for ```python blocks)
   code_start = code_str.find("```python")
