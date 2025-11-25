@@ -331,8 +331,13 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     return respond_to_app_inquiry(inquiry)
   
   # Create wrapper functions for create_budget_or_goal and create_reminder
-  def create_budget_or_goal_wrapper(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
-    return create_budget_or_goal(category, match_category, match_caveats, type, granularity, start_date, end_date, amount, title, budget_or_goal)
+  def create_budget_or_goal_wrapper(category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
+    # User requested to merge category and match_category. 
+    # category now holds the official category string.
+    # We pass it as both category (raw) and match_category (official) to the backend, 
+    # or we could pass empty string for raw category. 
+    # Passing it as both seems safest to ensure backend sees the category.
+    return create_budget_or_goal(category, category, match_caveats, type, granularity, start_date, end_date, amount, title, budget_or_goal)
   
   # validate_budget_or_goal function (used by generated code from P:Func:CreateBudgetOrGoal)
   def validate_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
