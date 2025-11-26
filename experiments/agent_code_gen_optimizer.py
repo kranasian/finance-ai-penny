@@ -860,7 +860,7 @@ def _run_test_with_logging(last_user_request: str, lookup_data: LookupUserDataOp
   print("SANDBOX EXECUTION:")
   print("=" * 80)
   try:
-    success, output_string, logs = sandbox.execute_agent_with_tools(result, user_id)
+    success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(result, user_id)
     
     print(f"Success: {success}")
     print()

@@ -861,7 +861,7 @@ output:""")
     
     # Execute the generated code in sandbox
     try:
-      success, output_string, logs = sandbox.execute_agent_with_tools(output_text, user_id)
+      success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(output_text, user_id)
     except Exception as e:
       # Extract logs from error message if available
       error_str = str(e)

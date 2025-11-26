@@ -487,7 +487,7 @@ def _run_test_with_logging(last_user_request: str, lookup_data: LookupUserDataOp
   print("SANDBOX EXECUTION:")
   print("=" * 80)
   try:
-    success, output_string, logs = sandbox.execute_agent_with_tools(result, user_id)
+    success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(result, user_id)
     
     print(f"Success: {success}")
     print()
@@ -672,7 +672,7 @@ def test_discretionary_spending_example_snippet(user_id: int = None):
   print("Executing code snippet...")
   print("-" * 80)
   try:
-    success, output_string, logs = sandbox.execute_agent_with_tools(example_code, user_id)
+    success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(example_code, user_id)
     
     print(f"Success: {success}")
     print()
