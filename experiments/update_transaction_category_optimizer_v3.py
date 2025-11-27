@@ -9,6 +9,17 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sandbox
 from database import Database
+from penny.tool_funcs.update_transaction_category_or_create_category_rules import (
+    update_single_transaction_category,
+    create_category_rules,
+    update_multiple_transaction_categories_matching_rules
+)
+from penny.tool_funcs.date_utils import (
+    get_date, get_start_of_month, get_end_of_month,
+    get_start_of_year, get_end_of_year,
+    get_start_of_week, get_end_of_week,
+    get_after_periods, get_date_string
+)
 
 # Load environment variables
 load_dotenv()
@@ -47,11 +58,10 @@ Multiple rules are **AND** together, should all be true to match.
 - `name_eq`: transaction name matches the value exactly.  Only use this if exact is requested specifically.
 
 **Keys for Date Matching**:
-- `date_greater_than_or_equal_to`, `date_less_than_or_equal_to`
-
+- `date_greater_than_or_equal_to`, `date_less_than_or_equal_to`, `date_equal_to`, `date_greater_than`, `date_less_than`
 
 **Keys for Amount Matching**:
-- `amount_greater_than_or_equal_to`, `amount_less_than_or_equal_to`
+- `amount_greater_than_or_equal_to`, `amount_less_than_or_equal_to`, `amount_equal_to`, `amount_greater_than`, `amount_less_than`
 
 **Keys for Account ID Matching**:
 - `account_id_eq`: match exact account id specified in the **Input Info from previous skill**.
@@ -59,13 +69,16 @@ Multiple rules are **AND** together, should all be true to match.
 </RULES_DICT>
 
 <IMPLEMENTED_DATE_FUNCTIONS>
+
 - `get_date(y, m, d)`, `get_start_of_month(date)`, `get_end_of_month(date)`
 - `get_start_of_year(date)`, `get_end_of_year(date)`
 - `get_start_of_week(date)`, `get_end_of_week(date)`
 - `get_after_periods(date, granularity, count)`, `get_date_string(date)`
+
 </IMPLEMENTED_DATE_FUNCTIONS>
 
 <OFFICIAL_CATEGORIES>
+
 - `income`: salary, bonuses, interest, side hussles. (`income_salary`, `income_sidegig`, `income_business`, `income_interest`)
 - `meals`: food spending. (`meals_groceries`, `meals_dining_out`, `meals_delivered_food`)
 - `leisure`: recreation/travel. (`leisure_entertainment`, `leisure_travel`)
@@ -79,9 +92,11 @@ Multiple rules are **AND** together, should all be true to match.
 - `uncategorized`: unknown.
 - `transfers`: internal movements.
 - `miscellaneous`: other.
+
 </OFFICIAL_CATEGORIES>
 
 <EXAMPLES>
+
 input: **Categorize Request**: $21 yesterday was eating out
 **Input Info from previous skill**:
 Transaction ID 32343: 2025-11-26 $21 McDonald's (Account ID: 20)
@@ -108,7 +123,7 @@ def process_input():
     costco_rules_dict = {
         'name_contains': 'costco',
         'date_greater_than_or_equal_to': start_date,
-        'amount_less_than_or_equal_to': 50
+        'amount_less_than': 50
     }
     success, result1 = update_multiple_transaction_categories_matching_rules(rules_dict=costco_rules_dict, new_category='transportation_car')
     output_lines.append(result1)
@@ -135,6 +150,7 @@ def process_input():
         return False, chr(10).join(output_lines)
     return True, chr(10).join(output_lines)
 ```
+
 </EXAMPLES>
 """
 
@@ -303,18 +319,36 @@ def _run_test_with_logging(categorize_request: str, input_info: str = None, opti
   print()
   
   # Execute the generated code in sandbox
-  # print("=" * 80)
-  # print("SANDBOX EXECUTION:")
-  # print("=" * 80)
-  # try:
-    # Note: This would need a sandbox method for executing process_df functions
-    # For now, just print the code
-  #   print("Generated code ready for execution with process_df(df) function")
-  # except Exception as e:
-  #   print(f"**Sandbox Execution Error**: {str(e)}")
-  #   import traceback
-  #   print(traceback.format_exc())
-  # print("=" * 80)
+  print("=" * 80)
+  print("EXECUTION RESULT:")
+  print("=" * 80)
+  try:
+    # Import the three functions that are only available in update_transaction_category_or_create_category_rules namespace
+    from penny.tool_funcs.update_transaction_category_or_create_category_rules import (
+      update_single_transaction_category,
+      create_category_rules,
+      update_multiple_transaction_categories_matching_rules
+    )
+    # Add them to the execution namespace for testing
+    additional_namespace = {
+      'update_single_transaction_category': update_single_transaction_category,
+      'create_category_rules': create_category_rules,
+      'update_multiple_transaction_categories_matching_rules': update_multiple_transaction_categories_matching_rules,
+    }
+    # Execute code using sandbox (it will extract code from ```python blocks automatically)
+    success, output, logs, _ = sandbox.execute_agent_with_tools(result, user_id, additional_namespace)
+    
+    print(f"Success: {success}")
+    print(f"Output: {output}")
+    if logs:
+      print(f"\nLogs:\n{logs}")
+      
+  except Exception as e:
+    print(f"**Execution Error**: {str(e)}")
+    import traceback
+    print(traceback.format_exc())
+  print("=" * 80)
+  print()
   
   return result
 
@@ -356,11 +390,128 @@ Account Discover Credit Card (account_id: 21) has $3233 balance."""
   return _run_test_with_logging(categorize_request, input_info, optimizer)
 
 
+def test_date_equal_to(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test date_equal_to matching"""
+  categorize_request = "transactions on November 26, 2025 were groceries"
+  input_info = """Transaction ID 32343: 2025-11-26 $21 McDonald's (Account ID: 20)
+Transaction ID 32344: 2025-11-26 $45 Whole Foods (Account ID: 20)"""
+  return _run_test_with_logging(categorize_request, input_info, optimizer)
+
+
+def test_amount_equal_to(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test amount_equal_to matching"""
+  categorize_request = "all $50 transactions are subscriptions"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_name_startswith(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test name_startswith matching"""
+  categorize_request = "all transactions starting with 'Amazon' are shopping"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_name_endswith(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test name_endswith matching"""
+  categorize_request = "transactions ending with 'Gas' are transportation"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_name_exact_match(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test name_eq (exact match) matching"""
+  categorize_request = "exactly 'Starbucks' transactions are dining out"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_account_id_matching(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test account_id_eq matching"""
+  categorize_request = "all transactions from account 20 are personal expenses"
+  input_info = """Account Chase Checking (account_id: 20) has $1000 balance."""
+  return _run_test_with_logging(categorize_request, input_info, optimizer)
+
+
+def test_create_category_rules(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test creating category rules for future transactions"""
+  categorize_request = "from now on, all IRS payments should always be categorized as taxes"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_date_range_combination(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test combination of date_greater_than and date_less_than"""
+  categorize_request = "transactions between November 1 and November 15 that are over $100 are bills"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_amount_range_combination(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test combination of amount_greater_than and amount_less_than"""
+  categorize_request = "transactions between $50 and $200 from last month are shopping"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_multiple_name_conditions(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test multiple name matching conditions"""
+  categorize_request = "transactions containing 'Target' or starting with 'Walmart' are groceries"
+  return _run_test_with_logging(categorize_request, optimizer=optimizer)
+
+
+def test_complex_combination(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test complex combination of multiple rule types"""
+  categorize_request = "Costco purchases over $100 from account 20 in the last 2 months are home expenses"
+  input_info = """Account Chase Checking (account_id: 20) has $1000 balance."""
+  return _run_test_with_logging(categorize_request, input_info, optimizer)
+
+
+def test_single_transaction_by_amount_and_date(optimizer: UpdateTransactionCategoryOptimizer = None):
+  """Test finding single transaction by amount and date"""
+  categorize_request = "$21 transaction on November 26 was eating out"
+  input_info = """Transaction ID 32342: 2025-11-22 $23 Chipotle (Account ID: 20)
+Transaction ID 32343: 2025-11-26 $21 McDonald's (Account ID: 20)"""
+  return _run_test_with_logging(categorize_request, input_info, optimizer)
+
+
 def main():
   """Main function to test the update transaction category optimizer"""
-  test_transaction_id_update()
-  test_costco_purchases_last_3_months()
-  test_multiple_conditions()
+  # print("=" * 80)
+  # print("BASIC TESTS")
+  # print("=" * 80)
+  # test_transaction_id_update()
+  # test_costco_purchases_last_3_months()
+  # test_multiple_conditions()
+  
+  # print("\n" + "=" * 80)
+  # print("DATE MATCHING TESTS")
+  # print("=" * 80)
+  # test_date_equal_to()
+  # test_date_range_combination()
+  
+  print("\n" + "=" * 80)
+  print("AMOUNT MATCHING TESTS")
+  print("=" * 80)
+  test_amount_equal_to()
+  test_amount_range_combination()
+  
+  # print("\n" + "=" * 80)
+  # print("NAME MATCHING TESTS")
+  # print("=" * 80)
+  # test_name_startswith()
+  # test_name_endswith()
+  # test_name_exact_match()
+  # test_multiple_name_conditions()
+  
+  # print("\n" + "=" * 80)
+  # print("ACCOUNT MATCHING TESTS")
+  # print("=" * 80)
+  # test_account_id_matching()
+  
+  # print("\n" + "=" * 80)
+  # print("RULE CREATION TESTS")
+  # print("=" * 80)
+  # test_create_category_rules()
+  
+  # print("\n" + "=" * 80)
+  # print("COMPLEX COMBINATION TESTS")
+  # print("=" * 80)
+  # test_complex_combination()
+  # test_single_transaction_by_amount_and_date()
 
 
 if __name__ == "__main__":

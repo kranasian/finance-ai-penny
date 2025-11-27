@@ -574,8 +574,14 @@ def retrieve_subscriptions(user_id: int = 1):
   return retrieve_subscriptions_function_code_gen(user_id)
 
 
-def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callable:
-  """Compile and create a restricted function from a string"""    
+def _create_restricted_process_input(code_str: str, user_id: int = 1, additional_namespace: dict = None) -> callable:
+  """Compile and create a restricted function from a string
+  
+  Args:
+    code_str: The code string to compile
+    user_id: User ID for sandbox execution
+    additional_namespace: Optional dictionary of additional functions/variables to add to the namespace
+  """    
   # Compile the code with restrictions
   byte_code = compile_restricted(
     code_str,
@@ -585,16 +591,24 @@ def _create_restricted_process_input(code_str: str, user_id: int = 1) -> callabl
   # Create namespace for execution
   safe_locals = {}
   safe_globals = _get_safe_globals(user_id=user_id, use_full_datetime=_check_code_for_full_datetime(code_str))
+  # Add additional namespace items if provided
+  if additional_namespace:
+    safe_globals.update(additional_namespace)
   # Execute the compiled code in restricted environment
   exec(byte_code, safe_globals, safe_locals)
   # Return the compiled function
   return safe_locals["process_input"]
 
 
-def _run_sandbox_process_input(code_str: str, user_id: int) -> Tuple[bool, str, str, Optional[list]]:
+def _run_sandbox_process_input(code_str: str, user_id: int, additional_namespace: dict = None) -> Tuple[bool, str, str, Optional[list]]:
   """
   Run the provided code in a restricted sandbox environment
   Returns (success, output_string, logs, goals_list)
+  
+  Args:
+    code_str: The code string to execute
+    user_id: User ID for sandbox execution
+    additional_namespace: Optional dictionary of additional functions/variables to add to the namespace
   """
   # Clear any previous logs
   clear_sandbox_logs()
@@ -604,7 +618,7 @@ def _run_sandbox_process_input(code_str: str, user_id: int) -> Tuple[bool, str, 
   goals_list = None
   try:
     # Create the restricted function
-    restricted_func = _create_restricted_process_input(code_str, user_id)
+    restricted_func = _create_restricted_process_input(code_str, user_id, additional_namespace)
   except Exception as e:
     output_string = f"**Compilation Error**: `{str(e)}`\n{traceback.format_exc()}"
     success = False
@@ -640,10 +654,15 @@ def _run_sandbox_process_input(code_str: str, user_id: int) -> Tuple[bool, str, 
   return success, output_string, captured_logs, goals_list
 
 # Function to process DataFrame
-def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, str, Optional[list]]:
+def execute_agent_with_tools(code_str: str, user_id: int, additional_namespace: dict = None) -> Tuple[bool, str, str, Optional[list]]:
   """
   Extract Python code from generated response and execute it in restricted Python sandbox
   Returns: (success, output_string, logs, goals_list)
+  
+  Args:
+    code_str: The generated response containing Python code
+    user_id: User ID for sandbox execution
+    additional_namespace: Optional dictionary of additional functions/variables to add to the namespace
   """
   # Extract Python code from the response (look for ```python blocks)
   code_start = code_str.find("```python")
@@ -662,7 +681,7 @@ def execute_agent_with_tools(code_str: str, user_id: int) -> Tuple[bool, str, st
   # Preprocess the code to replace _print_ with print (if needed)
   sandboxed_code = sandboxed_code.replace('_print_', 'print')
   
-  return _run_sandbox_process_input(sandboxed_code, user_id)
+  return _run_sandbox_process_input(sandboxed_code, user_id, additional_namespace)
 
 
 def _create_restricted_process_input_planner(code_str: str, user_id: int = 1) -> callable:
