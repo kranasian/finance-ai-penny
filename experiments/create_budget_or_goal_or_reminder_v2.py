@@ -17,8 +17,8 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budget
 
 ## Your Tasks
 
-1.  **Analyze Request**: Parse **Creation Request** and **Input Info**.
-    -   **IMPORTANT**: Extract information from **Input Info** and hardcode it into your code. It is NOT available as a variable.
+1.  **Analyze Request**: Parse **Creation Request** and **Input Info from previous skill**.
+    -   **IMPORTANT**: Extract information from **Input Info from previous skill** and hardcode it into your code. It is NOT available as a variable.
 2.  **Determine Type**: Budget/Goal or Reminder.
 3.  **Budget/Goal Creation**:
     -   Call `create_budget_or_goal` for each item.
@@ -35,7 +35,7 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budget
     -   Function `process_input() -> tuple[bool, str]`.
     -   **No comments in code.**
     -   No imports. Assume `datetime`, `pandas` available.
-    -   For datetime calculations: Use `IMPLEMENTED_DATE_FUNCTIONS`.
+    -   For datetime calculations: Use **IMPLEMENTED DATE FUNCTIONS**.
     -   **Formatting**: Append result strings to a list and join with `chr(10).join(output_lines)` before returning.
 
 Today's date is |TODAY_DATE|.
@@ -43,8 +43,7 @@ Today's date is |TODAY_DATE|.
 <IMPLEMENTED_FUNCTIONS>
 
 - `create_budget_or_goal(...) -> tuple[bool, str]`
-  - Params: category (must be from OFFICIAL_CATEGORIES), match_caveats, type (category), granularity (weekly/monthly/yearly), start_date, end_date, amount, title, budget_or_goal.
-  - Helper functions available: `get_start_of_week`, `get_end_of_week`, `get_start_of_month`, `get_end_of_month`, `get_start_of_year`, `get_end_of_year`, `get_after_periods`, `get_date_string`.
+  - Params: category (must be from OFFICIAL_CATEGORIES), match_caveats, type (category), granularity (weekly/monthly/yearly), start_date, end_date, amount, title.
 
 - `create_reminder(what: str, when: str) -> Tuple[bool, str]`
   - Returns: (success, message)

@@ -14,7 +14,7 @@ from database import Database
 load_dotenv()
 
 
-SYSTEM_PROMPT = """Your name is "Penny" and you are a helpful AI specialized in code generation. **You only output python code.**
+SYSTEM_PROMPT = """You are a helpful AI specialized in code generation. **You only output python code.**
 
 ## Task & Rules
 1. **Output**: Write `process_input() -> tuple[bool, str]`. Keep code concise. Minimal comments.
