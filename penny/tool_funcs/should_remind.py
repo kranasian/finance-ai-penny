@@ -229,6 +229,48 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
             return None, None
 ```
 
+input: **What**: new transaction categorized as 'meals_groceries' exceeds $100
+**When**: immediately whenever a new transaction categorized as 'grocery' exceeds $100
+
+output:
+```python
+def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
+    # Accumulate reminder messages in reminder_messages
+    reminder_messages = []
+    
+    today = datetime.today()
+    tomorrow = get_after_periods(today, "daily", 1)
+    
+    today_date = today.date()
+    tomorrow_date = tomorrow.date()
+    threshold = 100.0
+    
+    # Retrieve transactions data to check for grocery spending
+    transactions_df = get_transactions_df()
+    
+    # Filter transactions for the 'meals_groceries' category from today
+    recent_grocery_transactions = transactions_df[
+        (transactions_df['category'] == 'meals_groceries') &
+        (transactions_df['datetime'].dt.date >= today_date)
+    ]
+    
+    # Check if any new grocery transactions exceed the threshold
+    large_grocery_transactions = recent_grocery_transactions[recent_grocery_transactions['amount'] > threshold]
+    
+    if not large_grocery_transactions.empty:
+        for index, row in large_grocery_transactions.iterrows():
+            reminder_messages.append(
+                f"⚠️ ALERT: A new transaction categorized as 'grocery' for ${row['amount']:.2f} "
+                f"at {row['name']} on {get_date_string(row['datetime'])} "
+                f"exceeds your threshold of ${threshold:.2f}."
+            )
+        # Return reminder immediately and continue monitoring daily (no end date)
+        return chr(10).join(reminder_messages), tomorrow_date
+    else:
+        # No large transactions today, check again tomorrow (no end date - continues indefinitely)
+        return None, tomorrow_date
+```
+
 </EXAMPLES>
 
 Today's date is {today_date}.
