@@ -260,9 +260,9 @@ def should_remind(get_accounts_df, get_transactions_df, get_subscriptions_df):
     if not large_grocery_transactions.empty:
         for index, row in large_grocery_transactions.iterrows():
             reminder_messages.append(
-                f"⚠️ ALERT: A new transaction categorized as 'grocery' for ${row['amount']:.2f} "
-                f"at {row['name']} on {get_date_string(row['datetime'])} "
-                f"exceeds your threshold of ${threshold:.2f}."
+                f"⚠️ ALERT: A new transaction categorized as 'grocery' for ${{row['amount']:.2f}} "
+                f"at ${{row['name']}} on ${{get_date_string(row['datetime'])}} "
+                f"exceeds your threshold of ${{threshold:.2f}}."
             )
         # Return reminder immediately and continue monitoring daily (no end date)
         return chr(10).join(reminder_messages), tomorrow_date
