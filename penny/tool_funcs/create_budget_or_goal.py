@@ -29,25 +29,10 @@ def validate_goal(goal: dict) -> list:
         suffix = f" {goal_name} budget" if goal_name else ""
         user_asks.append(f"What time periods are you looking to track for this{suffix}, like monthly?")
     
-    # Check amount (for category, credit_X_amount, save_X_amount types)
-    goal_type = goal.get("type", "category")
-    if goal_type in ["category", "credit_X_amount", "save_X_amount"]:
-        if "amount" not in goal or goal["amount"] is None or float(goal.get("amount", 0)) < 0:
-            suffix = f" of the {goal_name}?" if goal_name else "?"
-            user_asks.append(f"What is the target amount{suffix}")
-    
-    # Check amount for credit_0 and save_0 (target amount by date)
-    if goal_type in ["credit_0", "save_0"]:
-        if "amount" not in goal or goal["amount"] is None or float(goal.get("amount", 0)) <= 0:
-            suffix = f" for {goal_name}?" if goal_name else "?"
-            user_asks.append(f"What is the target amount{suffix}")
-        if "end_date" not in goal or not goal.get("end_date"):
-            user_asks.append("Please specify when you want to reach this goal by (end date).")
-    
-    # Check category (only required for category type)
-    if goal_type == "category":
-        if ("match_category" not in goal or not goal["match_category"]):
-            user_asks.append(f"Could you clarify the category for {goal_name}?")
+    # Check amount
+    if "amount" not in goal or goal["amount"] is None or float(goal.get("amount", 0)) < 0:
+        suffix = f" of the {goal_name}?" if goal_name else "?"
+        user_asks.append(f"What is the target amount{suffix}")
     
     # Check dates
     if "start_date" in goal and goal["start_date"]:
@@ -121,30 +106,22 @@ def normalize_dates(goal: dict) -> dict:
 
 def create_budget_or_goal(
     category: str,
-    match_category: str,
-    match_caveats: str | None,
-    type: str,
     granularity: str,
     start_date: str,
     end_date: str,
     amount: float,
-    title: str,
-    budget_or_goal: str
+    title: str
 ) -> Tuple[bool, str]:
     """
     Create a budget or goal based on individual parameters.
     
     Args:
-        category: The raw spending category text (e.g., "gas", "eating out"). Can be empty string.
-        match_category: The category from the OFFICIAL CATEGORY LIST. Can be empty string.
-        match_caveats: Explanation of matching constraints. None if not applicable.
-        type: The type of goal. Must be one of: "category", "credit_X_amount", "save_X_amount", "credit_0", "save_0".
+        category: The category from the OFFICIAL CATEGORY LIST. This is the primary category identifier.
         granularity: The time period for the goal. Must be one of: "weekly", "monthly", or "yearly". Can be empty string.
         start_date: The start date for the goal in YYYY-MM-DD format. Can be empty string.
         end_date: The end date for the goal in YYYY-MM-DD format. Can be empty string.
         amount: The target dollar amount for the specified category and granularity. Can be 0.0.
         title: Goal name/title.
-        budget_or_goal: Must be either "budget" or "goal". Defaults to "goal" if invalid.
     
     Returns:
         Tuple[bool, str]: (success, output_info)
@@ -154,15 +131,12 @@ def create_budget_or_goal(
     # Convert parameters to dictionary for processing
     goal = {
         "category": category,
-        "match_category": match_category,
-        "match_caveats": match_caveats,
-        "type": type,
+        "type": "category",
         "granularity": granularity,
         "start_date": start_date,
         "end_date": end_date,
         "amount": amount,
-        "title": title,
-        "budget_or_goal": budget_or_goal
+        "title": title
     }
     
     # Validate the goal
@@ -177,22 +151,12 @@ def create_budget_or_goal(
     goal_name = (goal.get("title") if goal.get("title")
                  else goal.get("category") if goal.get("category") else "goal")
     
-    # Validate and set budget_or_goal
-    budget_or_goal_value = goal.get("budget_or_goal", "goal")
-    if budget_or_goal_value not in ["budget", "goal"]:
-        budget_or_goal_value = "goal"  # Default to "goal" if invalid
-    
     # Build confirmation message
     confirmation_message = (
-        f"Successfully created {budget_or_goal_value} '{goal_name}' "
+        f"Successfully created '{goal_name}' "
         f"from {goal['start_date']} to {goal['end_date']} "
         f"with target amount ${goal.get('amount', 0):.2f}."
     )
     
-    # Include match caveats if present
-    output_info = confirmation_message
-    if goal.get("match_caveats"):
-        output_info = f"{goal['match_caveats']}\n{output_info}"
-    
-    return True, output_info
+    return True, confirmation_message
 
