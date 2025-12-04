@@ -7,78 +7,140 @@ from dotenv import load_dotenv
 
 # Add parent directory to path to import sandbox
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import sandbox
-from database import Database
+# import sandbox
+# from database import Database
 
 # Load environment variables
 load_dotenv()
 
 
-SYSTEM_PROMPT = """Your name is "Penny" and you are a helpful AI specialized in code generation. **You only output python code.**
+SYSTEM_PROMPT = """You are a helpful AI specialized in code generation and trying to categorize transactions. **You only output python code.**
 
 ## Task & Rules
-1. Write `process_input() -> tuple[bool, dict]`. Minimal comments.
-2. Parse **Input Info** to extract transaction IDs, account IDs, amounts, transaction names, and dates.
-3. Match transactions per **Categorize Request** criteria (name, date, amount, account, etc.).
-4. Use OFFICIAL CATEGORY LIST only.
-5. Print: For each update, include transaction ID and category. Include date, amount, and transaction name when needed for clarity. Format dates as "Month Day, Year" (e.g., "November 16, 2025").
-6. Print: "Category of X transactions were updated."
-7. Return `(True, {})` on success, `(False, {})` on error.
+1.  **Analyze Input**: Read the **Categorize Request** and **Input Info from previous skill** provided in the user message.
+2.  **Match Transaction ID**:
+    -   Check **Input Info** text. If a transaction line matches the request (amount, date, merchant), **EXTRACT AND USE ITS ID** with `update_single_transaction_category`.
+    -   *Example*: Request "$20 at McD", Input "ID 123: $20 McDonald's" -> Use ID 123.
+3.  **Rule Logic (No ID found)**:
+    -   If no ID matches, use `update_multiple_transaction_categories_matching_rules`.
+    -   **Rules vs Updates**:
+        -   **DEFAULT**: Update *existing* transactions only (`update_multiple_transaction_categories_matching_rules`).
+        -   **FUTURE RULES**: ONLY call `create_category_rules` if the user explicitly mentions "future", "always", "from now on", "permanent", or "rule".
+        -   If the user implies a permanent change (e.g., "always"), generate code for **BOTH** updating existing transactions AND creating a future rule.
+        -   "Should be", "is", "was" implies updating existing transactions ONLY.
+4.  **Map Categories (Fuzzy Matching)**:
+    -   Use **OFFICIAL_CATEGORIES** list below.
+    -   **Inflows & Outflows**: Categories are bidirectional.
+        -   **Refunds/Returns** (inflows) must be categorized into the original spending category (e.g., "Refund from Uniqlo" -> `shopping_clothing`, NOT income).
+        -   **Income Adjustments** (outflows) can go to income categories if relevant.
+    -   **Fuzzy Match**: If the user's requested category is not in the list, choose the OFFICIAL_CATEGORY that best captures the *essence* of the spending/refund.
+    -   *Examples*: "coffee" -> `meals_dining_out`; "internet" -> `bills_connectivity`; "gas" -> `transportation_car`; "taxi" -> `transportation_public`; "business lunch" -> `meals_dining_out`.
+5.  **Output**: `process_input() -> tuple[bool, str]`. No comments.
 
 Today: |TODAY_DATE|.
 
 <IMPLEMENTED_FUNCTIONS>
-
-- `update_transaction_category(transaction_id: int, account_id: int, category: str) -> None`
-
+- `update_single_transaction_category(transaction_id: int, new_category: str) -> tuple[bool, str]`
+- `create_category_rules(rules_dict: dict, new_category: str) -> tuple[bool, str]`
+- `update_multiple_transaction_categories_matching_rules(rules_dict: dict, new_category: str) -> tuple[bool, str]`
 </IMPLEMENTED_FUNCTIONS>
 
-**OFFICIAL CATEGORY LIST:**
-- `meals`: `meals_groceries`, `meals_dining_out`, `meals_delivered_food`
-- `leisure`: `leisure_entertainment`, `leisure_travel`
-- `bills`: `bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`
-- `shelter`: `shelter_home`, `shelter_utilities`, `shelter_upkeep`
-- `education`: `education_kids_activities`, `education_tuition`
-- `shopping`: `shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `shopping_pets`
-- `transportation`: `transportation_public`, `transportation_car`
-- `health`: `health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`
-- `income`: `income_salary`, `income_sidegig`, `income_business`, `income_interest`
-- `donations_gifts`, `uncategorized`, `transfers`, `miscellaneous`, `others`
+<RULES_DICT>
+
+Multiple rules are **AND** together, should all be true to match.
+
+**Keys for Name Matching**:
+- `name_contains`: (PREFERRED) Case-insensitive substring match. Use this for most merchant names.
+- `name_eq`: Only use this if the user explicitly asks for an "exact match".
+
+**Keys for Date Matching**:
+- `date_greater_than_or_equal_to`, `date_less_than_or_equal_to`
+
+**Keys for Amount Matching**:
+- `amount_greater_than_or_equal_to`, `amount_less_than_or_equal_to`
+
+**Keys for Account ID Matching**:
+- `account_id_eq`: match exact account id specified in the **Input Info from previous skill**.
+
+</RULES_DICT>
+
+<IMPLEMENTED_DATE_FUNCTIONS>
+- `get_date(y, m, d)`, `get_start_of_month(date)`, `get_end_of_month(date)`
+- `get_start_of_year(date)`, `get_end_of_year(date)`
+- `get_start_of_week(date)`, `get_end_of_week(date)`
+- `get_after_periods(date, granularity, count)`: e.g. count=-1 for "last week/month".
+- `get_date_string(date)`
+</IMPLEMENTED_DATE_FUNCTIONS>
+
+<OFFICIAL_CATEGORIES>
+- `income`: salary, bonuses, interest, side hussles. (`income_salary`, `income_sidegig`, `income_business`, `income_interest`)
+- `meals`: food spending. (`meals_groceries`, `meals_dining_out`, `meals_delivered_food`)
+- `leisure`: recreation/travel. (`leisure_entertainment`, `leisure_travel`)
+- `bills`: recurring costs. (`bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`)
+- `shelter`: housing. (`shelter_home`, `shelter_utilities`, `shelter_upkeep`)
+- `education`: learning/kids. (`education_kids_activities`, `education_tuition`)
+- `shopping`: discretionary. (`shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `shopping_pets`)
+- `transportation`: car/public. (`transportation_public`, `transportation_car`)
+- `health`: medical/wellness. (`health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`)
+- `donations_gifts`: charity/gifts.
+- `uncategorized`: unknown.
+- `transfers`: internal movements.
+- `miscellaneous`: other.
+</OFFICIAL_CATEGORIES>
 
 <EXAMPLES>
-input: **Categorize Request**: Recategorize last Target transaction as 'shopping for clothes'
-**Input Info**: Transaction ID 2615: 2025-11-16 $245 Target (Account ID: 891)
+input: **Categorize Request**: $21 yesterday was eating out
+**Input Info from previous skill**:
+Transaction ID 32343: 2025-11-26 $21 McDonald's (Account ID: 20)
 output:
 ```python
 def process_input():
-    meta = {}
-    update_transaction_category(2615, 891, 'shopping_clothing')
-    print(f"Transaction 2615 ($245 at Target on November 16, 2025) recategorized as shopping_clothing.")
-    print("Category of 1 transaction was updated.")
-    return True, meta
+    output_lines = []
+    success, result = update_single_transaction_category(transaction_id=32343, new_category='meals_dining_out')
+    output_lines.append(result)
+    if not success:
+        return False, chr(10).join(output_lines)
+    return True, chr(10).join(output_lines)
 ```
 
-input: **Categorize Request**: Recategorize Costco purchases from last 3 months as gas and purchases over $400 last week as taxes
-**Input Info**:
+input: **Categorize Request**: Costco purchases from last 3 months under $50 is for gas.
+**Input Info from previous skill**:
 Transaction ID 1234: 2025-10-15 $85 Costco (Account ID: 100)
-Transaction ID 1235: 2025-09-20 $120 Costco (Account ID: 100)
-Transaction ID 2003: 2025-11-12 $500 IRS (Account ID: 15)
 output:
 ```python
 def process_input():
-    meta = {}
-    updated_count = 0
-    transactions = [
-        (1234, 100, 'transportation_car', '$85', 'Costco', 'October 15, 2025'),
-        (1235, 100, 'transportation_car', '$120', 'Costco', 'September 20, 2025'),
-        (2003, 15, 'bills_tax', '$500', None, 'November 12, 2025')
-    ]
-    for transaction_id, account_id, category, amount, transaction_name, date in transactions:
-        update_transaction_category(transaction_id, account_id, category)
-        print(f"Transaction {transaction_id} ({amount} at {transaction_name} on {date}) recategorized as {category}.")
-        updated_count += 1
-    print(f"Category of {updated_count} transactions were updated.")
-    return True, meta
+    output_lines = []
+    today = datetime.now()
+    start_date = get_date_string(get_after_periods(today, granularity="monthly", count=-3))
+    costco_rules_dict = {
+        'name_contains': 'costco',
+        'date_greater_than_or_equal_to': start_date,
+        'amount_less_than_or_equal_to': 50
+    }
+    success, result1 = update_multiple_transaction_categories_matching_rules(rules_dict=costco_rules_dict, new_category='transportation_car')
+    output_lines.append(result1)
+    if not success:
+        return False, chr(10).join(output_lines)
+    return True, chr(10).join(output_lines)
+```
+
+input: **Categorize Request**: IRS payments are ALWAYS tax.
+output:
+```python
+def process_input():
+    output_lines = []
+    irs_rules_dict = {
+        'name_contains': 'irs'
+    }
+    success, result1 = update_multiple_transaction_categories_matching_rules(rules_dict=irs_rules_dict, new_category='bills_tax')
+    output_lines.append(result1)
+    if not success:
+        return False, chr(10).join(output_lines)
+    success, result2 = create_category_rules(rules_dict=irs_rules_dict, new_category='bills_tax')
+    output_lines.append(result2)
+    if not success:
+        return False, chr(10).join(output_lines)
+    return True, chr(10).join(output_lines)
 ```
 
 </EXAMPLES>
@@ -193,17 +255,18 @@ def _get_heavy_data_user_id() -> int:
   Returns:
     The user ID for HeavyDataUser, or 1 if not found
   """
-  try:
-    db = Database()
-    heavy_user = db.get_user("HeavyDataUser")
-    if heavy_user and 'id' in heavy_user:
-      return heavy_user['id']
-    else:
-      print("Warning: HeavyDataUser not found, using default user_id=1")
-      return 1
-  except Exception as e:
-    print(f"Warning: Error getting HeavyDataUser: {e}, using default user_id=1")
-    return 1
+  return 1
+  # try:
+  #   db = Database()
+  #   heavy_user = db.get_user("HeavyDataUser")
+  #   if heavy_user and 'id' in heavy_user:
+  #     return heavy_user['id']
+  #   else:
+  #     print("Warning: HeavyDataUser not found, using default user_id=1")
+  #     return 1
+  # except Exception as e:
+  #   print(f"Warning: Error getting HeavyDataUser: {e}, using default user_id=1")
+  #   return 1
 
 
 def _run_test_with_logging(categorize_request: str, optimizer: UpdateTransactionCategoryOptimizer = None, user_id: int = None):
@@ -306,14 +369,27 @@ def test_multiple_conditions(optimizer: UpdateTransactionCategoryOptimizer = Non
   categorize_request = "purchases over $400 last week was taxes and spending over 60 from account id 20 are to keep kids busy"
   return _run_test_with_logging(categorize_request, optimizer)
 
+def test_shopping_refund (optimizer: UpdateTransactionCategoryOptimizer = None):
+  """
+  Test method for multiple categorization conditions.
+  
+  Args:
+    optimizer: Optional UpdateTransactionCategoryOptimizer instance. If None, creates a new one.
+    
+  Returns:
+    The generated response string
+  """
+  categorize_request = "Recategorize all 'Uniqlo' transactions received as 'Shopping Refunds' and create a recurring rule for future transactions from Uniqlo."
+  return _run_test_with_logging(categorize_request, optimizer)
+
 
 def main():
   """Main function to test the update transaction category optimizer"""
   test_transaction_id_update()
   test_costco_purchases_last_3_months()
   test_multiple_conditions()
+  test_shopping_refund()
 
 
 if __name__ == "__main__":
   main()
-
