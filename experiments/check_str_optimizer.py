@@ -10,50 +10,48 @@ load_dotenv()
 SYSTEM_PROMPT = """You are a checker verifying verbalizer outputs against rules.
 
 ## Input:
-- **eval_item**: The action plan requested by a user (string)
-- **eval_output**: The verbalizer response (string)
+- **EVAL_INPUT**: Action plan requested by user (string)
+- **PAST_REVIEW_OUTCOMES**: Array of past reviews, each with `output`, `good_copy`, `info_correct`, `eval_text`
+- **REVIEW_NEEDED**: Verbalizer response to review (string)
 
 ## Output:
-JSON with keys: **good_copy** (boolean), **info_correct** (boolean), **eval_text** (string with notes if either is false)
+JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
+- `good_copy`: True if REVIEW_NEEDED addresses EVAL_INPUT and includes required elements
+- `info_correct`: True if REVIEW_NEEDED follows all rules
+- `eval_text`: Required if either boolean is False; be specific and concise
 
-## Rules:
-**Required Content** (not formatted as list):
-1. Your Next Steps: Progressive tense summarizing actions
-2. User's Next Steps: Creative wait instruction (exclude "Please")
-3. Wait messaging: Varied phrases like "Bear with me...", "Back in a flash... ⚡", "Hol' up. 🤔", "Let me think... 🧠⚙️"
+## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
+**MANDATORY**: If PAST_REVIEW_OUTCOMES flags issues that still exist in REVIEW_NEEDED, mark as incorrect.
+- Extract all issues from past `eval_text` fields
+- Check if REVIEW_NEEDED repeats the same mistakes
+- If past reviews say "contains 'Please'" and it's still there → mark `info_correct: False`
+- If past reviews say "missing wait messaging" and it's still missing → mark `info_correct: False`
 
-**Guidelines**:
-- Max 15 words, sentence-case, few emojis
-- Focus on "you" doing it (no "let's", "us", "we")
-- Light, conversational, friendly tone
-- Convey importance/urgency if needed
+## Rules
 
-## Verification:
-1. **good_copy**: Addresses eval_item and includes all required elements
-2. **info_correct**: Follows all rules (word limit, formatting, tone, no "Please"/"let's", progressive tense, creative wait)
-3. **eval_text**: Specific, concise notes on violations
+### Required Content
+1. Progressive tense: Actions in progressive tense (e.g., "Creating...", "Setting up...")
+2. Creative wait messaging: Varied phrases like "Bear with me...", "Back in a flash... ⚡", "Hol' up. 🤔", "Let me think... 🧠⚙️"
+3. No "Please": Exclude "Please" from wait instructions
 
-<EXAMPLES>
+### Guidelines
+- **15 words max** (strict): Count all words
+- **Sentence-case**: Not all caps or title case
+- **Few emojis**: Use sparingly
+- **Focus on "you"**: No "let's", "us", "we" - use "you" doing it
+- **Tone**: Light, conversational, friendly
+- **Urgency**: Convey importance/urgency if needed
 
-input:
-```json
-{"eval_item": "Create a budget for groceries", "eval_output": "Creating your budget now. Bear with me... ⚡"}
-```
-output:
-```json
-{"good_copy": true, "info_correct": true, "eval_text": ""}
-```
+## Verification Steps
 
-input:
-```json
-{"eval_item": "Analyze spending patterns", "eval_output": "Please wait while I analyze. Let's do this together!"}
-```
-output:
-```json
-{"good_copy": false, "info_correct": false, "eval_text": "Contains 'Please' (exclude). Uses 'Let's' (use 'you' instead). Missing creative wait messaging. May exceed 15 words."}
-```
-
-</EXAMPLES>
+1. **Check PAST_REVIEW_OUTCOMES first**: Extract all flagged issues. If REVIEW_NEEDED repeats them → mark False
+2. **Verify good_copy**: Does REVIEW_NEEDED address EVAL_INPUT? Includes progressive tense + creative wait? Missing elements = False
+3. **Verify info_correct**: Apply all rules:
+   - 15 words max? Sentence-case? Few emojis?
+   - No "Please"? No "let's"/"us"/"we"?
+   - Progressive tense? Creative wait messaging?
+   - Light, conversational tone?
+4. **Write eval_text**: If False, list specific issues. Reference unfixed PAST_REVIEW_OUTCOMES issues.
 """
 
 class CheckStrOptimizer:
@@ -88,20 +86,36 @@ class CheckStrOptimizer:
     self.system_prompt = SYSTEM_PROMPT
 
   
-  def generate_response(self, eval_item: str, eval_output: str) -> dict:
+  def generate_response(self, eval_input: str, past_review_outcomes: list, review_needed: str) -> dict:
     """
     Generate a response using Gemini API for checking evaluations.
     
     Args:
-      eval_item: The detailed action plan requested by a user (string).
-      eval_output: The evaluation output. A string response from the verbalizer.
+      eval_input: The action plan requested by a user (string).
+      past_review_outcomes: An array of past review outcomes, each containing `output`, `good_copy`, `info_correct`, and `eval_text`.
+      review_needed: The verbalizer response that needs to be reviewed (string).
       
     Returns:
       Dictionary with good_copy, info_correct, and eval_text keys
     """
-    # Create request text with eval_item and eval_output
-    request_text = types.Part.from_text(text=f"""Input:
-{json.dumps({"eval_item": eval_item, "eval_output": eval_output}, indent=2)}
+    # Create request text with the new input structure
+    request_text = types.Part.from_text(text=f"""<EVAL_INPUT>
+
+{eval_input}
+
+</EVAL_INPUT>
+
+<PAST_REVIEW_OUTCOMES>
+
+{json.dumps(past_review_outcomes, indent=2)}
+
+</PAST_REVIEW_OUTCOMES>
+
+<REVIEW_NEEDED>
+
+{review_needed}
+
+</REVIEW_NEEDED>
 
 Output:""")
     
@@ -160,13 +174,14 @@ Output:""")
       raise ValueError(f"Failed to parse JSON response: {e}\nResponse length: {len(output_text)}\nResponse preview: {output_text[:500]}")
 
 
-def test_with_inputs(eval_item: str, eval_output: str, checker: CheckStrOptimizer = None):
+def test_with_inputs(eval_input: str, past_review_outcomes: list, review_needed: str, checker: CheckStrOptimizer = None):
   """
   Convenient method to test the checker optimizer with custom inputs.
   
   Args:
-    eval_item: The detailed action plan requested by a user (string).
-    eval_output: The evaluation output. A string response from the verbalizer.
+    eval_input: The action plan requested by a user (string).
+    past_review_outcomes: An array of past review outcomes, each containing `output`, `good_copy`, `info_correct`, and `eval_text`.
+    review_needed: The verbalizer response that needs to be reviewed (string).
     checker: Optional CheckStrOptimizer instance. If None, creates a new one.
     
   Returns:
@@ -175,80 +190,107 @@ def test_with_inputs(eval_item: str, eval_output: str, checker: CheckStrOptimize
   if checker is None:
     checker = CheckStrOptimizer()
   
-  return checker.generate_response(eval_item, eval_output)
+  return checker.generate_response(eval_input, past_review_outcomes, review_needed)
 
 
 # Test cases covering different scenarios
 TEST_CASES = [
   {
     "name": "correct_response",
-    "eval_item": "Create a budget for groceries and dining out",
-    "eval_output": "Creating your budget now. Bear with me while I set this up... ⚡"
+    "eval_input": "Create a budget for groceries and dining out",
+    "review_needed": "Creating your budget now. Bear with me while I set this up... ⚡",
+    "past_review_outcomes": []
   },
   {
     "name": "contains_please",
-    "eval_item": "Analyze spending patterns for the last month",
-    "eval_output": "Please wait while I analyze your spending patterns. This will take a moment."
+    "eval_input": "Analyze spending patterns for the last month",
+    "review_needed": "Please wait while I analyze your spending patterns. This will take a moment.",
+    "past_review_outcomes": []
   },
   {
     "name": "uses_lets",
-    "eval_item": "Update transaction categories",
-    "eval_output": "Let's update those categories together! Hold on..."
+    "eval_input": "Update transaction categories",
+    "review_needed": "Let's update those categories together! Hold on...",
+    "past_review_outcomes": []
   },
   {
     "name": "exceeds_word_limit",
-    "eval_item": "Generate financial report",
-    "eval_output": "I am currently generating your comprehensive financial report with all the details and insights you requested. This will take just a moment."
+    "eval_input": "Generate financial report",
+    "review_needed": "I am currently generating your comprehensive financial report with all the details and insights you requested. This will take just a moment.",
+    "past_review_outcomes": []
   },
   {
     "name": "missing_wait_messaging",
-    "eval_item": "Calculate monthly expenses",
-    "eval_output": "Calculating your monthly expenses now."
+    "eval_input": "Calculate monthly expenses",
+    "review_needed": "Calculating your monthly expenses now.",
+    "past_review_outcomes": []
   },
   {
     "name": "missing_progressive_tense",
-    "eval_item": "Review transaction history",
-    "eval_output": "I will review your transaction history. Wait for me."
+    "eval_input": "Review transaction history",
+    "review_needed": "I will review your transaction history. Wait for me.",
+    "past_review_outcomes": []
   },
   {
     "name": "correct_with_creative_wait",
-    "eval_item": "Set up savings goal",
-    "eval_output": "Setting up your savings goal. Back in a flash... ⚡"
+    "eval_input": "Set up savings goal",
+    "review_needed": "Setting up your savings goal. Back in a flash... ⚡",
+    "past_review_outcomes": []
   },
   {
     "name": "correct_with_hol_up",
-    "eval_item": "Categorize recent transactions",
-    "eval_output": "Categorizing your transactions. Hol' up. 🤔"
+    "eval_input": "Categorize recent transactions",
+    "review_needed": "Categorizing your transactions. Hol' up. 🤔",
+    "past_review_outcomes": []
   },
   {
     "name": "correct_with_allow_me",
-    "eval_item": "Create spending forecast",
-    "eval_output": "Creating your forecast. Allow me a moment..."
+    "eval_input": "Create spending forecast",
+    "review_needed": "Creating your forecast. Allow me a moment...",
+    "past_review_outcomes": []
   },
   {
     "name": "correct_with_thinking",
-    "eval_item": "Optimize budget allocation",
-    "eval_output": "Optimizing your budget. Let me think... 🧠⚙️"
+    "eval_input": "Optimize budget allocation",
+    "review_needed": "Optimizing your budget. Let me think... 🧠⚙️",
+    "past_review_outcomes": []
   },
   {
     "name": "uses_us_together",
-    "eval_item": "Plan monthly budget",
-    "eval_output": "Planning our monthly budget together. Just a sec..."
+    "eval_input": "Plan monthly budget",
+    "review_needed": "Planning our monthly budget together. Just a sec...",
+    "past_review_outcomes": []
   },
   {
     "name": "too_formal",
-    "eval_item": "Generate insights report",
-    "eval_output": "Please allow me to generate your insights report. I appreciate your patience."
+    "eval_input": "Generate insights report",
+    "review_needed": "Please allow me to generate your insights report. I appreciate your patience.",
+    "past_review_outcomes": []
   },
   {
     "name": "missing_next_steps",
-    "eval_item": "Update account settings",
-    "eval_output": "Wait for me to finish."
+    "eval_input": "Update account settings",
+    "review_needed": "Wait for me to finish.",
+    "past_review_outcomes": []
   },
   {
     "name": "correct_urgent_tone",
-    "eval_item": "Fix transaction categorization error",
-    "eval_output": "Fixing that error now. Bear with me... ⚡"
+    "eval_input": "Fix transaction categorization error",
+    "review_needed": "Fixing that error now. Bear with me... ⚡",
+    "past_review_outcomes": []
+  },
+  {
+    "name": "past_review_outcomes_issue_persists",
+    "eval_input": "Research different ways to get rich.",
+    "review_needed": "I'm crafting your rich-gettin' roadmap. 🗺️  Bear with me... your financial future awaits! 🚀",
+    "past_review_outcomes": [
+      {
+        "output": "I'm crafting your rich-gettin' roadmap. 🗺️  Hold tight, a treasure awaits! 💎",
+        "good_copy": True,
+        "info_correct": True,
+        "eval_text": ""
+      }
+    ]
   }
 ]
 
@@ -258,7 +300,7 @@ def run_test(test_case: dict, checker: CheckStrOptimizer = None):
   Run a single test case.
   
   Args:
-    test_case: Test case dict with name, eval_item, and eval_output
+    test_case: Test case dict with name, eval_item (or eval_input), eval_output (or review_needed), and optionally past_review_outcomes
     checker: Optional CheckStrOptimizer instance. If None, creates a new one.
     
   Returns:
@@ -272,7 +314,19 @@ def run_test(test_case: dict, checker: CheckStrOptimizer = None):
   print(f"{'='*80}")
   
   try:
-    result = checker.generate_response(test_case["eval_item"], test_case["eval_output"])
+    # Support both old format (eval_item/eval_output) and new format (eval_input/review_needed/past_review_outcomes)
+    if "eval_input" in test_case:
+      # New format
+      eval_input = test_case["eval_input"]
+      past_review_outcomes = test_case.get("past_review_outcomes", [])
+      review_needed = test_case["review_needed"]
+    else:
+      # Old format - convert to new format
+      eval_input = test_case["eval_item"]
+      past_review_outcomes = test_case.get("past_review_outcomes", [])
+      review_needed = test_case["eval_output"]
+    
+    result = checker.generate_response(eval_input, past_review_outcomes, review_needed)
     print(f"Result:")
     print(json.dumps(result, indent=2))
     print(f"{'='*80}")
