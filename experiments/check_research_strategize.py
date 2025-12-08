@@ -92,7 +92,7 @@ class CheckResearchStrategize:
     # Generation Configuration Constants
     self.temperature = 0.6
     self.top_p = 0.95
-    self.max_output_tokens = 8192
+    self.max_output_tokens = 6000
     
     # Safety Settings
     self.safety_settings = [
