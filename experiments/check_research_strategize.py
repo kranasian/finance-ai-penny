@@ -10,7 +10,7 @@ load_dotenv()
 SYSTEM_PROMPT = """You are a checker verifying research and strategy outputs against rules.
 
 ## Input:
-- **EVAL_INPUT**: User request and input information (string containing user's financial goal/request and available financial data)
+- **EVAL_INPUT**: Contains "**User request**:" followed by the user's financial goal/request, and "**Input Information from previous skill**:" followed by detailed financial data (savings balance, accounts, past transactions, forecasted patterns, savings rate)
 - **PAST_REVIEW_OUTCOMES**: Array of past reviews, each with `output`, `good_copy`, `info_correct`, `eval_text`
 - **REVIEW_NEEDED**: Research and strategy output to review (string)
 
@@ -30,7 +30,7 @@ JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
 
 ### Process Requirements
 1. **Find the Goal**: Must pinpoint the user's primary financial aim
-2. **List Key Facts**: Must take income, expenses, savings, capacity from Input Information, and research on market data necessary to answer the User request
+2. **List Key Facts**: Must take income, expenses, savings, capacity from "**Input Information from previous skill**", and research on market data necessary to answer the "**User request**"
 3. **Analyze Savings Opportunities**: If the user's goal requires increased savings, MUST analyze all spending data from "Key Facts" and provide a prioritized, actionable list of recommendations for reducing spending or increasing income. These recommendations MUST be integrated directly into the strategy.
 4. **Create a Strategy**: 
    - Design a complete, self-contained strategy of **no more than 3 steps**
@@ -111,7 +111,7 @@ class CheckResearchStrategize:
     Generate a response using Gemini API for checking P:Func:ResearchStrategize outputs.
     
     Args:
-      eval_input: User request and input information (string containing user's financial goal/request and available financial data).
+      eval_input: String containing "**User request**:" followed by the user's financial goal/request, and "**Input Information from previous skill**:" followed by detailed financial data (savings balance, accounts, past transactions, forecasted patterns, savings rate).
       past_review_outcomes: An array of past review outcomes, each containing `output`, `good_copy`, `info_correct`, and `eval_text`.
       review_needed: The P:Func:ResearchStrategize output that needs to be reviewed (string).
       
@@ -204,7 +204,7 @@ def test_with_inputs(eval_input: str, past_review_outcomes: list, review_needed:
   Convenient method to test the checker with custom inputs.
   
   Args:
-    eval_input: User request and input information (string containing user's financial goal/request and available financial data).
+    eval_input: String containing "**User request**:" followed by the user's financial goal/request, and "**Input Information from previous skill**:" followed by detailed financial data.
     past_review_outcomes: An array of past review outcomes, each containing `output`, `good_copy`, `info_correct`, and `eval_text`.
     review_needed: The P:Func:ResearchStrategize output that needs to be reviewed (string).
     checker: Optional CheckResearchStrategize instance. If None, creates a new one.
@@ -222,26 +222,86 @@ def test_with_inputs(eval_input: str, past_review_outcomes: list, review_needed:
 TEST_CASES = [
   {
     "name": "correct_response",
-    "eval_input": "User Request: I want to save $50,000 for a down payment on a house in 3 years\n\nInput Information: Monthly income: $6,000. Monthly expenses: $4,500. Current savings: $10,000. Average monthly savings: $1,500.",
-    "review_needed": """**Summary:** You'll save $50,000 in 3 years by maintaining your current $1,500/month savings rate and investing in a high-yield savings account.
+    "eval_input": """**User request**: Based on the current savings balance and net monthly savings rate provided, calculate the projected time (in years and months) required to reach a savings goal of $100,000.
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $24502
+
+Savings Accounts:
+
+Account 'Chase Savings' (account_id: 6854) has $24502.
+
+--- Past Transactions ---
+
+Total Past Income: earned $92194
+
+Total Past Spending: spent $90195
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $250000
+
+Forecasted Income:
+
+- income_salary on 2025-11-01: $20000
+
+- income_salary on 2025-12-01: $20000
+
+Total Expected Spending: spend $212555
+
+Forecasted Spending:
+
+- meals on 2025-11-01: $1861
+
+- meals on 2025-12-01: $2170
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 14.98%""",
+    "review_needed": """**Summary:** You'll reach $100,000 in approximately 3 years and 2 months by maintaining your current savings rate of 14.98% and applying it to your forecasted income.
 
 **Key Facts:**
-- Current savings rate of $1,500/month (Input: "Average monthly savings: $1,500")
-- 36 months to reach goal (Input: "3 years")
-- Need additional $40,000 beyond current $10,000 (Input: "Current savings: $10,000")
+- Current savings balance of $24,502 (Input: "Total Current Savings Balance: $24502")
+- Past savings rate of 14.98% (Input: "Past Savings Rate (Income - Spending): 14.98%")
+- Need additional $75,498 to reach goal (Input: "savings goal of $100,000" and "Total Current Savings Balance: $24502")
 
 **Strategy:**
 
-1. Maintain $1,500/month savings in a high-yield savings account at 4.5% APY, yielding $54,000 in 36 months (Input: "Average monthly savings: $1,500")
-2. Keep $5,000 as emergency fund in separate account, invest remaining $5,000 in index fund for growth (Input: "Current savings: $10,000")
-3. Review and optimize monthly expenses quarterly to ensure savings rate stays on track (Input: "Monthly expenses: $4,500")
+1. Calculate monthly savings from forecasted income: $20,000/month income with 14.98% savings rate yields $2,996/month savings (Input: "income_salary on 2025-11-01: $20000" and "Past Savings Rate (Income - Spending): 14.98%")
+2. Project timeline: $75,498 needed ÷ $2,996/month = 25.2 months (approximately 2 years 1 month) to reach goal (Input: "Need additional $75,498" and "$2,996/month savings")
+3. Maintain emergency fund of $10,000 in Chase Savings account, invest excess beyond goal in index funds (Input: "Account 'Chase Savings' (account_id: 6854) has $24502")
 
-**Risks:** Market volatility could affect investment returns; maintain emergency fund separately.""",
+**Risks:** Forecasted spending patterns may change, affecting actual savings rate.""",
     "past_review_outcomes": []
   },
   {
     "name": "missing_key_facts_input_quotes",
-    "eval_input": "User Request: Help me build an emergency fund\n\nInput Information: Monthly income: $5,000. Monthly expenses: $4,200. Current savings: $2,000.",
+    "eval_input": """**User request**: Help me build an emergency fund
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $2000
+
+Savings Accounts:
+
+Account 'Savings' (account_id: 1234) has $2000.
+
+--- Past Transactions ---
+
+Total Past Income: earned $60000
+
+Total Past Spending: spent $50400
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $60000
+
+Total Expected Spending: spend $50400
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 16.00%""",
     "review_needed": """**Summary:** Build a 6-month emergency fund by saving $800/month.
 
 **Key Facts:**
@@ -260,7 +320,27 @@ TEST_CASES = [
   },
   {
     "name": "missing_strategy_calculations",
-    "eval_input": "User Request: I want to retire early\n\nInput Information: Age: 35. Current retirement savings: $100,000. Monthly income: $8,000. Monthly expenses: $5,000.",
+    "eval_input": """**User request**: I want to retire early
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $100000
+
+--- Past Transactions ---
+
+Total Past Income: earned $96000
+
+Total Past Spending: spent $60000
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $96000
+
+Total Expected Spending: spend $60000
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 37.50%""",
     "review_needed": """**Summary:** Achieve early retirement by maximizing savings and investing aggressively.
 
 **Key Facts:**
@@ -279,7 +359,27 @@ TEST_CASES = [
   },
   {
     "name": "too_many_strategy_steps",
-    "eval_input": "User Request: Pay off credit card debt\n\nInput Information: Credit card debt: $15,000 at 18% APR. Monthly income: $4,000. Monthly expenses: $3,200.",
+    "eval_input": """**User request**: Pay off credit card debt
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $5000
+
+--- Past Transactions ---
+
+Total Past Income: earned $48000
+
+Total Past Spending: spent $38400
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $48000
+
+Total Expected Spending: spend $38400
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 20.00%""",
     "review_needed": """**Summary:** Eliminate $15,000 credit card debt in 12 months using debt avalanche method.
 
 **Key Facts:**
@@ -299,7 +399,27 @@ TEST_CASES = [
   },
   {
     "name": "open_ended_tasks",
-    "eval_input": "User Request: Invest for my child's college education\n\nInput Information: Child age: 5. Target: $100,000 in 13 years. Current savings: $5,000. Monthly capacity: $500.",
+    "eval_input": """**User request**: Invest for my child's college education
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $5000
+
+--- Past Transactions ---
+
+Total Past Income: earned $60000
+
+Total Past Spending: spent $54000
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $60000
+
+Total Expected Spending: spend $54000
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 10.00%""",
     "review_needed": """**Summary:** Build $100,000 college fund over 13 years through 529 plan contributions.
 
 **Key Facts:**
@@ -318,7 +438,33 @@ TEST_CASES = [
   },
   {
     "name": "missing_emergency_fund_consideration",
-    "eval_input": "User Request: Maximize my investment returns\n\nInput Information: Current investments: $50,000. Monthly income: $7,000. Monthly expenses: $4,500. Savings: $3,000.",
+    "eval_input": """**User request**: Maximize my investment returns
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $53000
+
+Savings Accounts:
+
+Account 'Investment Account' (account_id: 5678) has $50000.
+
+Account 'Savings' (account_id: 5679) has $3000.
+
+--- Past Transactions ---
+
+Total Past Income: earned $84000
+
+Total Past Spending: spent $54000
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $84000
+
+Total Expected Spending: spend $54000
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 35.71%""",
     "review_needed": """**Summary:** Optimize investment portfolio by rebalancing and increasing contributions.
 
 **Key Facts:**
@@ -337,7 +483,35 @@ TEST_CASES = [
   },
   {
     "name": "missing_savings_opportunities_analysis",
-    "eval_input": "User Request: Save $30,000 for a car in 2 years\n\nInput Information: Monthly income: $5,500. Monthly expenses: $5,200. Current savings: $2,000. Spending breakdown: Dining out $600/month, Entertainment $400/month, Subscriptions $150/month.",
+    "eval_input": """**User request**: Save $30,000 for a car in 2 years
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $2000
+
+--- Past Transactions ---
+
+Total Past Income: earned $66000
+
+Total Past Spending: spent $62400
+
+Forecasted Spending:
+
+- meals on 2025-11-01: $600
+
+- entertainment on 2025-11-01: $400
+
+- subscriptions on 2025-11-01: $150
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $66000
+
+Total Expected Spending: spend $62400
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 5.45%""",
     "review_needed": """**Summary:** Save $30,000 in 24 months by maintaining current $300/month savings rate.
 
 **Key Facts:**
@@ -356,7 +530,35 @@ TEST_CASES = [
   },
   {
     "name": "correct_with_savings_opportunities",
-    "eval_input": "User Request: Save $20,000 for vacation in 18 months\n\nInput Information: Monthly income: $6,000. Monthly expenses: $5,000. Current savings: $1,000. Spending: Dining $800/month, Shopping $500/month, Subscriptions $200/month.",
+    "eval_input": """**User request**: Save $20,000 for vacation in 18 months
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $1000
+
+--- Past Transactions ---
+
+Total Past Income: earned $72000
+
+Total Past Spending: spent $60000
+
+Forecasted Spending:
+
+- meals on 2025-11-01: $800
+
+- shopping on 2025-11-01: $500
+
+- subscriptions on 2025-11-01: $200
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $72000
+
+Total Expected Spending: spend $60000
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 16.67%""",
     "review_needed": """**Summary:** Save $20,000 in 18 months by reducing dining and shopping expenses, increasing savings to $1,200/month.
 
 **Key Facts:**
@@ -375,7 +577,27 @@ TEST_CASES = [
   },
   {
     "name": "past_review_outcomes_issue_persists",
-    "eval_input": "User Request: Build wealth through investing\n\nInput Information: Age: 28. Current investments: $20,000. Monthly income: $5,000. Monthly expenses: $3,500.",
+    "eval_input": """**User request**: Build wealth through investing
+
+**Input Information from previous skill**:
+
+Total Current Savings Balance: $20000
+
+--- Past Transactions ---
+
+Total Past Income: earned $60000
+
+Total Past Spending: spent $42000
+
+--- Forecasted Patterns ---
+
+Total Expected Income: earn $60000
+
+Total Expected Spending: spend $42000
+
+--- Savings Rate ---
+
+Past Savings Rate (Income - Spending): 30.00%""",
     "review_needed": """**Summary:** Build wealth by investing $1,500/month in diversified index funds.
 
 **Key Facts:**
