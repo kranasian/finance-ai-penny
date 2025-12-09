@@ -7,119 +7,73 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a checker verifying insight evaluations against strict rules.
+SYSTEM_PROMPT = """You are a checker verifying verbalizer outputs against rules.
 
 ## Input:
-- **EVAL_INPUT**: Array of original items with `key` and `insight` fields
-- **PAST_REVIEW_OUTCOMES**: Array of past reviews for the same key, each with `output`, `good_copy`, `info_correct`, `eval_text`
-- **REVIEW_NEEDED**: Array of items to review, each with `key` and `insight` fields
+- **EVAL_INPUT**: Notable activity in personal finance (string)
+- **PAST_REVIEW_OUTCOMES**: Array of past reviews, each with `output`, `good_copy`, `info_correct`, `eval_text`
+- **REVIEW_NEEDED**: Highlights from EVAL_INPUT rewritten as actionable messages (string)
 
 ## Output:
-Single JSON object: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: True if all REVIEW_NEEDED items preserve core info from EVAL_INPUT
-- `info_correct`: True if all REVIEW_NEEDED items follow all rules
-- `eval_text`: Required if either boolean is False; be specific and concise about all issues found
+JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
+- `good_copy`: **(FORMATTING ONLY)** True if REVIEW_NEEDED perfectly follows all formatting rules from the "Rules" section. This includes colors, links, character limits, and no unnecessary characters.
+- `info_correct`: **(ACCURACY ONLY)** True if all information in REVIEW_NEEDED is factually accurate when compared to EVAL_INPUT. EVAL_INPUT is the only source of truth.
+- `eval_text`: Required if either boolean is False. Explains why. Be specific. For multiple insights, refer to them by number (e.g., "Insight 1: ...", "Insight 2: ...").
+
+## Critical Priority: Strict Compliance (Recall over Precision)
+- **Recall over Precision**: It is better to mark an issue as Incorrect (False) if you are unsure, than to let a potential issue pass as Correct (True).
+- Mark `info_correct` or `good_copy` as False if there is **ANY potential violation** of the rules below or a factual error.
+- False positives (flagging correct content as issues) are preferred over false negatives (missing actual issues).
 
 ## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
 **MANDATORY**: If PAST_REVIEW_OUTCOMES flags issues that still exist in REVIEW_NEEDED, mark as incorrect.
 - Extract all issues from past `eval_text` fields
 - Check if REVIEW_NEEDED repeats the same mistakes
-- If past reviews say "category should be green" and it's still red → mark `info_correct: False`
-- If past reviews say "missing information X" and X is still missing → mark `good_copy: False`
 
-## Core Rules
+## Rules
 
-### Universal Requirements
-1. **100 character limit** (strict): Count spaces and emojis. Trim content if needed.
-2. **Monetary format**: `$1,000` (commas, currency, no decimals) - NOT `$1000.00` or `{$107}`
-3. **No greetings**: Remove "Hello", "Hi", etc.
-4. **Tone**: Positive for good news, neutral/concerned for issues
-5. **Emojis**: Use naturally, conversationally
-6. **Directional prepositions**: Inflows are from an establishment, outflows are to an establishment
+### Part 1: Content Rules
+1.  **Factual Accuracy**: All information in REVIEW_NEEDED must be perfectly accurate based on EVAL_INPUT.
+2.  **No Greetings**: Do not include conversational openers. Phrases that introduce insights are acceptable.
+3.  **Appropriate Tone**: Match the tone to the insight. Positive for good news (e.g., lower spending), concerned for issues (e.g., lower income).
+4.  **Prepositions**: Use correct directional prepositions. Inflows are *from* an establishment, outflows are *to* one.
+5.  **Specific Messaging per Insight Type**:
+    *   `...large_txn`: Must include transaction name, amount, and whether it's smaller/larger than usual.
+    *   `...spend_vs_forecast`: Must include amounts, timeframe (weekly/monthly), and severity of divergence. Avoid "higher by X", use "higher at X". Specify inflow/income vs outflow/spending.
+    *   `...uncat_txn`: Must include transaction name, amount, and ask for categorization.
 
-### Color Formatting Syntax
-- Green: `g{$1,234}` or `g{[food spending](/food/monthly)}`
-- Red: `r{$1,234}` or `r{[food spending](/food/monthly)}`
-- Plain text: No color markers (for uncat_txn categories)
+### Part 2: Formatting Rules (`good_copy` ONLY)
+1.  **Color and Linking Logic (CRITICAL)**:
+    *   **Good Outcomes = GREEN `g{...}`**: Lower spending, higher income, on-track forecasts.
+    *   **Bad Outcomes = RED `r{...}`**: Higher spending, lower income.
+    *   **Insight-Specific Formatting**:
+        *   `...large_txn`:
+            *   Outflow larger/Inflow smaller: Amount in `r{}`.
+            *   Outflow smaller/Inflow larger: Amount in `g{}`.
+        *   `...spend_vs_forecast`:
+            *   **Both Category and Amount MUST be colored and Category linked.**
+            *   Outflow HIGHER / Inflow LOWER: `r{[Category](/...)}` and `r{$Amount}`.
+            *   Outflow LOWER / Inflow HIGHER / On Track: `g{[Category](/...)}` and `g{$Amount}`.
+        *   `...uncat_txn`:
+            *   Outflow: Amount in `r{}`.
+            *   Inflow: Amount in `g{}`.
+            *   Category suggestion is NEVER colored.
+2.  **Monetary Amounts**: Must use currency symbol and commas, and exclude decimals (e.g., `$1,000`).
+3.  **Emojis**: Use them conversationally and naturally.
+4.  **No Unnecessary Characters**: No extra spaces, symbols, or text not implied by EVAL_INPUT.
+5.  **Matching Brackets/Braces/Parentheses**: All opening brackets `[`, braces `{`, and parentheses `(` must have matching closing brackets `]`, braces `}`, and parentheses `)`. All pairs must be properly nested and balanced.
 
-### Key-Specific Rules
-
-**`large_txn`** (key contains "large_txn"):
-- Include: transaction name, amount, size comparison
-- Colors: Inflow smaller/outflow larger → red; Outflow smaller/inflow larger → green
-
-**`spend_vs_forecast` / `spent_vs_forecast`**:
-- Include: amounts, timeframe (weekly/monthly), divergence severity
-- Phrasing: Use "higher at X", "increased to X" (NOT "higher by X", "up X")
-- Note: "increased this week to $264" means the total for the week is $264
-- Colors: Outflow higher/inflow lower → red; Inflow higher/outflow lower → green
-- **REQUIRED**: Category must be linked: `g{[display text](/category/timeframe)}` or `r{[display text](/category/timeframe)}`
-- **CRITICAL**: The timeframe in the link (`/category/timeframe`) MUST match the timeframe mentioned in the insight text
-
-**`uncat_txn`**:
-- Include: transaction name, amount, category question
-- Colors: Outflow → red amount; Inflow → green amount
-- Category: Plain text only (no color markers)
-
-### Official Category List
-
-#### Outflows
-*   Meals (meals)
-*   Dining Out (meals_dining_out)
-*   Delivered Food (meals_delivered_food)
-*   Groceries (meals_groceries)
-*   Leisure (leisure)
-*   Entertainment (leisure_entertainment)
-*   Travel and Vacations (leisure_travel)
-*   Education (education)
-*   Kids Activities (education_kids_activities)
-*   Tuition (education_tuition)
-*   Transport (transportation)
-*   Public Transit (transportation_public)
-*   Car and Fuel (transportation_car)
-*   Health (health)
-*   Medical and Pharmacy (health_medical_pharmacy)
-*   Gym and Wellness (health_gym_wellness)
-*   Personal Care (health_personal_care)
-*   Donations and Gifts (donations_gifts)
-*   Uncategorized (uncategorized)
-*   Miscellaneous (miscellaneous)
-*   Bills (bills)
-*   Connectivity (bills_connectivity)
-*   Insurance (bills_insurance)
-*   Taxes (bills_taxes)
-*   Service Fees (bills_service_fees)
-*   Shelter (shelter)
-*   Home (shelter_home)
-*   Utilities (shelter_utilities)
-*   Upkeep (shelter_upkeep)
-*   Shopping (shopping)
-*   Clothing (shopping_clothing)
-*   Gadgets (shopping_gadgets)
-*   Kids (shopping_kids)
-*   Pets (shopping_pets)
-*   Transfers (transfers)
-
-#### Inflows
-*   Income (income)
-*   Salary (income_salary)
-*   Sidegig (income_sidegig)
-*   Business (income_business)
-*   Interest (income_interest)
+### Part 3: Character Count Rule (`good_copy` ONLY)
+1.  **Strict Limit**: 100 characters maximum.
+2.  **What to Count**: Count only the visible text and emojis the user sees.
+3.  **What NOT to Count**: Exclude ALL formatting characters: `g{`, `r{`, `}`, `[`, `]`, `(`, `)` and the URL part of links (e.g., `g{[Food](/cat)}` counts as 4 characters for "Food").
 
 ## Verification Steps
 
-For each item in **REVIEW_NEEDED**:
-
-1. **Match keys**: Find the item in **EVAL_INPUT** that matches the `key` in **REVIEW_NEEDED`.
-2. **Check PAST_REVIEW_OUTCOMES first**: Extract all flagged issues. If REVIEW_NEEDED repeats them → mark False
-3. **Verify good_copy**: Does REVIEW_NEEDED preserve all core information from EVAL_INPUT? Missing info = False
-4. **Verify info_correct**: Apply key-specific rules:
-   - `spend_vs_forecast`/`spent_vs_forecast`: Colors match direction? Category linked? **Timeframe in link matches text?** Phrasing correct?
-   - `large_txn`: Colors match size/direction? Transaction name included?
-   - `uncat_txn`: Amount color correct? Category plain text?
-   - Universal: 100 chars? Monetary format? No greeting?
-5. **Write eval_text**: If False, list specific issues. Reference unfixed PAST_REVIEW_OUTCOMES issues.
+1.  **Check PAST_REVIEW_OUTCOMES first**: Extract all flagged issues. If REVIEW_NEEDED repeats them -> mark False.
+2.  **Verify Information Correctness (`info_correct`)**: Check REVIEW_NEEDED against EVAL_INPUT for any factual errors, based on the **Content Rules**.
+3.  **Verify Formatting and Copy (`good_copy`)**: Check REVIEW_NEEDED for any violations of the **Formatting Rules** and **Character Count Rule**.
+4.  **Write eval_text**: If any check fails, list the specific issues, referencing the rule that was broken.
 """
 
 class CheckJsonOptimizer:
@@ -167,22 +121,20 @@ class CheckJsonOptimizer:
       List of dictionaries, each with good_copy, info_correct, and eval_text keys
     """
     # Create request text with the new input structure
-    request_text = types.Part.from_text(text=f"""<EVAL_INPUT>
-
-{json.dumps(eval_input, indent=2)}
-
-</EVAL_INPUT>
-
-<PAST_REVIEW_OUTCOMES>
-
+    past_review_section = ""
+    if past_review_outcomes:
+      past_review_section = f"""<PAST_REVIEW_OUTCOMES>
 {json.dumps(past_review_outcomes, indent=2)}
-
 </PAST_REVIEW_OUTCOMES>
 
-<REVIEW_NEEDED>
+"""
+    
+    request_text = types.Part.from_text(text=f"""<EVAL_INPUT>
+{json.dumps(eval_input, indent=2)}
+</EVAL_INPUT>
 
+{past_review_section}<REVIEW_NEEDED>
 {json.dumps(review_needed, indent=2)}
-
 </REVIEW_NEEDED>
 
 Output:""")
@@ -326,7 +278,17 @@ TEST_CASES = [
       "key": "15:spend_vs_forecast",
       "insight": "Heads up! Your r{[Dining Out spending](/meals_dining_out/monthly)} was higher this month at r{$450}."
     }],
-    "past_review_outcomes": []
+    "past_review_outcomes": [
+      {
+        "output": {
+          "key": "15:spend_vs_forecast",
+          "insight": "Your Dining Out spending was higher this month at $450."
+        },
+        "good_copy": False,
+        "info_correct": False,
+        "eval_text": "good_copy is False: Missing category link. info_correct is False: Category must be linked for spend_vs_forecast insights."
+      }
+    ]
   },
   {
     "name": "spend_vs_forecast_correct_higher_inflow",
@@ -532,7 +494,17 @@ TEST_CASES = [
       "key": "25:spend_vs_forecast",
       "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203}! This is excellent progress and shows you're managing your transportation costs well!"
     }],
-    "past_review_outcomes": []
+    "past_review_outcomes": [
+      {
+        "output": {
+          "key": "25:spend_vs_forecast",
+          "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203}! This is excellent progress and shows you're managing your transportation costs well!"
+        },
+        "good_copy": True,
+        "info_correct": False,
+        "eval_text": "info_correct is False: Exceeds 100 character limit. Current length: 145 characters."
+      }
+    ]
   },
   {
     "name": "missing_category_link",
@@ -546,7 +518,17 @@ TEST_CASES = [
       "key": "25:spend_vs_forecast",
       "insight": "Great news! 🎉 Your Transport spending was lower this month at g{$203}!"
     }],
-    "past_review_outcomes": []
+    "past_review_outcomes": [
+      {
+        "output": {
+          "key": "25:spend_vs_forecast",
+          "insight": "Great news! 🎉 Your Transport spending was lower this month at g{$203}!"
+        },
+        "good_copy": True,
+        "info_correct": False,
+        "eval_text": "info_correct is False: Missing required category link for spend_vs_forecast. Category 'Transport spending' must be linked with format: g{[display text](/category/timeframe)} or r{[display text](/category/timeframe)}."
+      }
+    ]
   },
   {
     "name": "wrong_timeframe",
@@ -560,7 +542,17 @@ TEST_CASES = [
       "key": "9:spent_vs_forecast",
       "insight": "Awesome! Your g{[Service Fees spending](/bills_service_fees/monthly)} was lower last week at g{$3,000}! 🥳"
     }],
-    "past_review_outcomes": []
+    "past_review_outcomes": [
+      {
+        "output": {
+          "key": "9:spent_vs_forecast",
+          "insight": "Awesome! Your g{[Service Fees spending](/bills_service_fees/monthly)} was lower last week at g{$3,000}! 🥳"
+        },
+        "good_copy": True,
+        "info_correct": False,
+        "eval_text": "info_correct is False: Timeframe mismatch. Insight mentions 'last week' but link uses '/monthly'. The timeframe in the link must match the timeframe mentioned in the insight text."
+      }
+    ]
   },
   {
     "name": "monetary_format_incorrect",
@@ -574,7 +566,17 @@ TEST_CASES = [
       "key": "25:spend_vs_forecast",
       "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203.00}!"
     }],
-    "past_review_outcomes": []
+    "past_review_outcomes": [
+      {
+        "output": {
+          "key": "25:spend_vs_forecast",
+          "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203.00}!"
+        },
+        "good_copy": True,
+        "info_correct": False,
+        "eval_text": "info_correct is False: Incorrect monetary format. Should be '$203' (no decimals), not '$203.00'. Monetary format must be: $X,XXX (commas, currency, no decimals)."
+      }
+    ]
   },
   {
     "name": "past_review_outcomes_wrong_color_persists",
@@ -697,6 +699,28 @@ def run_test(test_case: dict, checker: CheckJsonOptimizer = None):
         review_needed = test_case["eval_output"]
       else:
         review_needed = [test_case["eval_output"]]
+    
+    # Print the exact input that will be passed to the LLM
+    past_review_section = ""
+    if past_review_outcomes:
+      past_review_section = f"""<PAST_REVIEW_OUTCOMES>
+{json.dumps(past_review_outcomes, indent=2)}
+</PAST_REVIEW_OUTCOMES>
+
+"""
+    
+    request_text = f"""<EVAL_INPUT>
+{json.dumps(eval_input, indent=2)}
+</EVAL_INPUT>
+
+{past_review_section}<REVIEW_NEEDED>
+{json.dumps(review_needed, indent=2)}
+</REVIEW_NEEDED>
+
+Output:"""
+    print(f"Input passed to LLM:")
+    print(request_text)
+    print(f"\n{'='*80}")
     
     result = checker.generate_response(eval_input, past_review_outcomes, review_needed)
     print(f"Result:")
