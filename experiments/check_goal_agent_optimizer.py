@@ -246,9 +246,7 @@ def _run_test_with_logging(last_user_request: str, previous_conversation: str, g
 
 ## Execution Result for #{index + 1}
 
-```python
 {past_review_outcome['execution_result']}
-```
 
 ## Evaluation Output for #{index + 1}
 
