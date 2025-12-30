@@ -31,9 +31,9 @@ JSON array where each element contains:
 
 JSON array where each element contains:
 - `match_id`: Same as input
+- `reasoning`: 1-2 sentence explanation focusing on decisive factors
 - `result`: "same" or "different"
 - `confidence`: "high", "medium", or "low"
-- `reasoning`: 1-2 sentence explanation focusing on decisive factors
 
 ## Analysis
 
@@ -73,7 +73,7 @@ Compare names, descriptions, and amounts to determine entity identity:
 
 
 
-class SimilarityDetectorOptimizer:
+class SameSummarizedNameClassifierOptimizer:
   """Handles all Gemini API interactions for detecting if names are from the same entity or establishment"""
   
   def __init__(self, model_name="gemini-flash-lite-latest"):
@@ -105,7 +105,8 @@ class SimilarityDetectorOptimizer:
     result_item_schema = types.Schema(
       type=types.Type.OBJECT,
       properties={
-        "match_id": types.Schema(type=types.Type.INTEGER),
+        "match_id": types.Schema(type=types.Type.STRING),
+        "reasoning": types.Schema(type=types.Type.STRING),
         "result": types.Schema(
           type=types.Type.STRING,
           enum=["same", "different"]
@@ -113,8 +114,7 @@ class SimilarityDetectorOptimizer:
         "confidence": types.Schema(
           type=types.Type.STRING,
           enum=["high", "medium", "low"]
-        ),
-        "reasoning": types.Schema(type=types.Type.STRING)
+        )
       },
       required=["match_id", "result", "confidence", "reasoning"]
     )
@@ -214,13 +214,13 @@ output:""")
       raise Exception(f"Failed to get models: {str(e)}")
 
 
-def _run_test_with_logging(transaction_history_pairs: list, detector: SimilarityDetectorOptimizer = None):
+def _run_test_with_logging(transaction_history_pairs: list, detector: SameSummarizedNameClassifierOptimizer = None):
   """
   Internal helper function that runs a test with consistent logging.
   
   Args:
     transaction_history_pairs: List of establishment pairs to analyze
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
     
   Returns:
     The detection results as a list
@@ -228,7 +228,7 @@ def _run_test_with_logging(transaction_history_pairs: list, detector: Similarity
   import json
   
   if detector is None:
-    detector = SimilarityDetectorOptimizer()
+    detector = SameSummarizedNameClassifierOptimizer()
   
   # Print the input
   print("=" * 80)
@@ -258,19 +258,19 @@ def _run_test_with_logging(transaction_history_pairs: list, detector: Similarity
     return None
 
 
-def test_multiple_pairs(detector: SimilarityDetectorOptimizer = None):
+def test_multiple_pairs(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   Test method for multiple pairs of entities/establishments.
   
   Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
     
   Returns:
     The detection results
   """
   transaction_history_pairs = [
     {
-      "match_id": 2112,
+      "match_id": "2112:2113",
       "left": {
         "short_name": "OpenAI",
         "raw_names": [
@@ -284,11 +284,11 @@ def test_multiple_pairs(detector: SimilarityDetectorOptimizer = None):
         "short_name": "OpenAI Chatgpt",
         "raw_names": ["Openai Chatgpt Subscr"],
         "description": "sells subscriptions to use the AI chatbot for various tasks such as writing, coding, and problem-solving",
-        "amounts": [21.28, 20.00, 21.28, 21.28, 21.28, 21.28, 21.28]
+        "amounts": [21.28, 20.00]
       }
     },
     {
-      "match_id": 2113,
+      "match_id": "2114:2115",
       "left": {
         "short_name": "MGM Grand",
         "raw_names": ["MGM Grand"],
@@ -303,7 +303,7 @@ def test_multiple_pairs(detector: SimilarityDetectorOptimizer = None):
       }
     },
     {
-      "match_id": 2114,
+      "match_id": "2116:2117",
       "left": {
         "short_name": "Klarna: Revolve",
         "raw_names": ["Klarna* Revolve, +"],
@@ -318,7 +318,7 @@ def test_multiple_pairs(detector: SimilarityDetectorOptimizer = None):
       }
     },
     {
-      "match_id": 2115,
+      "match_id": "2118:2119",
       "left": {
         "short_name": "Texas Roadhouse",
         "raw_names": [
@@ -336,37 +336,37 @@ def test_multiple_pairs(detector: SimilarityDetectorOptimizer = None):
       }
     },
     {
-      "match_id": 2116,
+      "match_id": "2120:2121",
       "left": {
         "short_name": "ACH Deposit: Flyte",
         "raw_names": ["ACH DEPOSIT: Flyte"],
         "description": "processes payments for airline tickets and travel services",
-        "amounts": [6027.77, 4790.02, 3865.66, 3865.66, 3865.66, 608.41]
+        "amounts": [6027.77, 4790.02, 3865.66, 608.41]
       },
       "right": {
         "short_name": "ACH Deposit: Tesla",
         "raw_names": ["ACH DEPOSIT: Tesla_Inc XFA15LS6DS9X5VX"],
         "description": "electric vehicle and clean energy company",
-        "amounts": [134.14, 134.14, 112.33, 112.33]
+        "amounts": [134.14, 112.33]
       }
     }
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
 
-def test_similar_names_different_stores(detector: SimilarityDetectorOptimizer = None):
+def test_similar_names_different_stores(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   Test method for similar names but different amounts (should be "different" with medium confidence).
   
   Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
     
   Returns:
     The detection results
   """
   transaction_history_pairs = [
     {
-      "match_id": 2115,
+      "match_id": "2122:2123",
       "left": {
         "short_name": "Macho's",
         "raw_names": [
@@ -374,32 +374,32 @@ def test_similar_names_different_stores(detector: SimilarityDetectorOptimizer = 
           "PY *MACHO SE REF# 506600014887 972-525-0686,TX Card ending in 3458"
         ],
         "description": "sells Mexican food such as tacos, burritos, and quesadillas",
-        "amounts": [50.00, 50.00]
+        "amounts": [50.00]
       },
       "right": {
         "short_name": "Marco's Pizza",
         "raw_names": ["Marco's Pizza"],
         "description": "pizza restaurant that sells a variety of pizzas, subs, wings, sides, and desserts",
-        "amounts": [16.23, 16.23, 16.23, 22.70, 27.48, 23.97]
+        "amounts": [16.23, 22.70, 27.48, 23.97]
       }
     }
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
 
-def test_similar_names_same_stores1(detector: SimilarityDetectorOptimizer = None):
+def test_similar_names_same_stores1(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   Test method for similar names but different amounts (should be "different" with medium confidence).
   
   Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
     
   Returns:
     The detection results
   """
   transaction_history_pairs = [
     {
-      "match_id": 2115,
+      "match_id": "2124:2125",
       "left": {
         "short_name": "Marco's Pizza",
         "raw_names": ["Marco's Pizza"],
@@ -410,25 +410,25 @@ def test_similar_names_same_stores1(detector: SimilarityDetectorOptimizer = None
         "short_name": "Marcos Pizza",
         "raw_names": ["MARCOS PIZZA REF# 505100025146 WAXAHACHIE,TX Card ending in 3458"],
         "description": "A payment for food and beverages at a pizza restaurant",
-        "amounts": [16.23, 16.23, 16.23, 22.70, 27.48, 23.97]
+        "amounts": [16.23, 22.70, 27.48, 23.97]
       }
     }
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
-def test_similar_names_same_stores2(detector: SimilarityDetectorOptimizer = None):
+def test_similar_names_same_stores2(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   Test method for similar names but different amounts (should be "different" with medium confidence).
   
   Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
     
   Returns:
     The detection results
   """
   transaction_history_pairs = [
     {
-      "match_id": 2115,
+      "match_id": "2126:2127",
       "left": {
         "short_name": "Cleveland Marriott",
         "raw_names": [
@@ -450,19 +450,19 @@ def test_similar_names_same_stores2(detector: SimilarityDetectorOptimizer = None
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
-def test_establishment_undetermined(detector: SimilarityDetectorOptimizer = None):
+def test_establishment_undetermined(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   Test method for establishment undetermined (should be "undetermined" with medium confidence).
   
   Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
     
   Returns:
     The detection results
   """
   transaction_history_pairs = [
     {
-      "match_id": 2115,
+      "match_id": "2128:2129",
       "left": {
         "short_name": "Sales",
         "raw_names": ["Sales"],
@@ -480,19 +480,49 @@ def test_establishment_undetermined(detector: SimilarityDetectorOptimizer = None
   return _run_test_with_logging(transaction_history_pairs, detector)
 
 
-def test_similar_amounts_description_small_name_variation(detector: SimilarityDetectorOptimizer = None):
+def test_old_navy_kids_vs_old_navy(detector: SameSummarizedNameClassifierOptimizer = None):
   """
-  Test method for similar amounts, similar description, and small variation in names (should be "same" with high/medium confidence).
+  Test method for Old Navy Kids vs Old Navy (should be "same" with medium confidence).
   
   Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
     
   Returns:
     The detection results
   """
   transaction_history_pairs = [
     {
-      "match_id": 2116,
+      "match_id": "2130:2131",
+      "left": {
+        "short_name": "Old Navy Kids",
+        "raw_names": ["Old Navy Kids"],
+        "description": "sells clothing, shoes, and accessories for children",
+        "amounts": [39.09, 44.03, 50.88]
+      },
+      "right": {
+        "short_name": "Old Navy",
+        "raw_names": ["Old Navy"],
+        "description": "sells clothing and accessories for men, women, and children",
+        "amounts": [145.54, 189.48, 227.18]
+      }
+    }
+  ]
+  return _run_test_with_logging(transaction_history_pairs, detector)
+
+
+def test_similar_amounts_description_small_name_variation(detector: SameSummarizedNameClassifierOptimizer = None):
+  """
+  Test method for similar amounts, similar description, and small variation in names (should be "same" with high/medium confidence).
+  
+  Args:
+    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
+    
+  Returns:
+    The detection results
+  """
+  transaction_history_pairs = [
+    {
+      "match_id": "2132:2133",
       "left": {
         "short_name": "Better Proposal",
         "raw_names": [
@@ -500,17 +530,17 @@ def test_similar_amounts_description_small_name_variation(detector: SimilarityDe
           "BETTER PROPO REF# 504900028199 LONDON,GB Card ending in 3458"
         ],
         "description": "provides online marketing and advertising services",
-        "amounts": [29.00, 29.00, 29.00]
+        "amounts": [29.00]
       },
       "right": {
         "short_name": "Better Proposals",
         "raw_names": ["BETTER PROPOSALS LONDON 253"],
         "description": "sells various proposal writing and business consulting services",
-        "amounts": [29.00, 29.00, 29.00, 29.00, 29.00, 29.00]
+        "amounts": [29.00]
       }
     },
     {
-      "match_id": 2117,
+      "match_id": "2134:2135",
       "left": {
         "short_name": "Dollar Tree",
         "raw_names": [
@@ -539,8 +569,8 @@ def main(batch: int = 1):
   Args:
     batch: Batch number (1, 2, 3, or 4) to determine which tests to run
   """
-  print("Testing SimilarityDetectorOptimizer\n")
-  detector = SimilarityDetectorOptimizer()
+  print("Testing SameSummarizedNameClassifierOptimizer\n")
+  detector = SameSummarizedNameClassifierOptimizer()
   
   if batch == 1:
     # Basic test cases
@@ -569,6 +599,11 @@ def main(batch: int = 1):
     print("Test 3: Similar names, same stores (2)")
     print("-" * 80)
     test_similar_names_same_stores2(detector)
+    print("\n")
+    
+    print("Test 4: Old Navy Kids vs Old Navy")
+    print("-" * 80)
+    test_old_navy_kids_vs_old_navy(detector)
     print("\n")
     
   elif batch == 3:
@@ -600,12 +635,17 @@ def main(batch: int = 1):
     test_similar_names_same_stores2(detector)
     print("\n")
     
-    print("Test 5: Establishment undetermined")
+    print("Test 5: Old Navy Kids vs Old Navy")
+    print("-" * 80)
+    test_old_navy_kids_vs_old_navy(detector)
+    print("\n")
+    
+    print("Test 6: Establishment undetermined")
     print("-" * 80)
     test_establishment_undetermined(detector)
     print("\n")
     
-    print("Test 6: Similar amounts, description, and small name variation")
+    print("Test 7: Similar amounts, description, and small name variation")
     print("-" * 80)
     test_similar_amounts_description_small_name_variation(detector)
     print("\n")
