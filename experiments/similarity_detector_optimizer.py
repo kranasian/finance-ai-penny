@@ -27,27 +27,6 @@ JSON array where each element contains:
   - `description`: Establishment description
   - `amounts`: Array of amounts
 
-**Input Schema:**
-```json
-[
-  {
-    "match_id": number,
-    "left": {
-      "short_name": string,
-      "raw_names": [string],
-      "description": string,
-      "amounts": [number]
-    },
-    "right": {
-      "short_name": string,
-      "raw_names": [string],
-      "description": string,
-      "amounts": [number]
-    }
-  }
-]
-```
-
 ## Output Format
 
 JSON array where each element contains:
@@ -55,18 +34,6 @@ JSON array where each element contains:
 - `result`: "same" or "different"
 - `confidence`: "high", "medium", or "low"
 - `reasoning`: 1-2 sentence explanation focusing on decisive factors
-
-**Output Schema:**
-```json
-[
-  {
-    "match_id": number,
-    "result": "same" | "different",
-    "confidence": "high" | "medium" | "low",
-    "reasoning": string
-  }
-]
-```
 
 ## Analysis
 
@@ -133,6 +100,29 @@ class SimilarityDetectorOptimizer:
     
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
+    
+    # Output Schema - array of result objects
+    result_item_schema = types.Schema(
+      type=types.Type.OBJECT,
+      properties={
+        "match_id": types.Schema(type=types.Type.INTEGER),
+        "result": types.Schema(
+          type=types.Type.STRING,
+          enum=["same", "different"]
+        ),
+        "confidence": types.Schema(
+          type=types.Type.STRING,
+          enum=["high", "medium", "low"]
+        ),
+        "reasoning": types.Schema(type=types.Type.STRING)
+      },
+      required=["match_id", "result", "confidence", "reasoning"]
+    )
+    
+    self.output_schema = types.Schema(
+      type=types.Type.ARRAY,
+      items=result_item_schema
+    )
 
   def detect_similarity(self, transaction_history_pairs: list) -> list:
     """
@@ -172,6 +162,8 @@ output:""")
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
       thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      response_mime_type="application/json",
+      response_schema=self.output_schema,
     )
 
     # Generate response
