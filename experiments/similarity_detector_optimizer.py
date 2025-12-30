@@ -532,30 +532,94 @@ def test_similar_amounts_description_small_name_variation(detector: SimilarityDe
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
-def main():
-  """Main function to test the similarity detector optimizer"""
+def main(batch: int = 1):
+  """
+  Main function to test the similarity detector optimizer
+  
+  Args:
+    batch: Batch number (1, 2, 3, or 4) to determine which tests to run
+  """
+  print("Testing SimilarityDetectorOptimizer\n")
   detector = SimilarityDetectorOptimizer()
   
-  # print("Test 1: Multiple pairs")
-  # test_multiple_pairs(detector)
-  # print("\n")
-
-  # print("Test 2: Similar names, different stores")
-  # test_similar_names_different_stores(detector)
-  # print("\n")
-
-  # print("Test 3: Similar names, same stores")
-  # test_similar_names_same_stores1(detector)
-  # test_similar_names_same_stores2(detector)
-  # print("\n")
-
-  # print("Test 4: Establishment undetermined")
-  # test_establishment_undetermined(detector)
-  # print("\n")
+  if batch == 1:
+    # Basic test cases
+    print("Test 1: Multiple pairs")
+    print("-" * 80)
+    test_multiple_pairs(detector)
+    print("\n")
+    
+    print("Test 2: Similar amounts, description, and small name variation")
+    print("-" * 80)
+    test_similar_amounts_description_small_name_variation(detector)
+    print("\n")
+    
+  elif batch == 2:
+    # Similar names test cases
+    print("Test 1: Similar names, different stores")
+    print("-" * 80)
+    test_similar_names_different_stores(detector)
+    print("\n")
+    
+    print("Test 2: Similar names, same stores (1)")
+    print("-" * 80)
+    test_similar_names_same_stores1(detector)
+    print("\n")
+    
+    print("Test 3: Similar names, same stores (2)")
+    print("-" * 80)
+    test_similar_names_same_stores2(detector)
+    print("\n")
+    
+  elif batch == 3:
+    # Edge cases
+    print("Test 1: Establishment undetermined")
+    print("-" * 80)
+    test_establishment_undetermined(detector)
+    print("\n")
+    
+  elif batch == 4:
+    # Run all tests
+    print("Test 1: Multiple pairs")
+    print("-" * 80)
+    test_multiple_pairs(detector)
+    print("\n")
+    
+    print("Test 2: Similar names, different stores")
+    print("-" * 80)
+    test_similar_names_different_stores(detector)
+    print("\n")
+    
+    print("Test 3: Similar names, same stores (1)")
+    print("-" * 80)
+    test_similar_names_same_stores1(detector)
+    print("\n")
+    
+    print("Test 4: Similar names, same stores (2)")
+    print("-" * 80)
+    test_similar_names_same_stores2(detector)
+    print("\n")
+    
+    print("Test 5: Establishment undetermined")
+    print("-" * 80)
+    test_establishment_undetermined(detector)
+    print("\n")
+    
+    print("Test 6: Similar amounts, description, and small name variation")
+    print("-" * 80)
+    test_similar_amounts_description_small_name_variation(detector)
+    print("\n")
+    
+  else:
+    raise ValueError("batch must be 1, 2, 3, or 4")
   
-  print("Test 5: Similar amounts, description, and small name variation")
-  test_similar_amounts_description_small_name_variation(detector)
+  print("All tests completed!")
 
 
 if __name__ == "__main__":
-  main()
+  import argparse
+  parser = argparse.ArgumentParser(description='Run tests in batches')
+  parser.add_argument('--batch', type=int, default=1, choices=[1, 2, 3, 4],
+                      help='Batch number to run (1, 2, 3, or 4)')
+  args = parser.parse_args()
+  main(batch=args.batch)
