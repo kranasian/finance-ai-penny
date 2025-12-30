@@ -27,6 +27,27 @@ JSON array where each element contains:
   - `description`: Establishment description
   - `amounts`: Array of amounts
 
+**Input Schema:**
+```json
+[
+  {
+    "match_id": number,
+    "left": {
+      "short_name": string,
+      "raw_names": [string],
+      "description": string,
+      "amounts": [number]
+    },
+    "right": {
+      "short_name": string,
+      "raw_names": [string],
+      "description": string,
+      "amounts": [number]
+    }
+  }
+]
+```
+
 ## Output Format
 
 JSON array where each element contains:
@@ -34,6 +55,18 @@ JSON array where each element contains:
 - `result`: "same" or "different"
 - `confidence`: "high", "medium", or "low"
 - `reasoning`: 1-2 sentence explanation focusing on decisive factors
+
+**Output Schema:**
+```json
+[
+  {
+    "match_id": number,
+    "result": "same" | "different",
+    "confidence": "high" | "medium" | "low",
+    "reasoning": string
+  }
+]
+```
 
 ## Analysis
 
@@ -48,7 +81,7 @@ Compare names, descriptions, and amounts to determine entity identity:
 **Description** (key indicator): 
 - Similar/matching descriptions → same entity
 - Different descriptions → different entities
-- Use to disambiguate when names are similar
+- Use to disambiguate when names are the same
 
 **Amounts** (supporting):
 - Similar amounts can support same entity (e.g., recurring bills)
@@ -62,7 +95,6 @@ Compare names, descriptions, and amounts to determine entity identity:
 
 ## Rules
 
-- Return valid JSON only
 - Process all pairs, maintain input order
 - "same" = same entity/establishment, "different" = different entities/establishments
 - Focus on entity identity, not just name similarity
@@ -234,99 +266,9 @@ def _run_test_with_logging(transaction_history_pairs: list, detector: Similarity
     return None
 
 
-def test_same_transaction_exact_match(detector: SimilarityDetectorOptimizer = None):
-  """
-  Test method for exact match transactions (should be "same" with high confidence).
-  
-  Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
-  """
-  transaction_history_pairs = [
-    {
-      "match_id": 2112,
-      "left": {
-        "short_name": "AT&T Bill",
-        "raw_names": ["Debit: AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20, 31.23]
-      },
-      "right": {
-        "short_name": "AT&T Bill",
-        "raw_names": ["Debit: AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20, 31.23]
-      }
-    }
-  ]
-  return _run_test_with_logging(transaction_history_pairs, detector)
-
-
-def test_same_transaction_similar_names(detector: SimilarityDetectorOptimizer = None):
-  """
-  Test method for similar transaction names (should be "same" with medium/high confidence).
-  
-  Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
-  """
-  transaction_history_pairs = [
-    {
-      "match_id": 2112,
-      "left": {
-        "short_name": "AT&T Bill",
-        "raw_names": ["Debit: AT&T", "other AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20, 31.23]
-      },
-      "right": {
-        "short_name": "AT&T Bill Charge",
-        "raw_names": ["Debit: AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20, 31.23]
-      }
-    }
-  ]
-  return _run_test_with_logging(transaction_history_pairs, detector)
-
-
-def test_different_transactions(detector: SimilarityDetectorOptimizer = None):
-  """
-  Test method for clearly different transactions (should be "different" with high confidence).
-  
-  Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
-  """
-  transaction_history_pairs = [
-    {
-      "match_id": 2113,
-      "left": {
-        "short_name": "AT&T Bill",
-        "raw_names": ["Debit: AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20]
-      },
-      "right": {
-        "short_name": "Netflix Subscription",
-        "raw_names": ["Credit: Netflix"],
-        "description": "Payment to Netflix for streaming subscription",
-        "amounts": [15.99]
-      }
-    }
-  ]
-  return _run_test_with_logging(transaction_history_pairs, detector)
-
-
 def test_multiple_pairs(detector: SimilarityDetectorOptimizer = None):
   """
-  Test method for multiple establishment pairs with mixed results.
+  Test method for multiple pairs of entities/establishments.
   
   Args:
     detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
@@ -338,76 +280,82 @@ def test_multiple_pairs(detector: SimilarityDetectorOptimizer = None):
     {
       "match_id": 2112,
       "left": {
-        "short_name": "AT&T Bill",
-        "raw_names": ["Debit: AT&T", "other AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20, 31.23]
+        "short_name": "OpenAI",
+        "raw_names": [
+          "OPENAI",
+          "OPENAI +14158799686 USA"
+        ],
+        "description": "sells access to its large language model API, including text generation, translation, and code completion",
+        "amounts": [6.00, 5.32]
       },
       "right": {
-        "short_name": "AT&T Bill Charge",
-        "raw_names": ["Debit: AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20, 31.23]
+        "short_name": "OpenAI Chatgpt",
+        "raw_names": ["Openai Chatgpt Subscr"],
+        "description": "sells subscriptions to use the AI chatbot for various tasks such as writing, coding, and problem-solving",
+        "amounts": [21.28, 20.00, 21.28, 21.28, 21.28, 21.28, 21.28]
       }
     },
     {
       "match_id": 2113,
       "left": {
-        "short_name": "Starbucks",
-        "raw_names": ["Debit: Starbucks Store #1234"],
-        "description": "Payment to Starbucks coffee shop",
-        "amounts": [5.50]
+        "short_name": "MGM Grand",
+        "raw_names": ["MGM Grand"],
+        "description": "sells hotel rooms, casino gaming, dining, entertainment, and other resort amenities",
+        "amounts": [128.93]
       },
       "right": {
-        "short_name": "Starbucks",
-        "raw_names": ["Debit: Starbucks Store #5678"],
-        "description": "Payment to Starbucks coffee shop",
-        "amounts": [5.50]
+        "short_name": "MGM Grand Detroit",
+        "raw_names": ["Mgm grand detroi"],
+        "description": "sells various types of casino games, including slots, table games, and poker",
+        "amounts": [506.23, 1023.44, 1057.96, 1166.57, 1181.45, 1168.88]
       }
     },
     {
       "match_id": 2114,
       "left": {
-        "short_name": "Amazon Purchase",
-        "raw_names": ["Credit: Amazon.com"],
-        "description": "Payment to Amazon for online retail purchase",
-        "amounts": [45.99]
+        "short_name": "Klarna: Revolve",
+        "raw_names": ["Klarna* Revolve, +"],
+        "description": "sells clothing, accessories, and home goods",
+        "amounts": [12.87]
       },
       "right": {
-        "short_name": "Target Purchase",
-        "raw_names": ["Credit: Target Store"],
-        "description": "Payment to Target for retail purchase",
-        "amounts": [45.99]
+        "short_name": "Revolve",
+        "raw_names": ["REVOLVE"],
+        "description": "sells clothing, shoes, accessories, and other fashion items, known for their trendy and stylish designs",
+        "amounts": [85.52, 32.48, 106.19]
       }
-    }
-  ]
-  return _run_test_with_logging(transaction_history_pairs, detector)
-
-
-def test_similar_names_different_amounts(detector: SimilarityDetectorOptimizer = None):
-  """
-  Test method for similar names but different amounts (should be "different" with medium confidence).
-  
-  Args:
-    detector: Optional SimilarityDetectorOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
-  """
-  transaction_history_pairs = [
+    },
     {
       "match_id": 2115,
       "left": {
-        "short_name": "AT&T Bill",
-        "raw_names": ["Debit: AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [32.20]
+        "short_name": "Texas Roadhouse",
+        "raw_names": [
+          "Texas Roadhouse",
+          "Logans Roadhouse"
+        ],
+        "description": "steak restaurant",
+        "amounts": [23.38, 81.17, 69.20, 74.86, 79.13]
       },
       "right": {
-        "short_name": "AT&T Bill",
-        "raw_names": ["Debit: AT&T"],
-        "description": "Payment to AT&T for telecommunications services",
-        "amounts": [150.00]
+        "short_name": "Texas SOS",
+        "raw_names": ["TEXAS S.O.S. REF# 510600029749 512-463-9308,MD Card ending in 3466"],
+        "description": "provides services related to vehicle registration and titling in Texas",
+        "amounts": [0.41]
+      }
+    },
+    {
+      "match_id": 2116,
+      "left": {
+        "short_name": "ACH Deposit: Flyte",
+        "raw_names": ["ACH DEPOSIT: Flyte"],
+        "description": "processes payments for airline tickets and travel services",
+        "amounts": [6027.77, 4790.02, 3865.66, 3865.66, 3865.66, 608.41]
+      },
+      "right": {
+        "short_name": "ACH Deposit: Tesla",
+        "raw_names": ["ACH DEPOSIT: Tesla_Inc XFA15LS6DS9X5VX"],
+        "description": "electric vehicle and clean energy company",
+        "amounts": [134.14, 134.14, 112.33, 112.33]
       }
     }
   ]
@@ -554,16 +502,39 @@ def test_similar_amounts_description_small_name_variation(detector: SimilarityDe
     {
       "match_id": 2116,
       "left": {
-        "short_name": "Netflix Subscription",
-        "raw_names": ["NETFLIX.COM", "Netflix Monthly"],
-        "description": "sells streaming video subscription services",
-        "amounts": [15.99, 15.99, 15.99]
+        "short_name": "Better Proposal",
+        "raw_names": [
+          "BETTER PROPO REF# 510800012325 LONDON,GB Card ending in 3458",
+          "BETTER PROPO REF# 504900028199 LONDON,GB Card ending in 3458"
+        ],
+        "description": "provides online marketing and advertising services",
+        "amounts": [29.00, 29.00, 29.00]
       },
       "right": {
-        "short_name": "Netflix",
-        "raw_names": ["NETFLIX", "Netflix Payment"],
-        "description": "provides online video streaming subscription services",
-        "amounts": [15.99, 15.99, 15.99]
+        "short_name": "Better Proposals",
+        "raw_names": ["BETTER PROPOSALS LONDON 253"],
+        "description": "sells various proposal writing and business consulting services",
+        "amounts": [29.00, 29.00, 29.00, 29.00, 29.00, 29.00]
+      }
+    },
+    {
+      "match_id": 2117,
+      "left": {
+        "short_name": "Dollar Tree",
+        "raw_names": [
+          "DOLLARTREE REF# 504200037537 WAXAHACHIE,TX Card ending in 3466",
+          "DOLLARTREE REF# 504500026805 DESOTO,TX Card ending in 3466",
+          "DOLLARTREE REF# 505200026122 WAXAHACHIE,TX Card ending in 3466",
+          "Dollartree"
+        ],
+        "description": "A discount retail store selling a variety of household goods, groceries, and seasonal items.",
+        "amounts": [4.06, 18.34, 5.34, 11.13]
+      },
+      "right": {
+        "short_name": "Dollar Tree Payment",
+        "raw_names": ["DOLLARTREE REF# 502300022154 DESOTO,TX Card ending in 3466"],
+        "description": "payment to Dollar Tree with reference number 502300022154",
+        "amounts": [4.06]
       }
     }
   ]
@@ -573,40 +544,24 @@ def main():
   """Main function to test the similarity detector optimizer"""
   detector = SimilarityDetectorOptimizer()
   
-  print("Test 1: Same transaction - exact match")
-  test_same_transaction_exact_match(detector)
-  print("\n")
-  
-  print("Test 2: Same transaction - similar names")
-  test_same_transaction_similar_names(detector)
-  print("\n")
-  
-  print("Test 3: Different transactions")
-  test_different_transactions(detector)
-  print("\n")
-  
-  print("Test 4: Multiple pairs")
-  test_multiple_pairs(detector)
-  print("\n")
-  
-  print("Test 5: Similar names, different amounts")
-  test_similar_names_different_amounts(detector)
-  print("\n")
+  # print("Test 1: Multiple pairs")
+  # test_multiple_pairs(detector)
+  # print("\n")
 
-  print("Test 6: Similar names, different stores")
-  test_similar_names_different_stores(detector)
-  print("\n")
+  # print("Test 2: Similar names, different stores")
+  # test_similar_names_different_stores(detector)
+  # print("\n")
 
-  print("Test 7: Similar names, same stores")
-  test_similar_names_same_stores1(detector)
-  test_similar_names_same_stores2(detector)
-  print("\n")
+  # print("Test 3: Similar names, same stores")
+  # test_similar_names_same_stores1(detector)
+  # test_similar_names_same_stores2(detector)
+  # print("\n")
 
-  print("Test 8: Establishment undetermined")
-  test_establishment_undetermined(detector)
-  print("\n")
+  # print("Test 4: Establishment undetermined")
+  # test_establishment_undetermined(detector)
+  # print("\n")
   
-  print("Test 9: Similar amounts, description, and small name variation")
+  print("Test 5: Similar amounts, description, and small name variation")
   test_similar_amounts_description_small_name_variation(detector)
 
 
