@@ -11,6 +11,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
 
+# Output Schema - array of result objects
+SCHEMA = types.Schema(
+  type=types.Type.ARRAY,
+  items=types.Schema(
+    type=types.Type.OBJECT,
+    properties={
+      "match_id": types.Schema(
+        type=types.Type.STRING,
+        description="Unique identifier for the pair. Same as input."
+      ),
+      "reasoning": types.Schema(
+        type=types.Type.STRING,
+        description="Brief 1-2 sentence explanation focusing on decisive factors for the classification"
+      ),
+      "result": types.Schema(
+        type=types.Type.STRING,
+        enum=["same", "different"],
+        description="Classification result: 'same' if names represent the same entity/establishment, 'different' if they represent different entities/establishments"
+      ),
+      "confidence": types.Schema(
+        type=types.Type.STRING,
+        enum=["high", "medium", "low"],
+        description="Confidence level: 'high' for strong evidence, 'medium' for good evidence with some ambiguity, 'low' for weak/conflicting evidence"
+      )
+    },
+    required=["match_id", "result", "confidence", "reasoning"]
+  )
+)
+
+
 SYSTEM_PROMPT = """You detect if two names represent the same entity or establishment.
 
 ## Task
@@ -26,14 +56,6 @@ JSON array where each element contains:
   - `raw_names`: Array of original raw names
   - `description`: Establishment description
   - `amounts`: Array of amounts
-
-## Output Format
-
-JSON array where each element contains:
-- `match_id`: Same as input
-- `reasoning`: 1-2 sentence explanation focusing on decisive factors
-- `result`: "same" or "different"
-- `confidence`: "high", "medium", or "low"
 
 ## Analysis
 
@@ -100,37 +122,6 @@ class SameSummarizedNameClassifierOptimizer:
     
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
-    
-    # Output Schema - array of result objects
-    result_item_schema = types.Schema(
-      type=types.Type.OBJECT,
-      properties={
-        "match_id": types.Schema(
-          type=types.Type.STRING,
-          description="Unique identifier for the pair"
-        ),
-        "reasoning": types.Schema(
-          type=types.Type.STRING,
-          description="Brief 1-2 sentence explanation focusing on decisive factors for the classification"
-        ),
-        "result": types.Schema(
-          type=types.Type.STRING,
-          enum=["same", "different"],
-          description="Classification result: 'same' if names represent the same entity/establishment, 'different' if they represent different entities/establishments"
-        ),
-        "confidence": types.Schema(
-          type=types.Type.STRING,
-          enum=["high", "medium", "low"],
-          description="Confidence level: 'high' for strong evidence, 'medium' for good evidence with some ambiguity, 'low' for weak/conflicting evidence"
-        )
-      },
-      required=["match_id", "result", "confidence", "reasoning"]
-    )
-    
-    self.output_schema = types.Schema(
-      type=types.Type.ARRAY,
-      items=result_item_schema
-    )
 
   def detect_similarity(self, transaction_history_pairs: list) -> list:
     """
@@ -171,7 +162,7 @@ output:""")
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
       thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
       response_mime_type="application/json",
-      response_schema=self.output_schema,
+      response_schema=SCHEMA,
     )
 
     # Generate response
