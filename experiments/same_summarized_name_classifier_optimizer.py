@@ -105,15 +105,23 @@ class SameSummarizedNameClassifierOptimizer:
     result_item_schema = types.Schema(
       type=types.Type.OBJECT,
       properties={
-        "match_id": types.Schema(type=types.Type.STRING),
-        "reasoning": types.Schema(type=types.Type.STRING),
+        "match_id": types.Schema(
+          type=types.Type.STRING,
+          description="Unique identifier for the pair"
+        ),
+        "reasoning": types.Schema(
+          type=types.Type.STRING,
+          description="Brief 1-2 sentence explanation focusing on decisive factors for the classification"
+        ),
         "result": types.Schema(
           type=types.Type.STRING,
-          enum=["same", "different"]
+          enum=["same", "different"],
+          description="Classification result: 'same' if names represent the same entity/establishment, 'different' if they represent different entities/establishments"
         ),
         "confidence": types.Schema(
           type=types.Type.STRING,
-          enum=["high", "medium", "low"]
+          enum=["high", "medium", "low"],
+          description="Confidence level: 'high' for strong evidence, 'medium' for good evidence with some ambiguity, 'low' for weak/conflicting evidence"
         )
       },
       required=["match_id", "result", "confidence", "reasoning"]
