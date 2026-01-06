@@ -28,39 +28,35 @@ SCHEMA = {
     }
 }
 
-SYSTEM_PROMPT = """**Objective:** Generate a concise, exciting, and supportive SMS-style summary for each financial insight.
+SYSTEM_PROMPT = """**Objective:** Generate concise, insightful, and supportive SMS-style summaries for financial insights.
 
 **Persona: Penny**
-You are Penny, the user's AI financial bestie and biggest hype woman. Your tone is super positive, savvy, celebratory, and full of energy. Use 2-3 relevant emojis in every title and summary to maximize the vibe. You're the friend who celebrates their wins and motivates them through challenges.
+You are Penny, the user's personal AI financial consultant and close friend. Your tone is celebratory, encouraging, and knowledgeable, balancing friendly support with professional clarity. You are brief and use emojis to add warmth.
+
+---
+**Key Directives:**
+1.  **Indicate Direction:** In the `summary`, explicitly state if spending or income is "up," "down," "increase," or "decrease" if that is the focus of the insight.
+2.  **Comprehensive & Creative Titles:**
+    *   The `title` **must be creative** and act as a **holistic theme** for all points in the `summary`.
+    *   It should not just focus on one aspect if multiple are mentioned. For example, if the summary discusses both lower food costs and lower transport costs, a title like "Smart Savings Win! 🍽️🚆" is better than "Food Spending Down."
+3.  **ID Integrity:** The `id` from the input must be perfectly preserved.
 
 ---
 **Thought Process for Each Insight:**
 
-1.  **Identify Key Facts:** Pinpoint the 1-2 most important pieces of data in the `combined_insight`.
-2.  **Determine the Vibe:** Is it a celebration (savings, income)? A gentle warning (overspending)? A helpful reminder?
-3.  **Craft the Title:** Create a short, punchy title (under 30 chars) with emojis that captures the main event.
-4.  **Draft the Summary:** Combine the key facts into a single, energetic SMS line. Start with a fun, exclamatory word.
-
----
-**Example:**
-
-**Response Generation Rules for each `summary`:**
-
-* **Format:** Must be a single line.
-* **Tone:** Write like a friend in an SMS, positive and savvy, showing empathy and relatability.
-* **Greeting:** DO NOT ADD A GREETING. Go directly to the SMS message.
-* **Emojis:** Include relevant emojis.
-* **Monetary Amounts:** Format monetary amounts with **NO DECIMALS** but **WITH COMMAS** (e.g., $1,234).
-* **"Uncategorized" Term:** Do not drop "uncategorized" from the output if it is part of the input. Do not put it inside double quotes.
+1.  **Analyze Data & Direction:** Find all key financial events and their direction (up or down).
+2.  **Determine Tone:** Is it celebratory, cautionary, or informational?
+3.  **Craft a Holistic Title:** Create a short, creative title (under 30 chars) with emojis that encapsulates **all** themes from the summary.
+4.  **Draft Summary:** Write a single, concise SMS line that clearly states the financial direction for each key event.
 
 ---
 **Output Format & Rules:**
-*   **Strict JSON Array:** Your entire output must be a single, valid JSON array.
-*   **Maintain Order & ID:** Match the `id` and order from the input.
-*   **`title`:** Under 30 characters, including emojis.
-*   **`summary`:** A single line. NO GREETINGS.
-*   **Numbers:** Format money with commas and no decimals (e.g., $1,234).
-*   **"uncategorized":** Keep this word if it appears in the input.
+*   **Strict JSON Array:** Output must be a single, valid JSON array.
+*   **Maintain Order & ID:** Match `id` and order from the input.
+*   **`title`:** Under 30 characters. Must be a holistic theme for the summary.
+*   **`summary`:** A single, concise line. No greetings. State the financial direction for all key points.
+*   **Numbers:** Format as currency with commas, no decimals (e.g., $1,234).
+*   **"uncategorized":** Preserve this term.
 """
 
 class PennyHighlightsVerbalizerOptimizer:
@@ -134,9 +130,16 @@ output: """
         response_schema=self.output_schema,
         response_mime_type="application/json"
     )
+    
+    # Enable thinking
+    generation_config.thinking_config = genai.types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True
+    )
 
     # Generate response
     output_text = ""
+    thought_summary = ""
     
     # According to Gemini API docs: iterate through chunks
     response = self.client.generate_content(
@@ -151,6 +154,20 @@ output: """
         # Extract text content (non-thought parts)
         if chunk.text is not None:
           output_text += chunk.text
+          
+        # Extract thought summary from chunk
+        if hasattr(chunk, 'candidates') and chunk.candidates:
+          for candidate in chunk.candidates:
+            if hasattr(candidate, 'content') and candidate.content:
+              if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                for part in candidate.content.parts:
+                  if hasattr(part, 'thought') and part.thought:
+                    if hasattr(part, 'text') and part.text:
+                      if thought_summary:
+                        thought_summary += part.text
+                      else:
+                        thought_summary = part.text
+                        
     except Exception as e:
       # If the response is blocked, the stream will error.
       # We can check the prompt_feedback to see why.
@@ -162,7 +179,13 @@ output: """
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
-          
+      
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("="*80)
+      
     print(f"{'='*80}")
     print("RESPONSE OUTPUT:")
     print(output_text.strip())
@@ -209,15 +232,15 @@ def test_1(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
   Test case 1: Shelter cost reduction and large income boost.
   """
   insights = [
-    {
-      "id": 1,
-      "combined_insight": "Your shelter costs are way down this month to $1,248, mainly from less on home stuff, utilities, and upkeep. 🥳🏠 Oh em gee!  You got a huge surprise income boost of $8,800 this week, mostly from your business, and you're projected to spend only $68 by the end of the week!  Way to go, you savvy boss babe!"
-    },
-    {
-      "id": 2,
-      "combined_insight": "Looks like you spent less on food this month, down to $1,007, mostly from less eating out, deliveries, and groceries. 🍽️🚚🛒 Your transport costs are way down this month to just $46, mostly 'cause you took public transit less. 🚇"
-    }
-  ]
+  {
+    "id": 1,
+    "combined_insight": "Your shelter costs are way down this month to $1,248, mainly from less on home stuff, utilities, and upkeep. 🥳🏠 Oh em gee!  You got a huge surprise income boost of $8,800 this week, mostly from your business, and you're projected to spend only $68 by the end of the week!  Way to go, you savvy boss babe!"
+  },
+  {
+    "id": 2,
+    "combined_insight": "Looks like you spent less on food this month, down to $1,007, mostly from less eating out, deliveries, and groceries. 🍽️🚚🛒 Your transport costs are way down this month to just $46, mostly 'cause you took public transit less. 🚇"
+  }
+]
   return run_test_with_insights(insights, verbalizer)
 
 def test_2(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
