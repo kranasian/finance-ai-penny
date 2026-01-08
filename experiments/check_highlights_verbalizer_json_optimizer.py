@@ -130,22 +130,57 @@ Output:"""
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True
+      ),
     )
 
     # Generate response
     output_text = ""
+    thought_summary = ""
+    
+    # According to Gemini API docs: iterate through chunks and check part.thought boolean
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
       config=generate_content_config,
     ):
+      # Extract text content (non-thought parts)
       if chunk.text is not None:
         output_text += chunk.text
+      
+      # Extract thought summary from chunk
+      if hasattr(chunk, 'candidates') and chunk.candidates:
+        for candidate in chunk.candidates:
+          # Extract thought summary from parts (per Gemini API docs)
+          # Check part.thought boolean to identify thought parts
+          if hasattr(candidate, 'content') and candidate.content:
+            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+              for part in candidate.content.parts:
+                # Check if this part is a thought summary (per documentation)
+                if hasattr(part, 'thought') and part.thought:
+                  if hasattr(part, 'text') and part.text:
+                    # Accumulate thought summary text (for streaming, it may come in chunks)
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
     
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
+    
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("="*80)
+    
+    print(f"{'='*80}")
+    print("RESPONSE OUTPUT:")
+    print(output_text.strip())
+    print("="*80)
     
     # Parse JSON response
     try:
