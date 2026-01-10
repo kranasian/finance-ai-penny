@@ -110,7 +110,7 @@ class SameSummarizedNameClassifierOptimizer:
     # Generation Configuration Constants
     self.temperature = 0.6
     self.top_p = 0.95
-    self.max_output_tokens = 2048
+    self.max_output_tokens = 4096
     
     # Safety Settings
     self.safety_settings = [
