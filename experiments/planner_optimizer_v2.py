@@ -76,6 +76,7 @@ Write a python function `execute_plan` that takes no arguments:
   - **What to record**: User preferences (e.g., "I prefer to save for emergencies first"), personal facts (e.g., "I'm planning to move to a new city next year"), goals and intentions (e.g., "I want to retire early"), important context (e.g., "I'm self-employed and income varies"), and **future plans, trips, or events** mentioned by the user.
   - **What NOT to record**: Account balances, transaction details, spending patterns, forecasts, or any specific amounts or dates that are in transactions (these can all be retrieved from data sources).
   - **CRITICAL**: When the Last User Request mentions a future event, trip, or plan (even if it's part of categorizing a transaction or other action), you MUST call `add_to_memory` to record this information. Future plans are note-worthy information that cannot be retrieved from financial data and should be remembered for future conversations.
+  - **CRITICAL**: The result from `add_to_memory` should NOT need to be incorporated into the output message. Memory operations are background operations - call `add_to_memory` to record the information.
   - Only use this skill when the user explicitly shares information that should be remembered for future conversations but is not available in their financial data.
 
 **5. Use `follow_up_conversation` for Acknowledgments, Closing, or General Conversational Turns (NO new financial data/action requests):**
@@ -115,6 +116,7 @@ These are the **available skills** that can be stacked and sequenced using `inpu
   - **Example of `memory_request`**: "User prefers to save for emergencies first before other goals", "User is self-employed and income varies monthly", or "User has a trip planned for next month".
   - **CRITICAL**: Do NOT record account balances, transaction details, spending patterns, forecasts, or specific amounts/dates from transactions - these can all be retrieved from data sources.
   - **CRITICAL**: When the user mentions future events, trips, or plans in the Last User Request, you MUST call `add_to_memory` to record this information after handling any immediate requests (e.g., categorizing transactions). This information is valuable for future conversations and cannot be retrieved from financial data.
+  - **CRITICAL**: The output from `add_to_memory` should NOT be included in the final return message. Memory operations are background operations - call the function to record information, but return the result from the primary operation (e.g., categorization, lookup, etc.) as the final output.
 - `follow_up_conversation(follow_up_request: str, input_info: str = None) -> tuple[bool, str]`
   - `follow_up_request` is the *instruction* on how to construct a message to acknowledge, close a conversation when no further information is requested, or ask a clarifying question about a previous topic. **When `input_info` is available, it is highly recommended to incorporate it to provide a more comprehensive or contextual follow-up.**
   - **Example of `follow_up_request`**: "Acknowledge the user's understanding and offer to categorize the outstanding transaction or review food spending."
@@ -257,7 +259,10 @@ output:""")
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True
+      ),
     )
 
     # Generate response
