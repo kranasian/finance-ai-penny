@@ -41,54 +41,51 @@ SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """You detect if two names represent the same entity or establishment.
+SYSTEM_PROMPT = """You are an expert at determining if two transaction names represent the same kind of charge from the same entity, for the purpose of financial categorization.
 
-## Task
+## Core Task
 
-Analyze a JSON array of establishment pairs. For each pair, determine if the names are from the same or different entities/establishments, assign confidence, and provide brief reasoning.
+Analyze pairs of transaction sets and determine if they should be classified as "same" or "different". The primary decision should be based on this question: **Could the `short_name` from the left item AND the `short_name` from the right item EACH be used to accurately and completely describe all transactions in BOTH sets?**
 
-## Input Format
+- If **yes**, the result is **"same"**. This means the names are effectively interchangeable, and renaming would not cause a loss of critical information.
+- If **no**, the result is **"different"**. This applies when at least one of the names is too specific or too generic to correctly describe the other set of transactions.
+
+## Key Considerations
+
+- **Ignore Geographic Locations**: Transactions at different physical locations should be considered the same.
+
+## Analysis Heuristics
+
+**1. Marketplaces vs. Payment Processors:**
+- **Marketplaces**: Transactions made through a distinct marketplace or platform (e.g., DoorDash, eBay, Best Buy) are **different** from a direct transaction with a merchant. The marketplace is a critical part of the transaction's context.
+- **Payment Processors**: The involvement of a pure payment processor (e.g., Stripe, Paypal, Square) should be **ignored**. These do not change the fundamental nature of the transaction.
+
+**2. Product/Service Distinction:**
+- Transactions are **different** if they represent distinct products, service tiers, or types of charges from the same company. Renaming one to the other would be inaccurate.
+
+**3. Payment & Transfer Specificity:**
+- A more specific payment or transfer type is **different** from a general one, as essential detail is lost in generalization.
+- For Person-to-Person (P2P) transfers, a transaction with a specific purpose (text after a colon) is **different** from a general transfer to the same person.
+
+**4. Sub-brands and Departments:**
+- Sub-brands or departments of the same parent company should generally be considered the **same**, as the primary entity is the same.
+
+**5. Name & Description Analysis (Supporting Evidence):**
+- Use `short_name`, `raw_names`, and `description` to determine if one name is simply a variation of the other or if they represent fundamentally different things.
+
+## Output Format
 
 JSON array where each element contains:
-- `match_id`: Unique identifier
-- `left` and `right`: Each with:
-  - `short_name`: Shortened/cleaned name
-  - `raw_names`: Array of original raw names
-  - `description`: Establishment description
-  - `amounts`: Array of amounts
-
-## Analysis
-
-Compare names, descriptions, and amounts to determine entity identity:
-
-**Names** (primary): Compare `short_name` and all `raw_names`. Look for:
-- Exact matches (case-insensitive)
-- Partial matches (one contains the other)
-- Semantic similarity (e.g., "AT&T Bill" vs "AT&T Bill Charge")
-- Common variations (abbreviations, punctuation)
-
-**Description** (key indicator): 
-- Similar/matching descriptions → same entity
-- Different descriptions → different entities
-- Use to disambiguate when names are the same
-
-**Amounts** (supporting):
-- Similar amounts can support same entity (e.g., recurring bills)
-- Different amounts don't necessarily mean different entities
-- Secondary to names/descriptions
-
-**Confidence**:
-- **high**: Strong evidence (exact name + matching description, or completely different names/descriptions)
-- **medium**: Good evidence with some ambiguity (similar names/descriptions, slight variations)
-- **low**: Weak/conflicting evidence (similar names but different descriptions, ambiguous matches)
+- `match_id`: Same as input
+- `reasoning`: 1-2 sentence explanation focusing on decisive factors
+- `result`: "same" or "different"
+- `confidence`: "high", "medium", or "low"
 
 ## Rules
-
-- Process all pairs, maintain input order
-- "same" = same entity/establishment, "different" = different entities/establishments
-- Focus on entity identity, not just name similarity
-- Be conservative with "high" confidence
-- Reasoning: 1-2 sentences, focus on decisive factors only
+- Process all pairs and maintain input order.
+- Base your decision on the Core Task and Analysis Heuristics.
+- Be conservative with "high" confidence.
+- Reasoning must be 1-2 sentences and focus only on the most decisive factors.
 """
 
 
@@ -257,15 +254,9 @@ def _run_test_with_logging(transaction_history_pairs: list, detector: SameSummar
     return None
 
 
-def test_multiple_pairs(detector: SameSummarizedNameClassifierOptimizer = None):
+def test_batch_1(detector: SameSummarizedNameClassifierOptimizer = None):
   """
-  Test method for multiple pairs of entities/establishments.
-  
-  Args:
-    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
+  Test batch 1: Basic cases & Payment Processors
   """
   transaction_history_pairs = [
     {
@@ -287,116 +278,74 @@ def test_multiple_pairs(detector: SameSummarizedNameClassifierOptimizer = None):
       }
     },
     {
-      "match_id": "2114:2115",
-      "left": {
-        "short_name": "MGM Grand",
-        "raw_names": ["MGM Grand"],
-        "description": "sells hotel rooms, casino gaming, dining, entertainment, and other resort amenities",
-        "amounts": [128.93]
-      },
-      "right": {
-        "short_name": "MGM Grand Detroit",
-        "raw_names": ["Mgm grand detroi"],
-        "description": "sells various types of casino games, including slots, table games, and poker",
-        "amounts": [506.23, 1023.44, 1057.96, 1166.57, 1181.45, 1168.88]
-      }
+        "match_id": "SPOT-01",
+        "left": {
+            "short_name": "Spotify Silver Plan",
+            "raw_names": ["Spotify Silver Plan"],
+            "description": "Subscription for music streaming service.",
+            "amounts": [9.99]
+        },
+        "right": {
+            "short_name": "Spotify Platinum",
+            "raw_names": ["SPOTIFY PLATINUM"],
+            "description": "Premium subscription for music and podcast streaming.",
+            "amounts": [15.99]
+        }
     },
     {
-      "match_id": "2116:2117",
-      "left": {
-        "short_name": "Klarna: Revolve",
-        "raw_names": ["Klarna* Revolve, +"],
-        "description": "sells clothing, accessories, and home goods",
-        "amounts": [12.87]
-      },
-      "right": {
-        "short_name": "Revolve",
-        "raw_names": ["REVOLVE"],
-        "description": "sells clothing, shoes, accessories, and other fashion items, known for their trendy and stylish designs",
-        "amounts": [85.52, 32.48, 106.19]
-      }
-    },
-    {
-      "match_id": "2118:2119",
-      "left": {
-        "short_name": "Texas Roadhouse",
-        "raw_names": [
-          "Texas Roadhouse",
-          "Logans Roadhouse"
-        ],
-        "description": "steak restaurant",
-        "amounts": [23.38, 81.17, 69.20, 74.86, 79.13]
-      },
-      "right": {
-        "short_name": "Texas SOS",
-        "raw_names": ["TEXAS S.O.S. REF# 510600029749 512-463-9308,MD Card ending in 3466"],
-        "description": "provides services related to vehicle registration and titling in Texas",
-        "amounts": [0.41]
-      }
-    },
-    {
-      "match_id": "2120:2121",
-      "left": {
-        "short_name": "ACH Deposit: Flyte",
-        "raw_names": ["ACH DEPOSIT: Flyte"],
-        "description": "processes payments for airline tickets and travel services",
-        "amounts": [6027.77, 4790.02, 3865.66, 608.41]
-      },
-      "right": {
-        "short_name": "ACH Deposit: Tesla",
-        "raw_names": ["ACH DEPOSIT: Tesla_Inc XFA15LS6DS9X5VX"],
-        "description": "electric vehicle and clean energy company",
-        "amounts": [134.14, 112.33]
-      }
+        "match_id": "GRAB-01",
+        "left": {
+            "short_name": "Grab: Wendy's",
+            "raw_names": ["GrabFood*Wendy's"],
+            "description": "Food delivery from a fast-food chain.",
+            "amounts": [12.50]
+        },
+        "right": {
+            "short_name": "Wendy's",
+            "raw_names": ["WENDY'S"],
+            "description": "Fast-food restaurant specializing in hamburgers.",
+            "amounts": [18.75]
+        }
     }
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
 
-def test_similar_names_different_stores(detector: SameSummarizedNameClassifierOptimizer = None):
+def test_batch_2(detector: SameSummarizedNameClassifierOptimizer = None):
   """
-  Test method for similar names but different amounts (should be "different" with medium confidence).
-  
-  Args:
-    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
+  Test batch 2: Name variations
   """
   transaction_history_pairs = [
     {
-      "match_id": "2122:2123",
-      "left": {
-        "short_name": "Macho's",
-        "raw_names": [
-          "PY *MACHO SE REF# 509700022869 972-525-0686,TX Card ending in 3458",
-          "PY *MACHO SE REF# 506600014887 972-525-0686,TX Card ending in 3458"
-        ],
-        "description": "sells Mexican food such as tacos, burritos, and quesadillas",
-        "amounts": [50.00]
-      },
-      "right": {
-        "short_name": "Marco's Pizza",
-        "raw_names": ["Marco's Pizza"],
-        "description": "pizza restaurant that sells a variety of pizzas, subs, wings, sides, and desserts",
-        "amounts": [16.23, 22.70, 27.48, 23.97]
-      }
-    }
-  ]
-  return _run_test_with_logging(transaction_history_pairs, detector)
-
-
-def test_similar_names_same_stores1(detector: SameSummarizedNameClassifierOptimizer = None):
-  """
-  Test method for similar names but different amounts (should be "different" with medium confidence).
-  
-  Args:
-    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
-  """
-  transaction_history_pairs = [
+        "match_id": "FB-01",
+        "left": {
+            "short_name": "Facebook.com",
+            "raw_names": ["FACEBOOK.COM"],
+            "description": "Social media platform for connecting with friends and family.",
+            "amounts": [10.00]
+        },
+        "right": {
+            "short_name": "Facebook",
+            "raw_names": ["Facebook"],
+            "description": "Online social networking service.",
+            "amounts": [15.50]
+        }
+    },
+    {
+        "match_id": "PP-01",
+        "left": {
+            "short_name": "Paypal Retry Payment",
+            "raw_names": ["PAYPAL *RETRY PYMT"],
+            "description": "A second attempt for a PayPal transaction.",
+            "amounts": [45.00]
+        },
+        "right": {
+            "short_name": "Paypal Payment",
+            "raw_names": ["PayPal Payment"],
+            "description": "A standard payment made via PayPal.",
+            "amounts": [45.00]
+        }
+    },
     {
       "match_id": "2124:2125",
       "left": {
@@ -415,17 +364,42 @@ def test_similar_names_same_stores1(detector: SameSummarizedNameClassifierOptimi
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
-def test_similar_names_same_stores2(detector: SameSummarizedNameClassifierOptimizer = None):
+
+def test_batch_3(detector: SameSummarizedNameClassifierOptimizer = None):
   """
-  Test method for similar names but different amounts (should be "different" with medium confidence).
-  
-  Args:
-    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
+  Test batch 3: Sub-brands and Locations
   """
   transaction_history_pairs = [
+    {
+      "match_id": "2130:2131",
+      "left": {
+        "short_name": "Old Navy Kids",
+        "raw_names": ["Old Navy Kids"],
+        "description": "sells clothing, shoes, and accessories for children",
+        "amounts": [39.09, 44.03, 50.88]
+      },
+      "right": {
+        "short_name": "Old Navy",
+        "raw_names": ["Old Navy"],
+        "description": "sells clothing and accessories for men, women, and children",
+        "amounts": [145.54, 189.48, 227.18]
+      }
+    },
+    {
+      "match_id": "2114:2115",
+      "left": {
+        "short_name": "MGM Grand",
+        "raw_names": ["MGM Grand"],
+        "description": "sells hotel rooms, casino gaming, dining, entertainment, and other resort amenities",
+        "amounts": [128.93]
+      },
+      "right": {
+        "short_name": "MGM Grand Detroit",
+        "raw_names": ["Mgm grand detroi"],
+        "description": "sells various types of casino games, including slots, table games, and poker",
+        "amounts": [506.23, 1023.44, 1057.96, 1166.57, 1181.45, 1168.88]
+      }
+    },
     {
       "match_id": "2126:2127",
       "left": {
@@ -448,18 +422,28 @@ def test_similar_names_same_stores2(detector: SameSummarizedNameClassifierOptimi
     }
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
-
-def test_establishment_undetermined(detector: SameSummarizedNameClassifierOptimizer = None):
-  """
-  Test method for establishment undetermined (should be "undetermined" with medium confidence).
   
-  Args:
-    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
+  
+def test_batch_4(detector: SameSummarizedNameClassifierOptimizer = None):
+  """
+  Test batch 4: Edge Cases & Ambiguity
   """
   transaction_history_pairs = [
+    {
+        "match_id": "ZELLE-01",
+        "left": {
+            "short_name": "Zelle to Gabby",
+            "raw_names": ["Zelle Transfer to Gabby"],
+            "description": "Peer-to-peer money transfer.",
+            "amounts": [50.00]
+        },
+        "right": {
+            "short_name": "Zelle to Gabby: Jollibee",
+            "raw_names": ["Zelle to Gabby: Jollibee"],
+            "description": "Peer-to-peer money transfer with a memo.",
+            "amounts": [25.30]
+        }
+    },
     {
       "match_id": "2128:2129",
       "left": {
@@ -473,69 +457,6 @@ def test_establishment_undetermined(detector: SameSummarizedNameClassifierOptimi
         "raw_names": ["Seamless"],
         "description": "sells food delivery services from various restaurants",
         "amounts": [84.29, 52.17, 78.39, 46.76]
-      }
-    }
-  ]
-  return _run_test_with_logging(transaction_history_pairs, detector)
-
-
-def test_old_navy_kids_vs_old_navy(detector: SameSummarizedNameClassifierOptimizer = None):
-  """
-  Test method for Old Navy Kids vs Old Navy (should be "same" with medium confidence).
-  
-  Args:
-    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
-  """
-  transaction_history_pairs = [
-    {
-      "match_id": "2130:2131",
-      "left": {
-        "short_name": "Old Navy Kids",
-        "raw_names": ["Old Navy Kids"],
-        "description": "sells clothing, shoes, and accessories for children",
-        "amounts": [39.09, 44.03, 50.88]
-      },
-      "right": {
-        "short_name": "Old Navy",
-        "raw_names": ["Old Navy"],
-        "description": "sells clothing and accessories for men, women, and children",
-        "amounts": [145.54, 189.48, 227.18]
-      }
-    }
-  ]
-  return _run_test_with_logging(transaction_history_pairs, detector)
-
-
-def test_similar_amounts_description_small_name_variation(detector: SameSummarizedNameClassifierOptimizer = None):
-  """
-  Test method for similar amounts, similar description, and small variation in names (should be "same" with high/medium confidence).
-  
-  Args:
-    detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The detection results
-  """
-  transaction_history_pairs = [
-    {
-      "match_id": "2132:2133",
-      "left": {
-        "short_name": "Better Proposal",
-        "raw_names": [
-          "BETTER PROPO REF# 510800012325 LONDON,GB Card ending in 3458",
-          "BETTER PROPO REF# 504900028199 LONDON,GB Card ending in 3458"
-        ],
-        "description": "provides online marketing and advertising services",
-        "amounts": [29.00]
-      },
-      "right": {
-        "short_name": "Better Proposals",
-        "raw_names": ["BETTER PROPOSALS LONDON 253"],
-        "description": "sells various proposal writing and business consulting services",
-        "amounts": [29.00]
       }
     },
     {
@@ -561,96 +482,43 @@ def test_similar_amounts_description_small_name_variation(detector: SameSummariz
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
 
-def main(batch: int = 1):
+
+def main(batch: int = 0):
   """
   Main function to test the similarity detector optimizer
   
   Args:
-    batch: Batch number (1, 2, 3, or 4) to determine which tests to run
+    batch: Batch number (1, 2, 3, or 4) to determine which tests to run. 0 runs all.
   """
   print("Testing SameSummarizedNameClassifierOptimizer\n")
   detector = SameSummarizedNameClassifierOptimizer()
   
-  if batch == 1:
-    # Basic test cases
-    print("Test 1: Multiple pairs")
+  if batch == 1 or batch == 0:
+    print("Test Batch 1: Basic cases")
     print("-" * 80)
-    test_multiple_pairs(detector)
+    test_batch_1(detector)
     print("\n")
     
-    print("Test 2: Similar amounts, description, and small name variation")
+  if batch == 2 or batch == 0:
+    print("Test Batch 2: Name variations")
     print("-" * 80)
-    test_similar_amounts_description_small_name_variation(detector)
+    test_batch_2(detector)
     print("\n")
     
-  elif batch == 2:
-    # Similar names test cases
-    print("Test 1: Similar names, different stores")
+  if batch == 3 or batch == 0:
+    print("Test Batch 3: Similar names")
     print("-" * 80)
-    test_similar_names_different_stores(detector)
+    test_batch_3(detector)
     print("\n")
     
-    print("Test 2: Similar names, same stores (1)")
+  if batch == 4 or batch == 0:
+    print("Test Batch 4: Edge cases")
     print("-" * 80)
-    test_similar_names_same_stores1(detector)
+    test_batch_4(detector)
     print("\n")
     
-    print("Test 3: Similar names, same stores (2)")
-    print("-" * 80)
-    test_similar_names_same_stores2(detector)
-    print("\n")
-    
-    print("Test 4: Old Navy Kids vs Old Navy")
-    print("-" * 80)
-    test_old_navy_kids_vs_old_navy(detector)
-    print("\n")
-    
-  elif batch == 3:
-    # Edge cases
-    print("Test 1: Establishment undetermined")
-    print("-" * 80)
-    test_establishment_undetermined(detector)
-    print("\n")
-    
-  elif batch == 4:
-    # Run all tests
-    print("Test 1: Multiple pairs")
-    print("-" * 80)
-    test_multiple_pairs(detector)
-    print("\n")
-    
-    print("Test 2: Similar names, different stores")
-    print("-" * 80)
-    test_similar_names_different_stores(detector)
-    print("\n")
-    
-    print("Test 3: Similar names, same stores (1)")
-    print("-" * 80)
-    test_similar_names_same_stores1(detector)
-    print("\n")
-    
-    print("Test 4: Similar names, same stores (2)")
-    print("-" * 80)
-    test_similar_names_same_stores2(detector)
-    print("\n")
-    
-    print("Test 5: Old Navy Kids vs Old Navy")
-    print("-" * 80)
-    test_old_navy_kids_vs_old_navy(detector)
-    print("\n")
-    
-    print("Test 6: Establishment undetermined")
-    print("-" * 80)
-    test_establishment_undetermined(detector)
-    print("\n")
-    
-    print("Test 7: Similar amounts, description, and small name variation")
-    print("-" * 80)
-    test_similar_amounts_description_small_name_variation(detector)
-    print("\n")
-    
-  else:
-    raise ValueError("batch must be 1, 2, 3, or 4")
+  if batch not in [0, 1, 2, 3, 4]:
+    raise ValueError("batch must be 0, 1, 2, 3, or 4")
   
   print("All tests completed!")
 
@@ -658,7 +526,7 @@ def main(batch: int = 1):
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run tests in batches')
-  parser.add_argument('--batch', type=int, default=1, choices=[1, 2, 3, 4],
-                      help='Batch number to run (1, 2, 3, or 4)')
+  parser.add_argument('--batch', type=int, default=0, choices=[0, 1, 2, 3, 4],
+                      help='Batch number to run (1, 2, 3, or 4). 0 runs all batches.')
   args = parser.parse_args()
   main(batch=args.batch)
