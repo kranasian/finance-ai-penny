@@ -16,43 +16,64 @@ SYSTEM_PROMPT = """You are a checker verifying the output of a transaction name 
 
 ## Output:
 JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: True if REVIEW_NEEDED is a valid JSON array, contains an object for every `match_id` in EVAL_INPUT, and each object has the required fields (`match_id`, `reasoning`, `result`, `confidence`).
-- `info_correct`: True if the `result` and `reasoning` for each item in REVIEW_NEEDED correctly apply the classification rules.
-- `eval_text`: Required if either boolean is False; provide a single, direct sentence per issue.
+- `good_copy`: True if REVIEW_NEEDED is a valid JSON array with all required fields (`match_id`, `reasoning`, `result`, `confidence`).
+- `info_correct`: True if the `result` for each item is correct. This is the **only** measure of correctness. The `reasoning` field should be ignored entirely when `result` is correct. If a `result` is wrong, then the `reasoning` may be checked for faulty logic.
+- `eval_text`: Required if either boolean is False. For each `match_id` with an error, provide one concise phrase that is 25 words long at most. If there are multiple errors, separate each with a newline character (`\n`)**. The evaluation must only address errors in REVIEW_NEEDED, without referencing PAST_REVIEW_OUTCOMES.
 
 ## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
-**MANDATORY**: If PAST_REVIEW_OUTCOMES flags issues that still exist in REVIEW_NEEDED, mark as incorrect.
+**MANDATORY**: Use PAST_REVIEW_OUTCOMES as a knowledge base. If REVIEW_NEEDED repeats mistakes flagged in past outcomes, it is incorrect. However, do not mention past outcomes in your `eval_text`.
 - Extract all issues from past `eval_text` fields.
-- Check if REVIEW_NEEDED repeats the same mistakes.
+- Check if REVIEW_NEEDED repeats the same mistakes. Your final output must not reference this check.
 
 ## Verification Steps
-1. **Check PAST_REVIEW_OUTCOMES first**: If REVIEW_NEEDED repeats past mistakes -> mark False.
-2. **Verify good_copy**: Check for valid JSON, complete `match_id` coverage, and all required fields.
-3. **Verify info_correct**: For each item, check if the `result` and `reasoning` are correct based on the Classifier Rules.
-4. **Write eval_text**: If False, provide a single, direct sentence per issue.
+1. **Check PAST_REVIEW_OUTCOMES first**: If REVIEW_NEEDED repeats past mistakes -> mark False. This is for your internal logic only.
+2. **Verify good_copy**: Check for valid JSON and all required fields.
+3. **Verify info_correct**: Check that `match_id`s align with EVAL_INPUT. For each item, verify the `result`. Remember, establishments at different locations are always "same". When evaluating, consider if a `short_name` is a processing error by consulting the `raw_names` and the misprocessing guidelines. Apply the comparison hierarchy and mandatory rules. If a `result` is wrong, also check the `reasoning` for logical errors.
+4. **Write eval_text**: If False, generate one concise phrase for each `match_id` with an error and combine them into a single response string, keeping the total length under 100 words. Do not explain that an error is a repeat from the past.
 
 ## Classifier Rules for Verification
-You must verify the classifier's output against these rules. The rules are ordered by importance.
+You must verify the classifier's output against these rules. They are ordered by importance.
 
-**1. Mandatory Rules:**
-- **Ignore Geographic Location:** Transactions at different physical locations of the same company **must** be classified as "same". (e.g., "McDonald's in LA" vs. "McDonald's in NY" -> "same").
-- **Distinguish Online vs. Physical:** A company's online store is **different** from its physical store. (e.g., "Gap.com" vs. "Gap Store" -> "different").
+**First, consider if a `short_name` is incorrectly processed.** Before applying the rules below, you must mentally correct any `short_name`s based on the following guidelines. The interchangeability check should be performed on the *corrected* names.
 
-**2. Core Task:**
-The classifier's decision is based on two conditions being met:
-1. The `short_name` from `left` must accurately describe all transactions in `right`.
-2. The `short_name` from `right` must accurately describe all transactions in `left`.
-- If **both** are true, the result is **"same"**. Otherwise, it is **"different"**.
+### Guidelines for Handling Misprocessed `short_name`s
 
-**3. Analysis Heuristics:**
-- **Marketplaces**: A marketplace transaction is **different** from a direct one (e.g., "Amazon: Nike" vs. "Nike Store").
-- **Payment Processors**: The use of a payment processor should be **ignored** (e.g., "Stripe*MyWebsite" is the same as "MyWebsite").
-- **Product/Service Distinction**: Different products or service tiers are **different** (e.g., "Spotify Silver" vs. "Spotify Gold").
-- **Payment & Transfer Specificity**: More specific payments or transfers are **different** from general ones (e.g., "Zelle to Bob: Rent" vs. "Zelle to Bob").
-- **Sub-brands**: Sub-brands are generally **same** as the parent company.
+**`address_in_name`**
+- Exclude branch of establishment where transaction was done. Branch is typically indicated through numbers or locations.
+- Exclude location of establishment.
+
+**`payment_card_included`**
+- Exclude any bank or card details in transactions with establishments.
+- For interbank transfers and credit card payments, however, bank, account type, and partial account numbers (eg. ***3232) should be specified.
+
+**`unnecessary_content`**
+- Exclude device types, payment gateways, or payment processors (eg. TST, Vesta, BBMSL, SUMUP, SSP, PAI).
+- Exclude legal structure (eg. LLC, Inc., Co., Corp., Ltd, Corporation, Incorporated), unless followed by "and"/"&" or between two words.
+
+**`ugly_name`**
+- Use Title Case, and be concise and clear.
+- Align punctuation and capitalization to how establishment is commonly known and branded as.
+- Colons (:) hold significance. Only use these in the following instances.
+    - Prefix with "Pending:" if transaction is pending.
+    - Prefix with type of transfer if mentioned (eg. "ACH: ", "Check: ").
+    - Prefix with the third party (eg. "Amazon: Uniqlo) if transaction was done through another entity (eg. buy-now-pay-later solutions, e-commerce marketplaces, retailer)
+    - Suffix with purpose of transaction if a person-to-person transfer (eg. "Zelle to Juan Dela Cruz: Birthday Gift").
+- Indicate transfer direction (eg. Inbound Transfer from Coinbase.com to Business Debit) if there is an equal chance of the transaction being an inflow or an outflow.
+
+---
+After applying the corrections, verify the result using the rules below:
+
+1.  **Online vs. Physical Retail**: This is the most important rule. An online store is **always "different"** from a physical store. For example, "Facebook.com" is different from "Facebook" because one is explicitly an online service. There are no exceptions.
+2.  **Interchangeability**: The `short_name` from `left` must accurately describe all transactions in `right`, and vice-versa. If they are not interchangeable, the result is "different".
+3.  **Ignore Geographic Locations**: Transactions at different physical locations are **"same"**.
+4.  **Sub-brands and Departments**: Treat sub-brands and departments as the **"same"** entity.
+5.  **Marketplaces**: A marketplace transaction is **"different"** from a direct one.
+6.  **Payment Processors**: The use of a payment processor should be **ignored**.
+7.  **Product/Service Distinction**: Different products or service tiers are **"different"**.
+8.  **Payment & Transfer Specificity**: More specific transfers (e.g., with a memo) are **"different"** from general transfers.
 
 ### Output Field Rules
-- `reasoning`: Must be a brief 1-2 sentence explanation.
+- `reasoning`: Must be concise and straight to the point.
 - `result`: Must be either "same" or "different".
 - `confidence`: Must be "high", "medium", or "low".
 """
@@ -439,6 +460,137 @@ def run_test_group_3(checker: CheckSameSummarizedNameClassifier = None):
   return run_test_case("test_group_3_edge_cases", eval_input, review_needed, [], checker)
 
 
+def run_test_group_4(checker: CheckSameSummarizedNameClassifier = None):
+  """
+  Test Group 4: Misprocessed short_names with geo-locations
+  """
+  eval_input = [
+    {
+        "match_id": "JOLLIBEE-01",
+        "left": {
+            "short_name": "Jollibee New York",
+            "raw_names": ["Jollibee New York"],
+            "description": "Fast food restaurant in New York.",
+            "amounts": [25.50]
+        },
+        "right": {
+            "short_name": "Jollibee San Francisco",
+            "raw_names": ["Jollibee San Francisco"],
+            "description": "Fast food restaurant in San Francisco.",
+            "amounts": [30.00]
+        }
+    }
+  ]
+  review_needed = [
+    {
+      "match_id": "JOLLIBEE-01",
+      "reasoning": "These are the same establishment at different locations. The location names are considered misprocessing and should be ignored.",
+      "result": "same",
+      "confidence": "high"
+    }
+  ]
+  return run_test_case("test_group_4_misprocessed_short_names", eval_input, review_needed, [], checker)
+
+
+def run_test_group_5(checker: CheckSameSummarizedNameClassifier = None):
+  """
+  Test Group 5: Correct result with weak reasoning
+  """
+  eval_input = [
+    {
+        "match_id": "WEAK-REASON-01",
+        "left": { "short_name": "Walmart Supercenter", "raw_names": ["WALMART SUPERCENTER"], "description": "Large format Walmart store.", "amounts": [120.00] },
+        "right": { "short_name": "Walmart", "raw_names": ["Walmart"], "description": "General retailer.", "amounts": [80.00] }
+    }
+  ]
+  review_needed = [
+    {
+      "match_id": "WEAK-REASON-01",
+      "reasoning": "Same.",
+      "result": "same",
+      "confidence": "high"
+    }
+  ]
+  return run_test_case("test_group_5_weak_reasoning", eval_input, review_needed, [], checker)
+
+
+def run_multiple_errors_test(checker: CheckSameSummarizedNameClassifier = None):
+  """
+  Test for multiple errors to check eval_text formatting and online vs. physical rule.
+  """
+  eval_input = [
+    {
+      "match_id": "AMZN-01",
+      "left": { "short_name": "Amazon.com", "raw_names": ["AMAZON.COM"], "description": "Online retailer.", "amounts": [50.0] },
+      "right": { "short_name": "Amazon Go", "raw_names": ["Amazon Go Store"], "description": "Physical convenience store.", "amounts": [12.50] }
+    },
+    {
+      "match_id": "SPOT-01",
+      "left": { "short_name": "Spotify Silver Plan", "raw_names": ["Spotify Silver Plan"], "description": "Subscription for music streaming service.", "amounts": [9.99] },
+      "right": { "short_name": "Spotify Platinum", "raw_names": ["SPOTIFY PLATINUM"], "description": "Premium subscription for music and podcast streaming.", "amounts": [15.99] }
+    }
+  ]
+  review_needed = [
+    { "match_id": "AMZN-01", "reasoning": "These are both Amazon, so they are the same.", "result": "same", "confidence": "medium" },
+    { "match_id": "SPOT-01", "reasoning": "Different plans are the same service.", "result": "same", "confidence": "low" }
+  ]
+  return run_test_case("multiple_errors_test", eval_input, review_needed, [], checker)
+
+
+def run_bad_reasoning_test(checker: CheckSameSummarizedNameClassifier = None):
+  """
+  Test for a correct result with a completely nonsensical reasoning.
+  """
+  eval_input = [
+    {
+        "match_id": "BAD-REASON-01",
+        "left": { "short_name": "MGM Grand", "raw_names": ["MGM Grand Las Vegas"], "description": "Hotel and casino in Las Vegas.", "amounts": [300.0] },
+        "right": { "short_name": "MGM Grand Detroit", "raw_names": ["MGM Grand Detroit"], "description": "Hotel and casino in Detroit.", "amounts": [250.0] }
+    }
+  ]
+  review_needed = [
+    {
+      "match_id": "BAD-REASON-01",
+      "reasoning": "The sky is blue and grass is green.",
+      "result": "same",
+      "confidence": "high"
+    }
+  ]
+  return run_test_case("bad_reasoning_test", eval_input, review_needed, [], checker)
+
+
+def run_ambiguous_physical_store_test(checker: CheckSameSummarizedNameClassifier = None):
+  """
+  Test for ambiguity in online vs. physical stores.
+  """
+  eval_input = [
+    {
+        "match_id": "NIKE-AMBIGUOUS-01",
+        "left": {
+            "short_name": "Nike",
+            "raw_names": ["Nike Store"],
+            "description": "Sportswear retailer.",
+            "amounts": [150.0]
+        },
+        "right": {
+            "short_name": "Nike.com",
+            "raw_names": ["NIKE.COM"],
+            "description": "Online store for sportswear.",
+            "amounts": [120.00]
+        }
+    }
+  ]
+  review_needed = [
+    {
+      "match_id": "NIKE-AMBIGUOUS-01",
+      "reasoning": "An ambiguous short_name 'Nike' is assumed to be a physical store, which is different from the online store 'Nike.com'.",
+      "result": "different",
+      "confidence": "high"
+    }
+  ]
+  return run_test_case("ambiguous_physical_store_test", eval_input, review_needed, [], checker)
+
+
 def main(batch: int = 0):
   """Main function to test the SameSummarizedNameClassifier checker"""
   checker = CheckSameSummarizedNameClassifier()
@@ -450,20 +602,35 @@ def main(batch: int = 0):
     run_test_group_1(checker)
     run_test_group_2(checker)
     run_test_group_3(checker)
+    run_test_group_4(checker)
+    run_test_group_5(checker)
+    run_multiple_errors_test(checker)
+    run_bad_reasoning_test(checker)
+    run_ambiguous_physical_store_test(checker)
   elif batch == 1:
     run_test_group_1(checker)
   elif batch == 2:
     run_test_group_2(checker)
   elif batch == 3:
     run_test_group_3(checker)
+  elif batch == 4:
+    run_test_group_4(checker)
+  elif batch == 5:
+    run_test_group_5(checker)
+  elif batch == 6:
+    run_multiple_errors_test(checker)
+  elif batch == 7:
+    run_bad_reasoning_test(checker)
+  elif batch == 8:
+    run_ambiguous_physical_store_test(checker)
   else:
-    print("Invalid batch number. Please choose 0, 1, 2, or 3.")
+    print("Invalid batch number. Please choose from 0 to 8.")
 
 
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run checker tests in batches')
-  parser.add_argument('--batch', type=int, default=0, choices=[0, 1, 2, 3],
-                      help='Batch number to run (1, 2, or 3). 0 runs all.')
+  parser.add_argument('--batch', type=int, default=0, choices=range(9),
+                      help='Batch number to run (1-8). 0 runs all.')
   args = parser.parse_args()
   main(batch=args.batch)
