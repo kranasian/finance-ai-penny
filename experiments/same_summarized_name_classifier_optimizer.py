@@ -54,7 +54,7 @@ Your decision-making process must follow these two questions:
 
 ## Key Considerations
 
-- **Ignore Geographic Locations**: Transactions at different physical locations should be considered the same.
+- **Ignore Geographic Locations**: Transactions at different physical locations should be considered the **same**.
 
 ## Analysis Heuristics
 
@@ -74,16 +74,18 @@ Your decision-making process must follow these two questions:
 - **Memo/Purpose**: For Person-to-Person (P2P) transfers, a transaction with a specific purpose is **different** from a general transfer to the same person.
 
 **5. Sub-brands and Departments:**
-- Sub-brands or departments of the same parent company should generally be considered the **same**, as the primary entity is the same.
+- **Treat sub-brands and departments as the same entity.**
 
 **6. Name & Description Analysis (Supporting Evidence):**
 - Use `short_name`, `raw_names`, and `description` to determine if one name is simply a variation of the other or if they represent fundamentally different things.
 
-## Output Format
+## Output Format & Reasoning Guide
+
+Provide a JSON array. For each item, the `reasoning` must be a **concise, single phrase** that states the decisive factor.
 
 JSON array where each element contains:
 - `match_id`: Same as input
-- `reasoning`: 1-2 sentence explanation focusing on decisive factors
+- `reasoning`: A single, concise phrase explaining the core reason.
 - `result`: "same" or "different"
 - `confidence`: "high", "medium", or "low"
 
@@ -91,7 +93,7 @@ JSON array where each element contains:
 - Process all pairs and maintain input order.
 - Base your decision on the Core Task and Analysis Heuristics.
 - Be conservative with "high" confidence.
-- Reasoning must be 1-2 sentences and focus only on the most decisive factors.
+- Reasoning must be a single, concise phrase.
 """
 
 
