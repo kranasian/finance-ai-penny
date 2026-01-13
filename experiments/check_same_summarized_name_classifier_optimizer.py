@@ -28,8 +28,8 @@ JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
 ## Verification Steps
 1. **Check PAST_REVIEW_OUTCOMES first**: If REVIEW_NEEDED repeats past mistakes -> mark False. This is for your internal logic only.
 2. **Verify good_copy**: Check for valid JSON and all required fields.
-3. **Verify info_correct**: Check that `match_id`s align with EVAL_INPUT. For each item, verify the `result`. Remember, establishments at different locations are always "same". When evaluating, consider if a `short_name` is a processing error by consulting the `raw_names` and the misprocessing guidelines. Apply the comparison hierarchy and mandatory rules. If a `result` is wrong, also check the `reasoning` for logical errors.
-4. **Write eval_text**: If False, generate one concise phrase for each `match_id` with an error and combine them into a single response string, keeping the total length under 100 words. Do not explain that an error is a repeat from the past.
+3. **Verify info_correct**: Check that `match_id`s align with EVAL_INPUT. For each item, verify the `result`. Remember, establishments at different locations are always "same". When evaluating, consider if a `short_name` is a processing error by consulting the `raw_names` and the misprocessing guidelines. Apply the comparison hierarchy and mandatory rules.
+4. **Write eval_text**: If False, generate one concise phrase for each `match_id` with an error and combine them into a single response string, keeping the total length under 100 words. Do not explain that an error is a repeat from the past. Use `reasoning` to identify logic errors.
 
 ## Classifier Rules for Verification
 You must verify the classifier's output against these rules. They are ordered by importance.
@@ -50,26 +50,16 @@ You must verify the classifier's output against these rules. They are ordered by
 - Exclude device types, payment gateways, or payment processors (eg. TST, Vesta, BBMSL, SUMUP, SSP, PAI).
 - Exclude legal structure (eg. LLC, Inc., Co., Corp., Ltd, Corporation, Incorporated), unless followed by "and"/"&" or between two words.
 
-**`ugly_name`**
-- Use Title Case, and be concise and clear.
-- Align punctuation and capitalization to how establishment is commonly known and branded as.
-- Colons (:) hold significance. Only use these in the following instances.
-    - Prefix with "Pending:" if transaction is pending.
-    - Prefix with type of transfer if mentioned (eg. "ACH: ", "Check: ").
-    - Prefix with the third party (eg. "Amazon: Uniqlo) if transaction was done through another entity (eg. buy-now-pay-later solutions, e-commerce marketplaces, retailer)
-    - Suffix with purpose of transaction if a person-to-person transfer (eg. "Zelle to Juan Dela Cruz: Birthday Gift").
-- Indicate transfer direction (eg. Inbound Transfer from Coinbase.com to Business Debit) if there is an equal chance of the transaction being an inflow or an outflow.
-
 ---
 After applying the corrections, verify the result using the rules below:
 
-1.  **Online vs. Physical Retail**: This is the most important rule. An online store is **always "different"** from a physical store. For example, "Facebook.com" is different from "Facebook" because one is explicitly an online service. There are no exceptions.
-2.  **Interchangeability**: The `short_name` from `left` must accurately describe all transactions in `right`, and vice-versa. If they are not interchangeable, the result is "different".
+1.  **Online vs. Physical Retail**: An online store is **always "different"** from a physical store. For example, "Facebook.com" is different from "Facebook" because one is explicitly an online service. There are no exceptions.
+2.  **Interchangeability**: The correct `short_name` from `left` must accurately describe all transactions in `right`, and vice-versa. If they are not interchangeable, the result is "different".
 3.  **Ignore Geographic Locations**: Transactions at different physical locations are **"same"**.
-4.  **Sub-brands and Departments**: Treat sub-brands and departments as the **"same"** entity.
+4.  **Sub-brands and Departments**: Treat sub-brands and departments as **"different"** entities. A general `short_name` and a more specific `short_name` should be considered as **"different"**.
 5.  **Marketplaces**: A marketplace transaction is **"different"** from a direct one.
 6.  **Payment Processors**: The use of a payment processor should be **ignored**.
-7.  **Product/Service Distinction**: Different products or service tiers are **"different"**.
+7.  **Product/Service Distinction**: If indicated in `short_name`, different products or service tiers are **"different"**.
 8.  **Payment & Transfer Specificity**: More specific transfers (e.g., with a memo) are **"different"** from general transfers.
 
 ### Output Field Rules

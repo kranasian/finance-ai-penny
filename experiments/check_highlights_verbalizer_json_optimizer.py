@@ -3,52 +3,127 @@ from google.genai import types
 import os
 import json
 from dotenv import load_dotenv
+import sys
 
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are an AI assistant that validates verbalizer outputs based on a strict set of rules.
+SYSTEM_PROMPT = """You are an expert AI assistant for validating financial insight summaries. Your task is to check a verbalizer's JSON output against a strict set of rules, ensuring accuracy, appropriate tone, and completeness, with a deep understanding of financial categories.
+
+## Financial Categories Reference
+You must use the following category definitions to validate the accuracy of the summary:
+- **income**:
+  - salary: Regular paychecks.
+  - interest: Earnings from accounts.
+  - side gigs: Income from extra work.
+  - business: Income from business operations.
+- **meals**:
+  - groceries: Food purchased for home cooking.
+  - dining out: Meals eaten at restaurants.
+  - delivered food: Food ordered for delivery.
+- **leisure**:
+  - entertainment: Spending on fun activities/events.
+  - travel: Expenses related to trips/vacations.
+- **bills**:
+  - connectivity: Internet, phone, cable services.
+  - insurance: Premiums for various insurance policies.
+  - tax: Payments made for taxes.
+  - service fees: Bank or administrative charges.
+- **shelter**:
+  - home: Rent or mortgage payments.
+  - utilities: Electricity, gas, water, etc.
+  - upkeep: Maintenance and repairs for property.
+- **education**:
+  - kids activities: Costs for children's extracurriculars.
+  - tuition: Fees for schooling/courses.
+- **shopping**:
+  - clothing: Purchases of apparel.
+  - gadgets: Electronics and tech purchases.
+  - kids: General spending for children (non-activity).
+  - pets: Expenses related to pets.
+- **transportation**:
+  - public: Fares for buses, trains, etc.
+  - car: Gas, maintenance, parking for vehicles.
+- **health**:
+  - medical pharmacy: Doctor visits and prescriptions.
+  - gym wellness: Fitness memberships and wellness services.
+  - personal care: Toiletries and personal grooming.
+- **donations_gifts**: Charitable contributions or gift purchases.
+- **uncategorized**: Transactions without a clear category.
+- **transfers**: Internal movements between accounts.
+- **miscellaneous**: General other expenses.
 
 ## Input:
-- **EVAL_INPUT**: JSON containing insights about a user's financial activity.
-- **PAST_REVIEW_OUTCOMES**: A list of previous review outcomes for the same input.
-- **REVIEW_NEEDED**: The verbalizer's JSON response that requires validation.
+- **EVAL_INPUT**: JSON containing raw financial insights, which may include category information.
+- **PAST_REVIEW_OUTCOMES**: A history of previous validation attempts for the same input.
+- **REVIEW_NEEDED**: The verbalizer's JSON response requiring validation.
 
 ## Output:
-Produce a single JSON object with the following structure: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: **(FORMATTING & STYLE)** Must be `true` only if `REVIEW_NEEDED` is perfectly formatted and styled according to all rules in Part 1.
-- `info_correct`: **(CONTENT ACCURACY)** Must be `true` only if the information in `REVIEW_NEEDED` is factually correct and consistent based on `EVAL_INPUT` and rules in Part 2.
-- `eval_text`: **(REQUIRED ON FAILURE)** If either `good_copy` or `info_correct` is `false`, provide a concise explanation here. Refer to insights by number if applicable (e.g., "Insight 1: ..."). Do not refer to rules by number.
+Produce a single JSON object: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
+- `good_copy`: `true` only if style, tone, and formatting rules in Part 1 are perfectly met. This is about the *presentation* of the information.
+- `info_correct`: `true` only if content accuracy rules in Part 2 are perfectly met. This is about the *factual correctness* of the information (e.g., numbers, categories, IDs). An incorrect tone or style does not make the information itself incorrect.
+- `eval_text`: Required if any check fails. List all issues found, with feedback for each insight on a new line. Refer to insights by their position (e.g., "Insight 1" for the first insight). There may be several issues for every insight. Each line must be a phrase of 20 words or less.
+    - Example:
+      Insight 1: Title is incomplete, missing income boost.
+      Insight 2: Summary misinterprets 'dining out' as 'groceries'.
+
+## Guiding Questions for Validation
+Before applying the specific rules, consider these high-level questions to frame your evaluation. An issue in any of these areas likely indicates a failure.
+1.  **Title Clarity**: Could a user misunderstand the `title` as something different from the `combined_insight`? A good title is never misleading.
+2.  **Title Completeness**: Does the `title` touch on all key categories and points from the `summary`? An incomplete title fails validation.
+3.  **Numerical Context**: Are all numbers in the `summary` given proper context? Every monetary value should implicitly or explicitly state its performance relative to expectations (e.g., higher, lower, expected).
+4.  **Category Accuracy**: Are the words used for categories precise? Synonyms are acceptable, but they must be accurate (e.g., "Connectivity" is not the same as "WiFi").
+5.  **Contextual Mentions**: If a category is mentioned without a monetary value, is it providing essential context for a related sub-category or parent category insight? If not, it may be confusing.
 
 ## Core Directives:
-1.  **Strictness is Paramount**: Prioritize recall over precision. If you have any doubt, mark the check as `false`. It is better to incorrectly flag a potential issue than to miss a real one.
-2.  **Learn from History**: Before checking the current `REVIEW_NEEDED`, analyze `PAST_REVIEW_OUTCOMES`. If `REVIEW_NEEDED` repeats any mistake from a past `eval_text`, it is an automatic failure.
+1.  **Extreme Strictness**: Prioritize recall. If in doubt, fail the check. It is better to incorrectly flag a potential issue than to miss a real one.
+2.  **Learn from Mistakes**: Analyze `PAST_REVIEW_OUTCOMES`. If `REVIEW_NEEDED` repeats a past error, it's an automatic failure.
+3.  **Synonym and Category Flexibility**:
+    -   **Synonyms**: Be flexible with category synonyms (e.g., "Travel" for "transportation" or "Eating Out" for "dining out"). The key is whether the average person would understand the meaning. Do not fail checks for reasonable synonyms.
+    -   **Hierarchy**: Understand that sub-categories roll up into parent categories as defined in the reference. A summary might discuss "dining out" and "groceries," which can be accurately titled under the parent "Meals". Ensure any synonym used is all-encompassing (e.g., "pet spending" is not the same as just "dog food").
+4.  **Holistic Evaluation**: Title, summary, and tone are interconnected. A failure in one component (e.g., a generic title) makes the entire insight fail, even if other components are perfect. Every part must align with the insight's core message and sentiment.
 
 ## Rules
 
 ### Part 1: Formatting and Copy Rules (`good_copy`)
-1.  **Valid JSON**: The output must be a single, valid JSON array.
-2.  **Currency Formatting**: All numbers representing currency must be formatted with commas and no decimals (e.g., "$1,234").
-3.  **Tone**: The tone should be encouraging and light. It should be celebratory only for positive insights.
-4.  **Title (`title`)**:
+1.  **Valid JSON**: Must be a single, valid JSON array.
+2.  **Currency Formatting**: All currency values must be formatted as strings with a dollar sign prefix (e.g., "$1,234" or "$1,234"). Commas are required for values over 999.
+3.  **Greetings**: Formal conversational greetings (e.g., "Hi," "Hello") are forbidden. Celebratory interjections or topic initiators (e.g., "Yay!", "Heads up!") that match the tone of the insight are acceptable.
+4.  **Tone**: The tone of both the `title` and `summary` must independently align with the financial nature of the insight in `EVAL_INPUT`.
+    -   **Positive Insights**: If `EVAL_INPUT` indicates good financial performance (e.g., increased income, decreased spending), the tone must be celebratory and encouraging.
+    -   **Negative Insights**: If `EVAL_INPUT` points to poor financial performance (e.g., high spending, low savings), the tone must be encouraging and supportive, not alarming, critical, or celebratory.
+    -   **Neutral Insights**: For informational updates without a strong positive or negative performance indicator, the tone should be objective and clear.
+    -   **Clarity**: It must be unambiguously clear from both the title and the summary, independently, whether the user's performance is good or bad.
+5.  **Title (`title`)**:
     -   Must be under 30 characters.
-    -   Must accurately represent all key points in the `summary`.
-5.  **Summary (`summary`)**:
-    -   Must not contain conversational openers (e.g., "Hi", "Hello").
-    -   Must clearly indicate the direction of financial changes (e.g., "higher than", "lower than").
-    -   Must be clear and understandable on its own.
+    -   Must accurately reflect the most significant topics from the `summary`. Minor details can be omitted.
+    -   Must convey the core message and significance of the insight, even without the summary. A generic title like "Shopping Update" for a large spending increase is not acceptable.
+    -   If the summary covers sub-categories of a single parent category, the title can use the parent category name (e.g., "Food" for groceries and dining out).
+    -   If the summary covers multiple, unrelated major categories, the title should be a thematic or general summary (e.g., "Your Spending Breakdown," "A Look at Your Recent Activity") rather than an incomplete list.
+    -   Direction (e.g., "increase," "decrease") is not required, but if present, it must be accurate and clear. The overall tone should still hint at the direction.
+    -   **Contextual Mentions**: A category or sub-category can be mentioned without a monetary value *only if* it provides essential context for a related insight. For example, mentioning "Shopping" (parent) to frame a specific insight about "Clothing" (sub-category) is acceptable. Mentioning a category without a number for no clear reason is a failure.
+6.  **Summary (`summary`)**:
+    -   No conversational openers (e.g., "Hi", "Hello").
+    -   Must be clear and understandable on its own without needing the original `EVAL_INPUT`.
+    -   The direction of financial changes (e.g., "higher than," "lower than") should be clear from context, but does not need to be stated explicitly.
+    -   Each monetary value must be presented with context that explains its significance (e.g., '$8,800 income boost', '$550 leisure spending, higher than usual'). A number should not stand alone without a clear noun and an implicit or explicit indication of its impact.
+    -   All insights must be accompanied by specific quantitative details. Vague descriptions like "over a thousand" or "a large amount" are forbidden. If a category's change is driven by subcategories, the total value for the main category is still required.
+    -   Avoid aggressive commands. The summary should provide insight and gentle suggestions, not issue strict orders (e.g., prefer "You might consider reviewing your budget" over "Re-evaluate your budget now.").
 
 ### Part 2: Content Rules (`info_correct`)
-1.  **ID Matching**: The `id` in `REVIEW_NEEDED` must match the `id` and order from `EVAL_INPUT`.
-2.  **Factual Accuracy**: All information must be accurate based on `EVAL_INPUT`. It is acceptable to omit some details from `EVAL_INPUT` for conciseness.
-3.  **No External Information**: The response must be derived solely from `EVAL_INPUT`.
-4.  **Internal Consistency**: All parts of the `REVIEW_NEEDED` output must be consistent with each other. For example, numbers or statements in the `summary` should not contradict each other.
+1.  **Category Accuracy**: The summary and title must use precise and accurate terms for financial categories. While synonyms are permitted (e.g., "Eating Out" for "dining out"), they must not be misleading (e.g., using "WiFi" for the broader "Connectivity" category is a failure). Refer to the category reference for correct hierarchy.
+2.  **ID Matching**: The `id` in `REVIEW_NEEDED` must match the `id` and order from `EVAL_INPUT`.
+3.  **Factual Accuracy**: All information must be perfectly accurate based on `EVAL_INPUT`. It is acceptable to omit some details from `EVAL_INPUT` for the sake of conciseness in the summary, but all core quantitative claims must be present.
+4.  **No External Information**: The response must be derived solely from `EVAL_INPUT`.
+5.  **Internal Consistency**: All parts of the output must be consistent. Numbers in the `summary` must not contradict each other or the `title`.
 
 ## Verification Workflow:
-1.  **Analyze Past Failures**: Review `PAST_REVIEW_OUTCOMES`. If `REVIEW_NEEDED` has repeated errors, fail it immediately.
-2.  **Validate Formatting (`good_copy`)**: Scrutinize `REVIEW_NEEDED` against all rules in "Part 1".
-3.  **Validate Content (`info_correct`)**: Scrutinize `REVIEW_NEEDED` against all rules in "Part 2".
-4.  **Generate `eval_text`**: If any validation fails, write a clear and specific explanation.
+1.  **Check Past Failures**: Review `PAST_REVIEW_OUTCOMES`. Fail immediately for repeated errors.
+2.  **Validate Summary**: First, thoroughly check the `summary` of each insight against all relevant rules in Part 1 (wording, format) and Part 2 (accuracy, completeness). The summary must be perfect before proceeding.
+3.  **List Summary Topics**: Internally, create a list of all distinct financial topics discussed in the validated `summary` (e.g., "shelter savings," "income boost," "food spending").
+4.  **Validate Title against Summary**: Check if the `title` references the most important topics from the list created in the previous step, in words. If a critical topic is missing, the title is incomplete.
+5.  **Validate Title Independently**: Finally, check the `title`'s tone and message for factual accuracy directly against the `EVAL_INPUT`. The title must be an accurate and understandable statement on its own, without needing the summary for context.
+6.  **Generate `eval_text`**: If any validation fails at any step, write a clear, specific, and correctly formatted explanation for each insight, with each on a new line, as per the output rules.
 """
 
 class CheckVerbalizerTextWithMemory:
@@ -254,39 +329,242 @@ def run_correct_response(checker: CheckVerbalizerTextWithMemory = None):
   eval_input = """[
   {
     "id": 1,
-    "combined_insight": "Your shelter costs are way down this month to $1,248, mainly from less on home stuff, utilities, and upkeep. 🥳🏠 Oh em gee!  You got a huge surprise income boost of $8,800 this week, mostly from your business, and you're projected to spend only $68 by the end of the week!  Way to go, you savvy boss babe!"
+    "combined_insight": "You've spent $550 on 'Leisure' this month, which is higher than your usual average. This was mostly due to a $400 purchase on 'Entertainment' for concert tickets. Your spending on 'Travel' remains low at $50."
   },
   {
     "id": 2,
-    "combined_insight": "Looks like you spent less on food this month, down to $1,007, mostly from less eating out, deliveries, and groceries. 🍽️🚚🛒 Your transport costs are way down this month to just $46, mostly 'cause you took public transit less. 🚇"
+    "combined_insight": "Great job on managing your 'Bills' this month! Your 'Connectivity' bill was only $60, and you managed to lower your 'Insurance' premium to $120. Total bill payments are down by 15% compared to last month."
   }
 ]"""
   
   review_needed = """[
   {
     "id": 1,
-    "title": "Savings! 🏡💰 Boost! 🤩",
-    "summary": "Yay! 🎉 Your shelter costs dropped to $1,248 this month, and you're crushing it with an $8,800 income boost and only $68 projected spending! 🤩💰"
+    "title": "Leisure Spending Spike 🎟️",
+    "summary": "Heads up! Your leisure spending is at $550 this month, mainly because of $400 in concert tickets. Keep an eye on it! 🤩"
   },
   {
     "id": 2,
-    "title": "🍽️🚆 Food & Travel Win! 🥳👏",
-    "summary": "Nice one! 🙌 You spent less on food, down to $1,007, and transport is only $46 this month! 🥳 Less eating out and fewer train trips pay off, girl! 👏"
+    "title": "Bills Nicely Handled! 📉",
+    "summary": "Awesome! You've successfully lowered your monthly bills, with connectivity at $60 and insurance at $120. That's a 15% drop! 👏"
   }
 ]"""
   
   return run_test_case("correct_response", eval_input, review_needed, [], checker)
 
 
+def run_bad_title_response(checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run the test case for a response with a bad title.
+  """
+  eval_input = """[
+  {
+    "id": 1,
+    "combined_insight": "Your 'Shopping' spending is up to $750 this month. This includes $300 on 'Clothing' and $450 on a new 'Gadget'. This is a 25% increase from last month."
+  },
+  {
+    "id": 2,
+    "combined_insight": "You received a surprise 'Side Gig' income of $500. Also, your 'Business' income was a solid $3,000. Your total income this month is looking great!"
+  }
+]"""
+  
+  review_needed = """[
+  {
+    "id": 1,
+    "title": "Shopping Update",
+    "summary": "Wow! Your shopping spending is up to $750 this month (a 25% increase!), with $300 on clothes and $450 on a new gadget. Treat yourself! 🛍️"
+  },
+  {
+    "id": 2,
+    "title": "Great Income! 💰",
+    "summary": "Amazing! You earned an extra $500 from your side gig and a solid $3,000 from your business. Keep it up! 🚀"
+  }
+]"""
+  
+  return run_test_case("bad_title_response", eval_input, review_needed, [], checker)
+
+def run_bad_tone_response(checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run the test case for a response with a bad tone.
+  """
+  eval_input = """[
+  {
+    "id": 1,
+    "combined_insight": "Your 'Health' spending was $300, with $150 on 'Medical Pharmacy' and $150 on 'Gym Wellness'. This is a bit high, but investing in health is important."
+  },
+  {
+    "id": 2,
+    "combined_insight": "You've made a 'Donation' of $100 this month. Also, you spent $200 on 'Gifts' for a friend's birthday. It's great to be generous!"
+  }
+]"""
+  
+  review_needed = """[
+  {
+    "id": 1,
+    "title": "Health Spending Alert!",
+    "summary": "Warning: You have spent $300 on health this month. You need to cut down on your medical and gym expenses immediately."
+  },
+  {
+    "id": 2,
+    "title": "Donations and Gifts",
+    "summary": "You spent $100 on donations and $200 on gifts. This is not good for your savings goals. Re-evaluate your budget now."
+  }
+]"""
+  
+  return run_test_case("bad_tone_response", eval_input, review_needed, [], checker)
+
+def run_unclear_value_response(checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run the test case for a response with unclear values.
+  """
+  eval_input = """[
+  {
+    "id": 1,
+    "combined_insight": "Your 'Education' spending was $1,200 for 'Tuition' and $150 for 'Kids Activities'. This is a planned expense, but it's a significant part of your budget."
+  },
+  {
+    "id": 2,
+    "combined_insight": "You had a few 'Uncategorized' expenses totaling $75. It would be good to categorize these for better tracking. Also, you had an internal 'Transfer' of $500 between accounts."
+  }
+]"""
+  
+  review_needed = """[
+  {
+    "id": 1,
+    "title": "Education Costs",
+    "summary": "You spent over a thousand on tuition and also for kids activities. This was a planned part of your budget."
+  },
+  {
+    "id": 2,
+    "title": "Miscellaneous Expenses",
+    "summary": "A few uncategorized expenses were noted. You also made a transfer between your accounts."
+  }
+]"""
+  
+  return run_test_case("unclear_value_response", eval_input, review_needed, [], checker)
+
+
+def run_mixed_performance_inaccurate_title_response(checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run the test case for a response with mixed performance but an inaccurate title.
+  """
+  eval_input = """[
+  {
+    "id": 1,
+    "combined_insight": "Good news! Your 'Side Gig' income was $500 this month, a 25% increase. However, your 'Leisure' spending also increased to $800, which is over your monthly budget."
+  }
+]"""
+  
+  review_needed = """[
+  {
+    "id": 1,
+    "title": "Income and Leisure are Doing Well!",
+    "summary": "Yay! You earned an extra $500 from your side gig. Your leisure spending was $800, which is a bit high, but it's great to enjoy life! 🎉"
+  }
+]"""
+  
+  return run_test_case("mixed_performance_inaccurate_title_response", eval_input, review_needed, [], checker)
+
+
+def run_multiple_subcategories_incomplete_title_response(checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run the test case for a response with multiple sub-categories but an incomplete title.
+  """
+  eval_input = """[
+  {
+    "id": 1,
+    "combined_insight": "You spent $150 on 'Dining Out', $200 on a new 'Gadget', and $80 on 'Public' transportation. It's been a busy month for your wallet!"
+  }
+]"""
+  
+  review_needed = """[
+  {
+    "id": 1,
+    "title": "Meals and Shopping Update",
+    "summary": "You've been busy! You spent $150 on dining out, $200 on a new gadget, and $80 on public transportation. Keep an eye on these expenses! 💳"
+  }
+]"""
+  
+  return run_test_case("multiple_subcategories_incomplete_title_response", eval_input, review_needed, [], checker)
+
+
+def run_ambiguous_value_response(checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run the test case for a response with an ambiguous value in the summary.
+  """
+  eval_input = """[
+  {
+    "id": 1,
+    "combined_insight": "Your 'Groceries' spending this week was $100. This is well within your weekly budget of $150. Great job staying on track!"
+  }
+]"""
+  
+  review_needed = """[
+  {
+    "id": 1,
+    "title": "Groceries Update",
+    "summary": "Your groceries spending is at $100 this week."
+  }
+]"""
+  
+  return run_test_case("ambiguous_value_response", eval_input, review_needed, [], checker)
+
+
+def run_overly_specific_title_response(checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run the test case for a response with an overly specific and inaccurate title.
+  """
+  eval_input = """[
+  {
+    "id": 1,
+    "combined_insight": "Your 'Travel' spending was $500, mostly on hotels for a weekend trip. Your 'Leisure' spending was $300 on concert tickets. Both categories are higher than last month."
+  }
+]"""
+  
+  review_needed = """[
+  {
+    "id": 1,
+    "title": "High Hotel Spending",
+    "summary": "You've spent $500 on travel and $300 on leisure this month. Both are higher than usual, so keep an eye on your budget! 🏨🎤"
+  }
+]"""
+  
+  return run_test_case("overly_specific_title_response", eval_input, review_needed, [], checker)
+
+
+
+
+import sys
 
 def main():
   """Main function to test the HighlightsVerbalizerJson checker"""
   checker = CheckVerbalizerTextWithMemory()
   
-  # Run all tests
-  run_correct_response(checker)
+  test_to_run = "correct_response"
+  if len(sys.argv) > 1:
+    test_to_run = sys.argv[1]
+
+  if test_to_run == "correct_response":
+    run_correct_response(checker)
+  elif test_to_run == "bad_title":
+    run_bad_title_response(checker)
+  elif test_to_run == "bad_tone":
+    run_bad_tone_response(checker)
+  elif test_to_run == "unclear_value":
+    run_unclear_value_response(checker)
+  elif test_to_run == "mixed_performance_inaccurate_title":
+    run_mixed_performance_inaccurate_title_response(checker)
+  elif test_to_run == "multiple_subcategories_incomplete_title":
+    run_multiple_subcategories_incomplete_title_response(checker)
+  elif test_to_run == "ambiguous_value":
+    run_ambiguous_value_response(checker)
+  elif test_to_run == "overly_specific_title":
+    run_overly_specific_title_response(checker)
+  else:
+    print(f"Unknown test case: {test_to_run}")
+    print("Available tests: correct_response, bad_title, bad_tone, unclear_value, mixed_performance_inaccurate_title, multiple_subcategories_incomplete_title, ambiguous_value, overly_specific_title")
+
 
 
 if __name__ == "__main__":
   main()
-
