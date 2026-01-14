@@ -2,8 +2,8 @@ from typing import Tuple
 
 
 def follow_up_conversation(
-    follow_up_request: str,
-    input_info: str = None
+    last_user_request: str,
+    previous_conversation: str = None
 ) -> Tuple[bool, str]:
     """
     Handle follow-up conversation, acknowledgments, or general conversational turns.
@@ -18,10 +18,8 @@ def follow_up_conversation(
     - Any request that requires financial data retrieval or analysis
     
     Args:
-        follow_up_request: Instruction on how to construct a message to acknowledge, 
-                          close a conversation, or ask a clarifying question about 
-                          a previous topic.
-        input_info: Optional input from another skill function
+        last_user_request: The last user request as a string
+        previous_conversation: The previous conversation as a string
         
     Returns:
         Tuple[bool, str]: (success, output_info)
@@ -29,13 +27,16 @@ def follow_up_conversation(
         - output_info: The constructed follow-up message
     """
     # This is a dummy implementation that returns sample data
-    # In a real implementation, this would generate an appropriate response
+    # In a real implementation, this would use the follow_up_conversation_optimizer
+    # to generate an appropriate response based on last_user_request and previous_conversation
     
-    if not follow_up_request or not follow_up_request.strip():
-        return False, "Follow-up request cannot be empty."
+    if not last_user_request or not last_user_request.strip():
+        return False, "Last user request cannot be empty."
     
-    # Generate a response based on the follow_up_request
+    # Generate a response based on the last_user_request
     # In a real implementation, this would use an LLM or template system
-    output_message = f"Follow-up: {follow_up_request.strip()}"
+    output_message = f"Follow-up response for: '{last_user_request.strip()}'"
+    if previous_conversation:
+        output_message += f" (context: {len(previous_conversation)} chars)"
     
     return True, output_message

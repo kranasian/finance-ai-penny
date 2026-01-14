@@ -2,6 +2,7 @@ from google import genai
 from google.genai import types
 import os
 import sys
+from datetime import datetime
 from dotenv import load_dotenv
 
 # Add the parent directory to the path so we can import the tools
@@ -76,6 +77,7 @@ Write a python function `execute_plan` that takes no arguments:
   - **What to record**: User preferences (e.g., "I prefer to save for emergencies first"), personal facts (e.g., "I'm planning to move to a new city next year"), goals and intentions (e.g., "I want to retire early"), important context (e.g., "I'm self-employed and income varies"), and **future plans, trips, or events** mentioned by the user.
   - **What NOT to record**: Account balances, transaction details, spending patterns, forecasts, or any specific amounts or dates that are in transactions (these can all be retrieved from data sources).
   - **CRITICAL**: When the Last User Request mentions a future event, trip, or plan (even if it's part of categorizing a transaction or other action), you MUST call `add_to_memory` to record this information. Future plans are note-worthy information that cannot be retrieved from financial data and should be remembered for future conversations.
+  - **CRITICAL**: When recording dates, use **specific dates** (e.g., "October 15, 2025") instead of vague references (e.g., "next month"). Use `|TODAY_DATE|` to calculate specific dates from relative time periods.
   - **CRITICAL**: The result from `add_to_memory` should NOT need to be incorporated into the output message. Memory operations are background operations - call `add_to_memory` to record the information.
   - Only use this skill when the user explicitly shares information that should be remembered for future conversations but is not available in their financial data.
 
@@ -84,7 +86,7 @@ Write a python function `execute_plan` that takes no arguments:
   - **CRITICAL**: If the user asks for *more details* about previously provided information (even if phrased as a clarifying question), use `lookup_user_accounts_transactions_income_and_spending_patterns` as this still constitutes a request for financial data/analysis.
   - This skill is strictly for maintaining conversational flow and ensuring a polite and helpful interaction without initiating any financial action or data retrieval.
   - Only use it when the user is *no longer* requesting for any additional financial information or action.
-  - **CRITICAL**: When using `follow_up_conversation` for acknowledgments or general conversational turns, ensure the `follow_up_request` is crafted to discretely and smoothly continue the conversation. If there are pending items or previous messages that could stimulate further user interaction, incorporate them into the `follow_up_request` to encourage the user to re-engage or provide more information. This includes, but is not limited to, asking about uncategorized transactions, suggesting reviews of spending patterns, offering further assistance based on the last known context. **Specifically, if there are multiple outstanding open questions or unresolved previous points, the `follow_up_request` should summarize these to the user or offer choices for which topic to address next, to ensure no important information is missed and to guide the conversation effectively.**
+  - **CRITICAL**: When using `follow_up_conversation` for acknowledgments or general conversational turns, the function will automatically analyze the `last_user_request` and `previous_conversation` to craft an appropriate response. If there are pending items or previous messages that could stimulate further user interaction, the function will incorporate them into the response to encourage the user to re-engage or provide more information. This includes, but is not limited to, asking about uncategorized transactions, suggesting reviews of spending patterns, offering further assistance based on the last known context. **Specifically, if there are multiple outstanding open questions or unresolved previous points, the response should summarize these to the user or offer choices for which topic to address next, to ensure no important information is missed and to guide the conversation effectively.**
 
 <AVAILABLE_SKILL_FUNCTIONS>
 
@@ -93,7 +95,7 @@ These are the **available skills** that can be stacked and sequenced using `inpu
 - All **skill functions** return a `tuple[bool, str]`.
     - The first element is `success` boolean.  `True` if information was found and the request was achieved and `False` if information not available, an error occured or more information needed from the user.
     - The second element is `output_info` string.  It contains the output of the **skill function** that should be used as `input_info` in a subsequent skill function call if relevant to the next step.
-    - **CRITICAL**: For all skill functions, ensure that the request parameters (e.g., `lookup_request`, `creation_request`, `strategize_request`, `categorize_request`, `follow_up_request`) effectively incorporate relevant information from the `Previous Conversation` and, when available, the `input_info` to accurately address the `Last User Request`.
+    - **CRITICAL**: For all skill functions, ensure that the request parameters (e.g., `lookup_request`, `creation_request`, `strategize_request`, `categorize_request`) effectively incorporate relevant information from the `Previous Conversation` and, when available, the `input_info` to accurately address the `Last User Request`. For `follow_up_conversation`, pass the `last_user_request` and `previous_conversation` directly.
 
 ### List of all Skill Functions
 
@@ -110,17 +112,19 @@ These are the **available skills** that can be stacked and sequenced using `inpu
 - `update_transaction_category_or_create_category_rules(categorize_request: str, input_info: str = None) -> tuple[bool, str]`
   - `categorize_request` is a description of the category rule that needs to be created, or the description of the transaction that needs to be recategorized. This can be a single transaction, or a group of transactions with criteria. **When `input_info` is available, it is highly recommended to incorporate it to make the categorization request precise and consistent.**
   - If user hints at doing this in the future as well, specify that a category rule needs to be created on top of updating transaction categories.
-- `add_to_memory(memory_request: str, input_info: str = None) -> tuple[bool, str]`
-  - `memory_request` is the note-worthy information to record. This should exclude any details that can be retrieved from transactions, accounts, spending, or forecasts. **When `input_info` is available, it is highly recommended to incorporate it to provide context for what should be remembered.**
+- `add_to_memory(memory_request: str) -> tuple[bool, str]`
+  - `memory_request` is the note-worthy information to record. This should exclude any details that can be retrieved from transactions, accounts, spending, or forecasts.
   - Record only information that cannot be pulled from financial data: user preferences, personal facts, goals, intentions, important context, and **future plans, trips, or events**.
-  - **Example of `memory_request`**: "User prefers to save for emergencies first before other goals", "User is self-employed and income varies monthly", or "User has a trip planned for next month".
+  - **CRITICAL**: When recording dates, use **specific dates** (e.g., "October 15, 2025") instead of vague references (e.g., "next month"). Use `|TODAY_DATE|` to calculate specific dates from relative time periods.
+  - **Example of `memory_request`**: "User prefers to save for emergencies first before other goals", "User is self-employed and income varies monthly", or "User has a Disneyland trip planned for October 15, 2025" (NOT "next month").
   - **CRITICAL**: Do NOT record account balances, transaction details, spending patterns, forecasts, or specific amounts/dates from transactions - these can all be retrieved from data sources.
   - **CRITICAL**: When the user mentions future events, trips, or plans in the Last User Request, you MUST call `add_to_memory` to record this information after handling any immediate requests (e.g., categorizing transactions). This information is valuable for future conversations and cannot be retrieved from financial data.
   - **CRITICAL**: The output from `add_to_memory` should NOT be included in the final return message. Memory operations are background operations - call the function to record information, but return the result from the primary operation (e.g., categorization, lookup, etc.) as the final output.
-- `follow_up_conversation(follow_up_request: str, input_info: str = None) -> tuple[bool, str]`
-  - `follow_up_request` is the *instruction* on how to construct a message to acknowledge, close a conversation when no further information is requested, or ask a clarifying question about a previous topic. **When `input_info` is available, it is highly recommended to incorporate it to provide a more comprehensive or contextual follow-up.**
-  - **Example of `follow_up_request`**: "Acknowledge the user's understanding and offer to categorize the outstanding transaction or review food spending."
-  - **CRITICAL**: When using `follow_up_conversation` for acknowledgments or general conversational turns, ensure the `follow_up_request` is crafted to discretely and smoothly continue the conversation. If there are pending items or previous messages that could stimulate further user interaction, incorporate them into the `follow_up_request` to encourage the user to re-engage or provide more information. This includes, but is not limited to, asking about uncategorized transactions, suggesting reviews of spending patterns, offering further assistance based on the last known context. **Specifically, if there are multiple outstanding open questions or unresolved previous points, the `follow_up_request` should summarize these to the user or offer choices for which topic to address next, to ensure no important information is missed and to guide the conversation effectively.**
+- `follow_up_conversation(last_user_request: str, previous_conversation: str = None) -> tuple[bool, str]`
+  - `last_user_request` is the last user request as a string.
+  - `previous_conversation` is the previous conversation as a string.
+  - **Example usage**: `follow_up_conversation("Thank you!", "User: How much am I spending?\nAssistant: You're spending $3,200 per month.")`
+  - **CRITICAL**: When using `follow_up_conversation` for acknowledgments or general conversational turns, the function will automatically analyze the `last_user_request` and `previous_conversation` to craft an appropriate response. If there are pending items or previous messages that could stimulate further user interaction, the function will incorporate them into the response to encourage the user to re-engage or provide more information. This includes, but is not limited to, asking about uncategorized transactions, suggesting reviews of spending patterns, offering further assistance based on the last known context. **Specifically, if there are multiple outstanding open questions or unresolved previous points, the response should summarize these to the user or offer choices for which topic to address next, to ensure no important information is missed and to guide the conversation effectively.**
 
 </AVAILABLE_SKILL_FUNCTIONS>
 
@@ -196,6 +200,8 @@ def execute_plan() -> tuple[bool,  str]:
 ```
 
 </EXAMPLES>
+
+**Date:** Today is `|TODAY_DATE|`. Use this information only if it is directly relevant to the conversation.
 """
 
 class PlannerOptimizer:
@@ -230,17 +236,36 @@ class PlannerOptimizer:
     self.system_prompt = SYSTEM_PROMPT
 
   
-  def generate_response(self, last_user_request: str, previous_conversation: str) -> str:
+  def generate_response(self, last_user_request: str, previous_conversation: str, replacements: dict = None) -> str:
     """
     Generate a response using Gemini API for financial planning.
     
     Args:
       last_user_request: The last user request as a string
       previous_conversation: The previous conversation as a string
+      replacements: Optional dictionary of string replacements for the system prompt (e.g., {"TODAY_DATE": "September 30, 2025"})
       
     Returns:
       Generated code as a string
     """
+    # Get today's date automatically
+    today = datetime.now()
+    today_date = today.strftime("%B %d, %Y")  # e.g., "September 30, 2025"
+    
+    # Start with automatic date replacements
+    default_replacements = {
+      "TODAY_DATE": today_date
+    }
+    
+    # Merge with user-provided replacements (user replacements take precedence)
+    if replacements:
+      default_replacements.update(replacements)
+    
+    # Apply replacements to system prompt
+    system_prompt = self.system_prompt
+    for key, value in default_replacements.items():
+      system_prompt = system_prompt.replace(f"|{key}|", str(value))
+    
     # Create request text with Last User Request and Previous Conversation
     request_text = types.Part.from_text(text=f"""**Last User Request**: {last_user_request}
 
@@ -258,7 +283,7 @@ output:""")
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
-      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      system_instruction=[types.Part.from_text(text=system_prompt)],
       thinking_config=types.ThinkingConfig(
         thinking_budget=self.thinking_budget,
         include_thoughts=True
@@ -315,7 +340,7 @@ def extract_python_code(text: str) -> str:
         return text.strip()
 
 
-def _run_test_with_logging(last_user_request: str, previous_conversation: str, planner: PlannerOptimizer = None):
+def _run_test_with_logging(last_user_request: str, previous_conversation: str, planner: PlannerOptimizer = None, replacements: dict = None):
   """
   Internal helper function that runs a test with consistent logging.
   
@@ -323,6 +348,7 @@ def _run_test_with_logging(last_user_request: str, previous_conversation: str, p
     last_user_request: The last user request as a string
     previous_conversation: The previous conversation as a string
     planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    replacements: Optional dictionary of string replacements for the system prompt
     
   Returns:
     The generated response string
@@ -347,7 +373,7 @@ output:"""
   print("=" * 80)
   print()
   
-  result = planner.generate_response(last_user_request, previous_conversation)
+  result = planner.generate_response(last_user_request, previous_conversation, replacements=replacements)
   
   # Print the output
   print("=" * 80)
@@ -565,6 +591,37 @@ Assistant: Your total monthly spending averages around $3,200, and your monthly 
     "last_user_request": "that's for my disneyland trip for next month. categorize it as travel.",
     "previous_conversation": """Assistant: There's an uncategorized $525 transaction."""
   },
+  {
+    "name": "follow_up_thank_you",
+    "last_user_request": "Thank you!",
+    "previous_conversation": """User: How much am I spending on dining out?
+Assistant: Over the last 3 months, you've spent an average of $450 per month on dining out.
+User: That seems high. What about my overall spending?
+Assistant: Your total monthly spending averages around $3,200, and your monthly income is about $4,500."""
+  },
+  {
+    "name": "follow_up_okay",
+    "last_user_request": "Okay, got it.",
+    "previous_conversation": """User: What's my current account balance?
+Assistant: You have $5,200 in your checking account and $3,100 in savings.
+User: How much am I saving per month?
+Assistant: Based on your recent spending patterns, you're saving approximately $800 per month."""
+  },
+  {
+    "name": "follow_up_closing",
+    "last_user_request": "That's all for now, thanks!",
+    "previous_conversation": """User: How's my accounts doing?
+Assistant: Your checking accounts have $1,850, and rent is $2,200. You'll need about $350 more by the due date.
+User: Ugh, okay. Am I spending too much?
+Assistant: You're actually staying within your means, but just barely. After all expenses, you're only saving about $50 a month."""
+  },
+  {
+    "name": "follow_up_acknowledgment_with_pending",
+    "last_user_request": "Thanks for the update!",
+    "previous_conversation": """User: How much am I spending on food?
+Assistant: Your food spending is $615 this month, mostly from dining out. You're staying within your budget goals.
+Assistant: There's also an uncategorized $525 transaction that needs your attention."""
+  },
 ]
 
 
@@ -590,7 +647,7 @@ def get_test_case(test_name_or_index):
   return None
 
 
-def run_test(test_name_or_index_or_dict, planner: PlannerOptimizer = None):
+def run_test(test_name_or_index_or_dict, planner: PlannerOptimizer = None, replacements: dict = None):
   """
   Run a single test by name, index, or by passing test data directly.
   
@@ -598,8 +655,9 @@ def run_test(test_name_or_index_or_dict, planner: PlannerOptimizer = None):
     test_name_or_index_or_dict: One of:
       - Test case name (str): e.g., "reminder_savings_account_balance_below_1000"
       - Test case index (int): e.g., 10
-      - Test data dict: {"last_user_request": "...", "previous_conversation": "..."}
+      - Test data dict: {"last_user_request": "...", "previous_conversation": "...", "replacements": {...}}
     planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    replacements: Optional dictionary of string replacements for the system prompt
     
   Returns:
     The generated response string, or None if test not found
@@ -608,6 +666,8 @@ def run_test(test_name_or_index_or_dict, planner: PlannerOptimizer = None):
   if isinstance(test_name_or_index_or_dict, dict):
     if "last_user_request" in test_name_or_index_or_dict:
       test_name = test_name_or_index_or_dict.get("name", "custom_test")
+      # Get replacements from test dict if provided, otherwise use parameter
+      test_replacements = test_name_or_index_or_dict.get("replacements", replacements)
       print(f"\n{'='*80}")
       print(f"Running test: {test_name}")
       print(f"{'='*80}\n")
@@ -615,7 +675,8 @@ def run_test(test_name_or_index_or_dict, planner: PlannerOptimizer = None):
       return _run_test_with_logging(
         test_name_or_index_or_dict["last_user_request"],
         test_name_or_index_or_dict.get("previous_conversation", ""),
-        planner
+        planner,
+        replacements=test_replacements
       )
     else:
       print(f"Invalid test dict: must contain 'last_user_request' key.")
@@ -634,11 +695,12 @@ def run_test(test_name_or_index_or_dict, planner: PlannerOptimizer = None):
   return _run_test_with_logging(
     test_case["last_user_request"],
     test_case["previous_conversation"],
-    planner
+    planner,
+    replacements=replacements
   )
 
 
-def run_tests(test_names_or_indices_or_dicts, planner: PlannerOptimizer = None):
+def run_tests(test_names_or_indices_or_dicts, planner: PlannerOptimizer = None, replacements: dict = None):
   """
   Run multiple tests by names, indices, or by passing test data directly.
   
@@ -646,8 +708,9 @@ def run_tests(test_names_or_indices_or_dicts, planner: PlannerOptimizer = None):
     test_names_or_indices_or_dicts: One of:
       - None: Run all tests from TEST_CASES
       - List of test case names (str), indices (int), or test data dicts
-        Each dict should have: {"last_user_request": "...", "previous_conversation": "..."}
+        Each dict should have: {"last_user_request": "...", "previous_conversation": "...", "replacements": {...}}
     planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    replacements: Optional dictionary of string replacements for the system prompt
     
   Returns:
     List of generated response strings
@@ -658,13 +721,13 @@ def run_tests(test_names_or_indices_or_dicts, planner: PlannerOptimizer = None):
   
   results = []
   for test_item in test_names_or_indices_or_dicts:
-    result = run_test(test_item, planner)
+    result = run_test(test_item, planner, replacements=replacements)
     results.append(result)
   
   return results
 
 
-def test_with_inputs(last_user_request: str, previous_conversation: str, planner: PlannerOptimizer = None):
+def test_with_inputs(last_user_request: str, previous_conversation: str, planner: PlannerOptimizer = None, replacements: dict = None):
   """
   Convenient method to test the planner optimizer with custom inputs.
   
@@ -672,60 +735,117 @@ def test_with_inputs(last_user_request: str, previous_conversation: str, planner
     last_user_request: The last user request as a string
     previous_conversation: The previous conversation as a string
     planner: Optional PlannerOptimizer instance. If None, creates a new one.
+    replacements: Optional dictionary of string replacements for the system prompt
     
   Returns:
     The generated response string
   """
-  return _run_test_with_logging(last_user_request, previous_conversation, planner)
+  return _run_test_with_logging(last_user_request, previous_conversation, planner, replacements=replacements)
 
 
-def main():
-  """Main function to test the planner optimizer"""
-  # Option 1: Run a single test by name
-  # run_test("reminder_savings_account_balance_below_1000")
+def main(batch: int = None, test: str = None):
+  """
+  Main function to test the planner optimizer
   
-  # Option 2: Run a single test by index
-  # run_test(10)  # reminder_savings_account_balance_below_1000
+  Args:
+    batch: Batch number (1-6) to run a group of related tests, or None to run a single test
+    test: Test name, index, or None. If batch is provided, test is ignored.
+      - Test name (str): e.g., "hows_my_accounts_doing"
+      - Test index (str): e.g., "0" (will be converted to int)
+      - None: If batch is also None, prints available tests
+  """
+  planner = PlannerOptimizer()
   
-  # Option 3: Run a single test by passing test data directly
-  # run_test({
-  #   "name": "custom_test",
-  #   # "last_user_request": "Alert me when my dining out spending exceeds $300 this week.",
-  #   # "last_user_request": "Remind me to pay my bills tomorrow.",
-  #   # "last_user_request": "Remind me to pay my streaming subscriptions tomorrow.",
-  #   # "last_user_request": "remind me to pay my insurance every 10th of the month",
-  #   # "last_user_request": "Notify me when new credits are posted to my payroll account.",
-  #   # "last_user_request": "budget $60 for gas every week for the next 6 months and a yearly car insurance cost of 3500 starting next year",
-  #   # "last_user_request": "remind me 3 days before my gym membership renews",
-  #   # "last_user_request": "remind me to water the plants today.",
-  #   # "last_user_request": "remind me to water the plants tomorrow.",
-  #   "last_user_request": "remind me to get oil changed on January 11, 2026.",
-  #   "previous_conversation": ""
-  # })
+  # Define test batches
+  BATCHES = {
+    1: {
+      "name": "Lookup Queries",
+      "tests": [0, 1]  # hows_my_accounts_doing, how_is_my_net_worth_doing_lately
+    },
+    2: {
+      "name": "Savings/Planning with Strategize",
+      "tests": [2, 3, 4, 6]  # research_and_strategize_savings_plan, research_and_strategize_vacation_affordability, save_5000_in_6_months, save_10000_to_end_of_year
+    },
+    3: {
+      "name": "Budget Creation",
+      "tests": [5]  # set_food_budget_500_next_month
+    },
+    4: {
+      "name": "Reminders",
+      "tests": [7, 8, 9, 10]  # reminder_cancel_spotify_end_of_year, reminder_cancel_netflix_november_30, reminder_checking_account_balance_below_1000, reminder_savings_account_balance_below_1000
+    },
+    5: {
+      "name": "Categorization and Memory",
+      "tests": [11]  # categorize_transaction_and_add_trip_to_memory
+    },
+    6: {
+      "name": "Follow-up Conversation",
+      "tests": [12, 13, 14, 15]  # follow_up_thank_you, follow_up_okay, follow_up_closing, follow_up_acknowledgment_with_pending
+    }
+  }
   
-  # Option 4: Run multiple tests by names
-  # run_tests(["reminder_savings_account_balance_below_1000", "reminder_checking_account_balance_below_1000"])
+  if batch is not None:
+    # Run a batch of tests
+    if batch not in BATCHES:
+      print(f"Invalid batch number: {batch}. Available batches: {list(BATCHES.keys())}")
+      print("\nBatch descriptions:")
+      for b, info in BATCHES.items():
+        test_names = [TEST_CASES[idx]["name"] for idx in info["tests"]]
+        print(f"  Batch {b}: {info['name']} - {', '.join(test_names)}")
+      return
+    
+    batch_info = BATCHES[batch]
+    print(f"\n{'='*80}")
+    print(f"BATCH {batch}: {batch_info['name']}")
+    print(f"{'='*80}\n")
+    
+    for test_idx in batch_info["tests"]:
+      run_test(test_idx, planner)
+      print("\n" + "-"*80 + "\n")
   
-  # Option 5: Run multiple tests by indices
-  # run_tests([9, 10])  # reminder_checking_account_balance_below_1000, reminder_savings_account_balance_below_1000
+  elif test is not None:
+    # Run a single test
+    # Try to convert to int if it's a numeric string
+    if test.isdigit():
+      test = int(test)
+    
+    result = run_test(test, planner)
+    if result is None:
+      print(f"\nAvailable test cases:")
+      for i, test_case in enumerate(TEST_CASES):
+        print(f"  {i}: {test_case['name']}")
   
-  # Option 6: Run multiple tests with mix of names/indices and custom test data
-  # run_tests([
-  #   "reminder_savings_account_balance_below_1000",
-  #   {
-  #     "name": "custom_test",
-  #     "last_user_request": "notify me when my account balance drops below $500",
-  #     "previous_conversation": ""
-  #   }
-  # ])
-  
-  # Option 7: Run all tests
-  # run_tests(None)
+  else:
+    # Print available options
+    print("Usage:")
+    print("  Run a batch: --batch <1-6>")
+    print("  Run a single test: --test <name_or_index>")
+    print("\nAvailable batches:")
+    for b, info in BATCHES.items():
+      test_names = [TEST_CASES[idx]["name"] for idx in info["tests"]]
+      print(f"  Batch {b}: {info['name']}")
+      for idx in info["tests"]:
+        print(f"    - {idx}: {TEST_CASES[idx]['name']}")
+    print("\nAll test cases:")
+    for i, test_case in enumerate(TEST_CASES):
+      print(f"  {i}: {test_case['name']}")
 
-  # run_test("save_10000_to_end_of_year")
 
-  run_test("categorize_transaction_and_add_trip_to_memory")
-
+"""
+Sample Usage Examples:
+  python planner_optimizer_v2.py --batch 1
+  python planner_optimizer_v2.py --test hows_my_accounts_doing
+  python planner_optimizer_v2.py --test 0
+  run_test("hows_my_accounts_doing")
+  run_tests([0, 1, 2])
+"""
 
 if __name__ == "__main__":
-  main()
+  import argparse
+  parser = argparse.ArgumentParser(description='Run planner optimizer tests in batches or individually')
+  parser.add_argument('--batch', type=int, choices=[1, 2, 3, 4, 5, 6],
+                      help='Batch number to run (1-6)')
+  parser.add_argument('--test', type=str,
+                      help='Test name or index to run individually (e.g., "hows_my_accounts_doing" or "0")')
+  args = parser.parse_args()
+  main(batch=args.batch, test=args.test)
