@@ -14,7 +14,7 @@ SCHEMA = types.Schema(
     type=types.Type.OBJECT,
     properties={
       "group_id": types.Schema(
-        type=types.Type.INTEGER,
+        type=types.Type.STRING,
         description="The group ID from the input transaction group"
       ),
       "transaction_id": types.Schema(
@@ -27,7 +27,7 @@ SCHEMA = types.Schema(
       ),
       "category": types.Schema(
         type=types.Type.STRING,
-        description="One of the provided category options that must match exactly from the category_options in the input"
+        description="One of the provided category options that must match exactly from the category_options in the input, or 'unknown' if none are a good fit"
       ),
       "confidence": types.Schema(
         type=types.Type.STRING,
@@ -43,16 +43,55 @@ SYSTEM_PROMPT = """You are a financial transaction categorization expert. Analyz
 
 ## Input Format
 JSON array of transaction groups. Each group contains:
-- `group_id`: Transaction group identifier
+- `group_id`: String of characters to identify a transaction group
 - `establishment_name`: Merchant/establishment name
 - `establishment_description`: What the establishment provides
 - `transactions`: Array with `transaction_id`, `transaction_text` (raw bank statement text), and `amount`
 - `category_options`: Array of valid category strings (must match exactly)
 
+## Parent Category and Subcategory Meanings
+- **income**:
+  - `salary`: regular paycheck income.
+  - `interest`: bank or stock interest earned.
+  - `sidegig`: income from freelance or secondary work.
+  - `business`: income generated from a business entity.
+- **meals**:
+  - `groceries`: food purchased for home cooking.
+  - `dining_out`: restaurant meals.
+  - `delivered_food`: food ordered via delivery.
+- **leisure**:
+  - `entertainment`: movies, concerts, events, recreation.
+  - `travel`: costs related to trips and vacations.
+- **bills**:
+  - `connectivity`: internet, cable, phone bills.
+  - `insurance`: premiums for health, auto, home insurance.
+  - `tax`: payments made for local, state, or federal taxes.
+  - `service_fees`: bank fees or administrative charges.
+- **shelter**:
+  - `home`: mortgage or rent payments.
+  - `utilities`: electricity, gas, water, trash services.
+  - `upkeep`: home repairs and maintenance.
+- **education**:
+  - `kids_activities`: costs for children's classes or sports.
+  - `tuition`: costs for personal or dependent education.
+- **shopping**:
+  - `clothing`: apparel purchases.
+  - `gadgets`: electronics and technology purchases (not necessarily for online or electronic payments)
+  - `kids`: general shopping for children not covered elsewhere.
+  - `pets`: supplies and services for pets.
+- **transportation**:
+  - `public`: bus, train, subway fares.
+  - `car`: gas, maintenance, parking, or car payments.
+- **health**:
+  - `medical_pharmacy`: doctor visits, prescriptions.
+  - `gym_wellness`: gym memberships, supplements.
+  - `personal_care`: haircuts, toiletries.
+- **donations_gifts**: charitable giving or gifts for others.
+
 ## Analysis Process
 1. **Transaction Text** (primary): Extract keywords and patterns indicating purpose
 2. **Establishment Context**: Use name and description to understand business type
-3. **Amount Context**: Large amounts may indicate services/procedures; small amounts may indicate supplies/incidentals
+3. **Amount Context**: Large amounts may indicate services/procedures; small amounts may indicate supplies/incidentals. Negative amounts represent inflows (e.g., income, refunds), while positive amounts represent outflows (e.g., purchases, expenses).
 4. **Consistency**: Similar transactions in the same group should typically share the same category
 
 ## Confidence Levels
@@ -61,10 +100,12 @@ JSON array of transaction groups. Each group contains:
 - **low**: Weak evidence, multiple plausible categories, or significant uncertainty
 
 ## Critical Rules
-- `category` must exactly match a value from `category_options` (case-sensitive)
-- **Reasoning must be brief**: 1-2 sentences maximum. Focus only on the key decisive factors. Do not explain why other categories don't fit or provide lengthy justifications.
-- Be consistent: similar transactions in the same group should have the same category
-- When uncertain, use "medium" or "low" confidence and briefly explain the uncertainty
+- **CRITICAL ID Matching**: The `group_id` and `transaction_id` in your output response MUST be an EXACT, character-for-character copy of the `group_id` and `transaction_id` from the input. For example, if the input `group_id` is `"1:4739"`, the output `group_id` MUST also be `"1:4739"`. Do not change, omit, or abbreviate them in any way.
+- **Category Selection**: The `category` must be either an exact match of one of the subcategories from `category_options`, or `unknown`. It is a CRITICAL ERROR to categorize a transaction from a general-purpose marketplace (e.g., Amazon, Shopee, Walmart) as 'shopping' if the specific item is unknown. In such cases, you MUST use "unknown". For all other transactions, if it is too vague to match to a specific category, you must use "unknown".
+- **Sub-category Preference**: You MUST ONLY select the most specific sub-category available. NEVER select a parent category if a sub-category is available. For example, if both `leisure` and `leisure_entertainment` are in `category_options`, you MUST choose `leisure_entertainment`. This is not a suggestion, it is a strict rule.
+- **Reasoning must be brief and direct**: Provide a 1-2 sentence explanation focusing only on the key evidence for the chosen category. Do not explain the process of elimination or why other categories were not chosen.
+- **Consistency**: Similar transactions in the same group should typically share the same category.
+- When uncertain but a category is plausible, use "medium" or "low" confidence and briefly explain the uncertainty
 
 input: [
   {
@@ -112,7 +153,7 @@ output: [
 
 input: [
   {
-    "group_id": 3456,
+    "group_id": 3:456,
     "establishment_name": "Starbucks Coffee",
     "establishment_description": "Coffee shop and cafe.",
     "transactions": [
@@ -132,11 +173,99 @@ input: [
 ]
 output: [
   {
-    "group_id": 3456,
+    "group_id": 3:456,
     "transaction_id": 123456,
     "reasoning": "Starbucks is a coffee shop/cafe, and the transaction amount of $5.75 is typical for a coffee purchase.",
     "category": "food_dining_out",
     "confidence": "high"
+  }
+]
+
+input: [
+  {
+    "group_id": 9988,
+    "establishment_name": "City News Stand",
+    "establishment_description": "Sells newspapers and magazines.",
+    "transactions": [
+      {
+        "transaction_id": 7766,
+        "transaction_text": "CITY NEWS NYC",
+        "amount": 5.50
+      }
+    ],
+    "category_options": [
+      "leisure",
+      "leisure_entertainment",
+      "bills"
+    ]
+  }
+]
+output: [
+  {
+    "group_id": "9988",
+    "transaction_id": 7766,
+    "reasoning": "A purchase at a newsstand for magazines or newspapers is a form of entertainment.",
+    "category": "leisure_entertainment",
+    "confidence": "high"
+  }
+]
+
+input: [
+  {
+    "group_id": "SFO_Parking_Example",
+    "establishment_name": "SFO Parking",
+    "establishment_description": "sells parking services at San Francisco International Airport, with options for short-term and long-term parking",
+    "transactions": [
+      {
+        "transaction_id": 1,
+        "transaction_text": "60776 - Sfo Parkingcentrasan Franciscoca",
+        "amount": 4.0
+      }
+    ],
+    "category_options": [
+      "transport_car_fuel",
+      "transport",
+      "bills_service_fees"
+    ]
+  }
+]
+output: [
+  {
+    "group_id": "SFO_Parking_Example",
+    "transaction_id": 1,
+    "reasoning": "The transaction is for parking services at an airport, which falls under transportation expenses related to a car.",
+    "category": "transport_car_fuel",
+    "confidence": "high"
+  }
+]
+
+input: [
+  {
+    "group_id": 10002,
+    "establishment_name": "Shopee",
+    "establishment_description": "sells a wide variety of products online, including electronics, fashion, home goods, beauty products, and more",
+    "transactions": [
+      {
+        "transaction_id": 1,
+        "transaction_text": "SHOPEE PH*PURCHASE",
+        "amount": 25.99
+      }
+    ],
+    "category_options": [
+      "shopping",
+      "bills_service_fees",
+      "donations_gifts",
+      "shopping_electronics"
+    ]
+  }
+]
+output: [
+  {
+    "group_id": "10002",
+    "transaction_id": 1,
+    "reasoning": "Shopee is a general online marketplace where electronics are a major category. Given the choice between a parent category and a plausible sub-category, the sub-category should be selected.",
+    "category": "shopping_electronics",
+    "confidence": "medium"
   }
 ]
 """
@@ -942,6 +1071,130 @@ TEST_DATA = {
       "bills_service_fees",
       "health_personal_care"
     ]
+  },
+  10001: {
+    "group_id": 10001,
+    "establishment_name": "asdfqwerlkjhasd",
+    "establishment_description": "No description available.",
+    "transactions": [
+      {
+        "transaction_id": 1,
+        "transaction_text": "DEBIT CARD PURCHASE - THE COFFEE BEAN 123 MAIN ST",
+        "amount": 4.50
+      }
+    ],
+    "category_options": [
+      "food_dining_out",
+      "shopping_groceries",
+      "bills"
+    ]
+  },
+  10002: {
+    "group_id": 10002,
+    "establishment_name": "Shopee",
+    "establishment_description": "sells a wide variety of products online, including electronics, fashion, home goods, beauty products, and more",
+    "transactions": [
+      {
+        "transaction_id": 1,
+        "transaction_text": "SHOPEE PH*PURCHASE",
+        "amount": 25.99
+      }
+    ],
+    "category_options": [
+      "shopping",
+      "bills_service_fees",
+      "donations_gifts",
+      "shopping_electronics"
+    ]
+  },
+  10003: {
+    "group_id": 10003,
+    "establishment_name": "McDonald's",
+    "establishment_description": "A fast-food restaurant known for burgers and fries.",
+    "transactions": [
+      {
+        "transaction_id": 1,
+        "transaction_text": "MCDONALD'S F2345 ANYTOWN USA",
+        "amount": 12.50
+      }
+    ],
+    "category_options": [
+      "meals",
+      "meals_dining_out",
+      "meals_delivered_food"
+    ]
+  },
+  3336: {
+    "group_id": 3336,
+    "establishment_name": "Ebay",
+    "establishment_description": "Purchases from an online marketplace for new and used goods.",
+    "transactions": [
+      {
+        "transaction_id": 13572,
+        "transaction_text": "eBay ComGZULXXXD PAYMENTS",
+        "amount": -18.53
+      }
+    ],
+    "category_options": [
+      "income_side-gig",
+      "income_business",
+      "income"
+    ]
+  },
+  "1:4739": {
+    "group_id": "1:4739",
+    "establishment_name": "ABCDESFASD2312",
+    "establishment_description": "general purchase from an unknown establishment.",
+    "transactions": [
+      {
+        "transaction_id": 37637,
+        "transaction_text": "PURCHASE 12/10 ABCDESFASD2312 +XXXXX517908 000",
+        "amount": 60
+      }
+    ],
+    "category_options": [
+      "meals_dining_out",
+      "shelter_home",
+      "shelter_upkeep",
+      "shopping_clothing",
+      "shopping_gadgets",
+      "donations_gifts",
+      "transfer"
+    ]
+  },
+  "1:8123193": {
+    "group_id": "1:8123193",
+    "establishment_name": "Thea's Chicken",
+    "establishment_description": "This is a payment to a restaurant for a meal.",
+    "transactions": [
+      {
+        "transaction_id": 10032875,
+        "transaction_text": "Thea's Chicken",
+        "amount": 15
+      }
+    ],
+    "category_options": [
+      "meals_dining_out",
+      "meals",
+      "meals_delivered food"
+    ]
+  },
+  "SFO_Parking_Example": {
+    "group_id": "SFO_Parking_Example",
+    "establishment_name": "SFO Parking",
+    "establishment_description": "sells parking services at San Francisco International Airport, with options for short-term and long-term parking",
+    "transactions": [
+      {
+        "transaction_id": 1,
+        "transaction_text": "60776 - Sfo Parkingcentrasan Franciscoca",
+        "amount": 4.0
+      }
+    ],
+    "category_options": [
+      "transport_car_fuel",
+      "transport",
+      "bills_service_fees"
+    ]
   }
 }
 
@@ -1154,6 +1407,49 @@ def run_test_sams_restaurant(categorizer: RethinkTransactionCategorization = Non
   return test_with_inputs([TEST_DATA[12374]], categorizer)
 
 
+def run_test_random_establishment(categorizer: RethinkTransactionCategorization = None):
+  """
+  Run the test case for a random establishment name.
+  """
+  return test_with_inputs([TEST_DATA[10001]], categorizer)
+
+
+def run_test_shopee(categorizer: RethinkTransactionCategorization = None):
+  """
+  Run the test case for Shopee transactions.
+  """
+  return test_with_inputs([TEST_DATA[10002]], categorizer)
+
+
+def run_test_meals_categories(categorizer: RethinkTransactionCategorization = None):
+  """
+  Run the test case for meals categories.
+  """
+  return test_with_inputs([TEST_DATA[10003]], categorizer)
+
+
+def run_test_ebay(categorizer: RethinkTransactionCategorization = None):
+  """
+  Run the test case for Ebay transactions.
+  """
+  return test_with_inputs([TEST_DATA[3336]], categorizer)
+
+
+def run_test_unknown_establishment(categorizer: RethinkTransactionCategorization = None):
+  """
+  Run the test case for an unknown establishment.
+  """
+  return test_with_inputs([TEST_DATA["1:4739"]], categorizer)
+
+
+def run_test_theas_chicken(categorizer: RethinkTransactionCategorization = None):
+  """
+  Run the test case for Thea's Chicken transactions.
+  """
+  return test_with_inputs([TEST_DATA["1:8123193"]], categorizer)
+
+
+
 def _run_batch(batch_num: int, categorizer: RethinkTransactionCategorization):
   """
   Run a specific batch of tests.
@@ -1324,8 +1620,44 @@ def _run_batch(batch_num: int, categorizer: RethinkTransactionCategorization):
     run_test_aaa(categorizer)
     print("\n")
     
+  elif batch_num == 7:
+    # Batch 7: 3 new tests
+    print("Test 1: Random Establishment Name")
+    print("-" * 80)
+    run_test_random_establishment(categorizer)
+    print("\n")
+    
+    print("Test 2: Shopee")
+    print("-" * 80)
+    run_test_shopee(categorizer)
+    print("\n")
+    
+    print("Test 3: Meals Categories")
+    print("-" * 80)
+    run_test_meals_categories(categorizer)
+    print("\n")
+    
+  elif batch_num == 8:
+    # Batch 8: 1 test
+    print("Test 1: Ebay")
+    print("-" * 80)
+    run_test_ebay(categorizer)
+    print("\n")
+
+  elif batch_num == 9:
+    # Batch 9: 2 tests
+    print("Test 1: Unknown Establishment")
+    print("-" * 80)
+    run_test_unknown_establishment(categorizer)
+    print("\n")
+    
+    print("Test 2: Thea's Chicken")
+    print("-" * 80)
+    run_test_theas_chicken(categorizer)
+    print("\n")
+    
   else:
-    raise ValueError(f"batch must be between 1 and 6, got {batch_num}")
+    raise ValueError(f"batch must be between 1 and 9, got {batch_num}")
 
 
 def main(batches=None):
@@ -1334,7 +1666,7 @@ def main(batches=None):
   
   Args:
     batches: List of batch numbers to run (e.g., [1, 2, 3]). If None, defaults to [1].
-            To run all batches, pass [1, 2, 3, 4, 5, 6]
+            To run all batches, pass [1, 2, 3, 4, 5, 6, 7, 8, 9]
   """
   if batches is None:
     batches = [1]
@@ -1343,8 +1675,8 @@ def main(batches=None):
   categorizer = RethinkTransactionCategorization()
   
   for batch_num in batches:
-    if batch_num < 1 or batch_num > 6:
-      raise ValueError(f"batch must be between 1 and 6, got {batch_num}")
+    if batch_num < 1 or batch_num > 9:
+      raise ValueError(f"Batch number must be between 1 and 9, got {batch_num}")
     
     print(f"\n{'='*80}")
     print(f"Running Batch {batch_num}")
@@ -1360,7 +1692,7 @@ if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run transaction categorization tests in batches')
   parser.add_argument('--batch', type=str, default='1',
-                      help='Batch numbers to run, comma-separated (e.g., "1,2,3" or "1-6" for all). Valid batches: 1-6')
+                      help='Batch numbers to run, comma-separated (e.g., "1,2,3" or "1-9" for all). Valid batches: 1-9')
   args = parser.parse_args()
   
   # Parse batch argument
@@ -1388,8 +1720,8 @@ if __name__ == "__main__":
   
   # Validate batch numbers
   for batch_num in batches:
-    if batch_num < 1 or batch_num > 6:
-      raise ValueError(f"Batch number must be between 1 and 6, got {batch_num}")
+    if batch_num < 1 or batch_num > 9:
+      raise ValueError(f"Batch number must be between 1 and 9, got {batch_num}")
   
   main(batches=batches)
 
