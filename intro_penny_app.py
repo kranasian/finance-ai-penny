@@ -12,7 +12,7 @@ if parent_dir not in sys.path:
 load_dotenv()
 
 # Import the optimizer
-from experiments.intro_penny_optimizer import IntroPennyOptimizer, extract_python_code
+from experiments.intro_penny_optimizer import IntroPennyOptimizer, extract_python_code, TEST_CASES
 
 # Initialize session state
 if "messages" not in st.session_state:
@@ -35,6 +35,149 @@ st.set_page_config(
 # Title
 st.title("💰 Intro Penny Chat")
 st.markdown("Chat with your financial planner agent!")
+
+def process_user_request(prompt):
+    """Process a user request and generate a response"""
+    # Add user message to chat history
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Generate response
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                # Format previous conversation from session state
+                # Skip the last message (current user message) when building previous conversation
+                previous_conversation = ""
+                for i, msg in enumerate(st.session_state.messages[:-1]):
+                    role = "User" if msg["role"] == "user" else "Assistant"
+                    previous_conversation += f"{role}: {msg['content']}\n"
+                
+                # Get the last user request (current prompt)
+                last_user_request = prompt
+                
+                # Generate response using the optimizer
+                generated_code = st.session_state.optimizer.generate_response(
+                    last_user_request=last_user_request,
+                    previous_conversation=previous_conversation.strip()
+                )
+                
+                # Extract Python code from the generated response
+                code = extract_python_code(generated_code)
+                
+                if code:
+                    try:
+                        # Create a namespace for executing the code
+                        namespace = {}
+                        
+                        # Execute the generated code
+                        exec(code, namespace)
+                        
+                        # Call execute_plan if it exists
+                        if 'execute_plan' in namespace:
+                            success, response = namespace['execute_plan']()
+                            
+                            # Generate test case name from the user request
+                            test_case_name = last_user_request.lower().replace(" ", "_").replace("?", "").replace("!", "").replace(".", "").replace(",", "")[:50]
+                            
+                            # Create test case data
+                            test_case_data = {
+                                "name": test_case_name,
+                                "last_user_request": last_user_request,
+                                "previous_conversation": previous_conversation.strip()
+                            }
+                            
+                            # Display the response
+                            if success:
+                                st.markdown(response)
+                                # Add assistant response to chat history with metadata
+                                st.session_state.messages.append({
+                                    "role": "assistant", 
+                                    "content": response,
+                                    "test_case_data": test_case_data
+                                })
+                            else:
+                                st.warning(response)
+                                # Add assistant response to chat history even if not successful
+                                st.session_state.messages.append({
+                                    "role": "assistant", 
+                                    "content": response,
+                                    "test_case_data": test_case_data
+                                })
+                        else:
+                            error_msg = "Error: execute_plan() function not found in generated code"
+                            st.error(error_msg)
+                            st.code(generated_code, language="python")
+                            # Generate test case data even for errors
+                            test_case_name = last_user_request.lower().replace(" ", "_").replace("?", "").replace("!", "").replace(".", "").replace(",", "")[:50]
+                            test_case_data = {
+                                "name": test_case_name,
+                                "last_user_request": last_user_request,
+                                "previous_conversation": previous_conversation.strip()
+                            }
+                            st.session_state.messages.append({
+                                "role": "assistant", 
+                                "content": error_msg,
+                                "test_case_data": test_case_data
+                            })
+                    except Exception as e:
+                        error_msg = f"Error executing generated code: {str(e)}"
+                        st.error(error_msg)
+                        st.code(code, language="python")
+                        # Generate test case data even for errors
+                        test_case_name = last_user_request.lower().replace(" ", "_").replace("?", "").replace("!", "").replace(".", "").replace(",", "")[:50]
+                        test_case_data = {
+                            "name": test_case_name,
+                            "last_user_request": last_user_request,
+                            "previous_conversation": previous_conversation.strip()
+                        }
+                        st.session_state.messages.append({
+                            "role": "assistant", 
+                            "content": error_msg,
+                            "test_case_data": test_case_data
+                        })
+                else:
+                    error_msg = "Error: No Python code found in generated response"
+                    st.error(error_msg)
+                    st.code(generated_code, language="text")
+                    # Generate test case data even for errors
+                    test_case_name = last_user_request.lower().replace(" ", "_").replace("?", "").replace("!", "").replace(".", "").replace(",", "")[:50]
+                    test_case_data = {
+                        "name": test_case_name,
+                        "last_user_request": last_user_request,
+                        "previous_conversation": previous_conversation.strip()
+                    }
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": error_msg,
+                        "test_case_data": test_case_data
+                    })
+                    
+            except Exception as e:
+                error_msg = f"Error generating response: {str(e)}"
+                st.error(error_msg)
+                # Try to get test case data if available
+                try:
+                    test_case_name = prompt.lower().replace(" ", "_").replace("?", "").replace("!", "").replace(".", "").replace(",", "")[:50]
+                    previous_conversation = ""
+                    for msg in st.session_state.messages[:-1]:
+                        role = "User" if msg["role"] == "user" else "Assistant"
+                        previous_conversation += f"{role}: {msg['content']}\n"
+                    test_case_data = {
+                        "name": test_case_name,
+                        "last_user_request": prompt,
+                        "previous_conversation": previous_conversation.strip()
+                    }
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": error_msg,
+                        "test_case_data": test_case_data
+                    })
+                except:
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
 
 # Display chat history
 for idx, message in enumerate(st.session_state.messages):
@@ -63,8 +206,17 @@ for idx, message in enumerate(st.session_state.messages):
                 # Add copy button
                 st.caption("💡 Click the code block above and copy (Cmd/Ctrl+C)")
 
+# Check if there's a pending test case to process
+if "pending_test_prompt" in st.session_state:
+    prompt = st.session_state.pending_test_prompt
+    del st.session_state.pending_test_prompt
+    process_user_request(prompt)
+    st.rerun()
+
 # Chat input
 if prompt := st.chat_input("Ask me about your finances..."):
+    process_user_request(prompt)
+    st.rerun()
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
     
@@ -217,6 +369,74 @@ with st.sidebar:
     if st.button("Clear Chat History", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
+    
+    st.markdown("---")
+    st.markdown("### 🧪 Test Cases")
+    st.caption("Load predefined test scenarios with conversation context")
+    
+    for idx, test_case in enumerate(TEST_CASES):
+        test_name = test_case.get("name", f"Test {idx + 1}")
+        last_request = test_case.get("last_user_request", "")
+        
+        # Create a button for each test case
+        if st.button(
+            f"🧪 {test_name}",
+            key=f"test_case_{idx}",
+            use_container_width=True,
+            help=f"Last request: {last_request[:50]}..."
+        ):
+            # Clear existing messages
+            st.session_state.messages = []
+            
+            # Parse and add previous conversation
+            previous_conversation = test_case.get("previous_conversation", "")
+            if previous_conversation:
+                lines = previous_conversation.strip().split("\n")
+                current_role = None
+                current_content = []
+                
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    if line.startswith("User:"):
+                        # Save previous message if exists
+                        if current_role and current_content:
+                            st.session_state.messages.append({
+                                "role": current_role,
+                                "content": "\n".join(current_content).strip()
+                            })
+                        # Start new user message
+                        current_role = "user"
+                        current_content = [line.replace("User:", "").strip()]
+                    elif line.startswith("Assistant:"):
+                        # Save previous message if exists
+                        if current_role and current_content:
+                            st.session_state.messages.append({
+                                "role": current_role,
+                                "content": "\n".join(current_content).strip()
+                            })
+                        # Start new assistant message
+                        current_role = "assistant"
+                        current_content = [line.replace("Assistant:", "").strip()]
+                    else:
+                        # Continue current message
+                        if current_role:
+                            current_content.append(line)
+                
+                # Save last message
+                if current_role and current_content:
+                    st.session_state.messages.append({
+                        "role": current_role,
+                        "content": "\n".join(current_content).strip()
+                    })
+            
+            # Store the last user request to be processed
+            last_request = test_case.get("last_user_request", "")
+            if last_request:
+                st.session_state.pending_test_prompt = last_request
+                st.rerun()
     
     st.markdown("---")
     st.markdown("### About")
