@@ -42,8 +42,7 @@ SCHEMA = types.Schema(
 SYSTEM_PROMPT = """You are a financial transaction categorization expert. Analyze each transaction and categorize it using the provided category options.
 
 ## Input Format
-JSON array of transaction groups. Each group contains:
-- `group_id`: String of characters to identify a transaction group
+JSON array of transactions. Each entry contains:
 - `establishment_name`: Merchant/establishment name
 - `establishment_description`: What the establishment provides
 - `transactions`: Array with `transaction_id`, `transaction_text` (raw bank statement text), and `amount`
@@ -76,7 +75,7 @@ JSON array of transaction groups. Each group contains:
   - `tuition`: costs for personal or dependent education.
 - **shopping**:
   - `clothing`: apparel purchases.
-  - `gadgets`: electronics and technology purchases (not necessarily for online or electronic payments)
+  - `gadgets`: electronics and technology purchases (not necessarily for online or electronic payments).
   - `kids`: general shopping for children not covered elsewhere.
   - `pets`: supplies and services for pets.
 - **transportation**:
@@ -87,12 +86,14 @@ JSON array of transaction groups. Each group contains:
   - `gym_wellness`: gym memberships, supplements.
   - `personal_care`: haircuts, toiletries.
 - **donations_gifts**: charitable giving or gifts for others.
+- **transfer**: movements between two accounts owned by the SAME person where net worth remains unchanged. Examples: depository account to credit card account (same person), checking account at Bank A to checking account at Bank B (same person), depository account to loan account (same person). The key indicator is that money moves between accounts but stays within the same person's financial ecosystem.
 
 ## Analysis Process
 1. **Transaction Text** (primary): Extract keywords and patterns indicating purpose
 2. **Establishment Context**: Use name and description to understand business type
 3. **Amount Context**: Large amounts may indicate services/procedures; small amounts may indicate supplies/incidentals. Negative amounts represent inflows (e.g., income, refunds), while positive amounts represent outflows (e.g., purchases, expenses).
-4. **Consistency**: Similar transactions in the same group should typically share the same category
+4. **Consistency**: Similar transactions should typically share the same category, unless amounts suggest otherwise.
+5. **Reasoning**: When writing reasoning, ONLY state positive evidence for the chosen category. DO NOT mention what categories are available/unavailable or why others don't fit.
 
 ## Confidence Levels
 - **high**: Strong evidence from transaction text, establishment, and amount align clearly
@@ -100,16 +101,17 @@ JSON array of transaction groups. Each group contains:
 - **low**: Weak evidence, multiple plausible categories, or significant uncertainty
 
 ## Critical Rules
-- **CRITICAL ID Matching**: The `group_id` and `transaction_id` in your output response MUST be an EXACT, character-for-character copy of the `group_id` and `transaction_id` from the input. For example, if the input `group_id` is `"1:4739"`, the output `group_id` MUST also be `"1:4739"`. Do not change, omit, or abbreviate them in any way.
+- **CRITICAL ID Matching**: The `transaction_id` in your output response MUST be an EXACT, character-for-character copy of the `transaction_id` from the input. Your output MUST ONLY contain: `transaction_id`, `reasoning`, `category`, and `confidence`. Do NOT include `group_id` or any other fields in your output.
+- **CRITICAL Transfer Rule**: `transfer` MUST ONLY be used for transactions between accounts owned by the SAME person where net worth is unchanged. The key test: Does the money stay within the same person's financial ecosystem? If YES → transfer. If NO (money goes to/from another person) → NOT transfer. Examples that ARE transfers: "Transfer To Checking", "Payment to Credit Card", "Loan Payment" (to own loan), "Transfer From Savings", "ACH Transfer" (between own accounts). Examples that are NOT transfers: "Zelle TO [Person Name]", "Venmo TO [Person Name]", "PayPal TO [Person Name]", "Zelle FROM [Person Name]", "Cash App TO [Person Name]", "Zelle Payment" (to another person) - these are peer-to-peer payments to/from OTHER people.
+- **CRITICAL Peer-to-Peer Payment Rule**: For peer-to-peer payments between two different people (Zelle, Venmo, PayPal, Cash App, etc.), you MUST determine the purpose from transaction text, establishment description, or amount context. If the purpose is NOT specified or cannot be determined (no clear indication of gift, repayment, payment for goods/services, etc.), you MUST use `unknown`. Peer-to-peer payments between two people default to `unknown` when the purpose is not specified. Do NOT default to `donations_gifts` or other categories without clear evidence. Remember: `unknown` is ALWAYS available as a category option, even if not explicitly listed in `category_options`.
 - **Category Selection**: The `category` must be either an exact match of one of the subcategories from `category_options`, or `unknown`. It is a CRITICAL ERROR to categorize a transaction from a general-purpose marketplace (e.g., Amazon, Shopee, Walmart) as 'shopping' if the specific item is unknown. In such cases, you MUST use "unknown". For all other transactions, if it is too vague to match to a specific category, you must use "unknown".
 - **Sub-category Preference**: You MUST ONLY select the most specific sub-category available. NEVER select a parent category if a sub-category is available. For example, if both `leisure` and `leisure_entertainment` are in `category_options`, you MUST choose `leisure_entertainment`. This is not a suggestion, it is a strict rule.
-- **Reasoning must be brief and direct**: Provide a 1-2 sentence explanation focusing only on the key evidence for the chosen category. Do not explain the process of elimination or why other categories were not chosen.
-- **Consistency**: Similar transactions in the same group should typically share the same category.
+- **CRITICAL Reasoning Rule**: Reasoning must be comprehensive but concise. Focus ONLY on positive evidence that supports the chosen category. Use phrases or short sentences. CRITICAL: Your reasoning should read as if you don't know what other categories exist. NEVER mention: available/unavailable categories, options, what doesn't fit, why others weren't chosen, process of elimination, "category is available/appropriate/match", "subcategory is available", "most specific match". FORBIDDEN phrases: "available categories/options", "not available", "does not fit", "category is available/appropriate", "subcategory is available", "most specific match", "based on available categories", "from the provided options". ONLY state the key evidence that directly supports your chosen category. For `unknown`: Simply state why the purpose cannot be determined (e.g., "Purpose unspecified" or "Establishment context unclear"). Examples of GOOD reasoning: "Veterinary clinic transaction for pet services." "Coffee shop purchase." "Peer-to-peer payment to another person, purpose unspecified." "Athletic apparel purchase from retailer. Purpose unclear." "Food delivery service payment. Purpose unclear." Examples of BAD reasoning: "Purpose unclear based on available categories..." "Electronics sub-category available and plausible..." "Dining out category is appropriate..." "Dining out subcategory is the most specific match..."
+- **Consistency**: Similar transactions should typically share the same category, unless amounts suggest otherwise.
 - When uncertain but a category is plausible, use "medium" or "low" confidence and briefly explain the uncertainty
 
 input: [
   {
-    "group_id": 2112,
     "establishment_name": "Best Friends Veterinary",
     "establishment_description": "A purchase for veterinary services or products.",
     "transactions": [
@@ -136,16 +138,14 @@ input: [
 ]
 output: [
   {
-    "group_id": 2112,
     "transaction_id": 328202,
-    "reasoning": "The transaction is at a veterinary clinic (Best Friends Veterinary) with a substantial amount of $509.22, which is typical for veterinary services like checkups, procedures, or treatments for pets. The establishment description confirms this is for veterinary services or products.",
+    "reasoning": "Veterinary clinic transaction for pet services. Amount ($509.22) typical for procedures or treatments.",
     "category": "shopping_pets",
     "confidence": "high"
   },
   {
-    "group_id": 2112,
     "transaction_id": 272828,
-    "reasoning": "This is also a transaction at Best Friends Veterinary, but with a smaller amount of $12.20, which likely represents pet supplies, medications, or a minor service. Still clearly pet-related spending at a veterinary establishment.",
+    "reasoning": "Veterinary clinic transaction. Smaller amount ($12.20) likely pet supplies or minor service.",
     "category": "shopping_pets",
     "confidence": "high"
   }
@@ -153,7 +153,6 @@ output: [
 
 input: [
   {
-    "group_id": 3:456,
     "establishment_name": "Starbucks Coffee",
     "establishment_description": "Coffee shop and cafe.",
     "transactions": [
@@ -173,9 +172,8 @@ input: [
 ]
 output: [
   {
-    "group_id": 3:456,
     "transaction_id": 123456,
-    "reasoning": "Starbucks is a coffee shop/cafe, and the transaction amount of $5.75 is typical for a coffee purchase.",
+    "reasoning": "Coffee shop purchase. Amount ($5.75) typical for coffee.",
     "category": "food_dining_out",
     "confidence": "high"
   }
@@ -183,7 +181,6 @@ output: [
 
 input: [
   {
-    "group_id": 9988,
     "establishment_name": "City News Stand",
     "establishment_description": "Sells newspapers and magazines.",
     "transactions": [
@@ -202,70 +199,10 @@ input: [
 ]
 output: [
   {
-    "group_id": "9988",
     "transaction_id": 7766,
-    "reasoning": "A purchase at a newsstand for magazines or newspapers is a form of entertainment.",
+    "reasoning": "Newsstand purchase for magazines/newspapers. Entertainment reading material.",
     "category": "leisure_entertainment",
     "confidence": "high"
-  }
-]
-
-input: [
-  {
-    "group_id": "SFO_Parking_Example",
-    "establishment_name": "SFO Parking",
-    "establishment_description": "sells parking services at San Francisco International Airport, with options for short-term and long-term parking",
-    "transactions": [
-      {
-        "transaction_id": 1,
-        "transaction_text": "60776 - Sfo Parkingcentrasan Franciscoca",
-        "amount": 4.0
-      }
-    ],
-    "category_options": [
-      "transport_car_fuel",
-      "transport",
-      "bills_service_fees"
-    ]
-  }
-]
-output: [
-  {
-    "group_id": "SFO_Parking_Example",
-    "transaction_id": 1,
-    "reasoning": "The transaction is for parking services at an airport, which falls under transportation expenses related to a car.",
-    "category": "transport_car_fuel",
-    "confidence": "high"
-  }
-]
-
-input: [
-  {
-    "group_id": 10002,
-    "establishment_name": "Shopee",
-    "establishment_description": "sells a wide variety of products online, including electronics, fashion, home goods, beauty products, and more",
-    "transactions": [
-      {
-        "transaction_id": 1,
-        "transaction_text": "SHOPEE PH*PURCHASE",
-        "amount": 25.99
-      }
-    ],
-    "category_options": [
-      "shopping",
-      "bills_service_fees",
-      "donations_gifts",
-      "shopping_electronics"
-    ]
-  }
-]
-output: [
-  {
-    "group_id": "10002",
-    "transaction_id": 1,
-    "reasoning": "Shopee is a general online marketplace where electronics are a major category. Given the choice between a parent category and a plausible sub-category, the sub-category should be selected.",
-    "category": "shopping_electronics",
-    "confidence": "medium"
   }
 ]
 """
@@ -1124,6 +1061,25 @@ TEST_DATA = {
       "meals_delivered_food"
     ]
   },
+  10004: {
+    "group_id": 10004,
+    "establishment_name": "Zelle",
+    "establishment_description": "peer-to-peer payment service for sending and receiving money between individuals",
+    "transactions": [
+      {
+        "transaction_id": 1,
+        "transaction_text": "ZELLE TO JOHN DOE",
+        "amount": 50.00
+      }
+    ],
+    "category_options": [
+      "transfer",
+      "donations_gifts",
+      "bills_service_fees",
+      "income_business",
+      "income_side_gig"
+    ]
+  },
   3336: {
     "group_id": 3336,
     "establishment_name": "Ebay",
@@ -1428,6 +1384,13 @@ def run_test_meals_categories(categorizer: RethinkTransactionCategorization = No
   return test_with_inputs([TEST_DATA[10003]], categorizer)
 
 
+def run_test_zelle(categorizer: RethinkTransactionCategorization = None):
+  """
+  Run the test case for Zelle transactions.
+  """
+  return test_with_inputs([TEST_DATA[10004]], categorizer)
+
+
 def run_test_ebay(categorizer: RethinkTransactionCategorization = None):
   """
   Run the test case for Ebay transactions.
@@ -1645,7 +1608,7 @@ def _run_batch(batch_num: int, categorizer: RethinkTransactionCategorization):
     print("\n")
 
   elif batch_num == 9:
-    # Batch 9: 2 tests
+    # Batch 9: 3 tests
     print("Test 1: Unknown Establishment")
     print("-" * 80)
     run_test_unknown_establishment(categorizer)
@@ -1654,6 +1617,11 @@ def _run_batch(batch_num: int, categorizer: RethinkTransactionCategorization):
     print("Test 2: Thea's Chicken")
     print("-" * 80)
     run_test_theas_chicken(categorizer)
+    print("\n")
+    
+    print("Test 3: Zelle")
+    print("-" * 80)
+    run_test_zelle(categorizer)
     print("\n")
     
   else:
