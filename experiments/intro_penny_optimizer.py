@@ -13,48 +13,70 @@ if parent_dir not in sys.path:
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial planner agent very good at understanding conversation.
+SYSTEM_PROMPT = """You are a financial planner agent designed to showcase the Hey Penny app's capabilities and help users understand its value.
+
+**IMPORTANT**: When users ask about their financial data, generate code that directly states what they need to do in the Hey Penny app to satisfy their request.
+
+## Hey Penny App Capabilities
+
+The Hey Penny app helps users with: comprehensive financial overview, intelligent spending analysis, smart budgeting & goal setting, forecasting & planning, subscription management, personalized insights, goal achievement support, smart reminders & alerts, and iMessage integration for convenient financial management on the go.
+
+**CRITICAL - Direct User Instructions:**
+When users ask about financial data, generate code that:
+- Directly states what the user needs to do in the Hey Penny app (e.g., "To see your expected savings this month, link your bank accounts in the Hey Penny app. Once linked, the Hey Penny app will automatically track your transactions, analyze your income and expenses, and calculate your projected savings.")
+- Highlights specific Hey Penny app capabilities they'll unlock: automatic transaction tracking & categorization, spending pattern analysis, income/expense forecasting, real-time account balances, subscription identification, personalized insights, budget creation based on actual spending, and iMessage integration for managing finances directly from messages
+- Uses direct, action-oriented language referring to "Hey Penny app" capabilities
+- Focuses on what the Hey Penny app can do for them once accounts are linked
+
+**When users ask "what can you do?" or about capabilities:**
+- Generate code that describes the Hey Penny app's capabilities.
+- List the Hey Penny app features: comprehensive financial overview, intelligent spending analysis, smart budgeting & goal setting, forecasting & planning, subscription management, personalized insights, goal achievement support, smart reminders & alerts, and iMessage integration.
+- Explain that to access these features, users need to link their bank accounts in the Hey Penny app.
 
 ## Your Tasks
 
-1. **Prioritize the Last User Request**: Your main goal is to create a plan that directly addresses the **Last User Request**.
+1. **Prioritize the Last User Request**: Create a plan that directly addresses the **Last User Request** while showcasing the Hey Penny app's helpfulness.
 2. **Use Previous Conversation for Context ONLY**:
-    - If the **Last User Request** is a follow-up (e.g., "yes, do that"), use the context.
-    - If the **Last User Request** is vague (e.g., "what about the other thing?"), use the context.
-    - **CRITICAL**: Thoroughly analyze the `Previous Conversation` to gain an accurate understanding of the user's intent, identify any unresolved issues, and ensure the response is comprehensive and contextually relevant.
-    - **If the Last User Request is a new, general question (e.g., "how's my accounts doing?"), DO NOT use specific details from the Previous Conversation unless they directly relate to the current question.**
-3. **Create a Focused Plan**: The steps in your plan should only be for achieving the **Last User Request**. Avoid adding steps related to past topics unless absolutely necessary.
+    - If the **Last User Request** is a follow-up or vague, use the context.
+    - **CRITICAL**: Thoroughly analyze the `Previous Conversation` to understand user intent and ensure the response is comprehensive and contextually relevant.
+    - **If the Last User Request is a new, general question, DO NOT use specific details from the Previous Conversation unless they directly relate to the current question.**
+3. **Create a Focused Plan**: Steps should only be for achieving the **Last User Request**.
 4. **Output Python Code**: The plan must be written as a Python function `execute_plan`.
 
 Write a python function `execute_plan` that takes no arguments:
-  - Construct a response string based on the **Last User Request** and **Previous Conversation** using conditional operations and string concatenations.
-  - Return `tuple[bool, str]` where the first element is `success` (True if response can be provided, False if data is missing) and the second element is the response string.
-  - **CRITICAL**: Always check if required financial data is available in the **Previous Conversation**. If data is missing and needed to answer the request, return `(False, "message explaining what data is needed")`.
-  - **Always display all monetary amounts as positive values.** If a calculated difference or balance is negative, rephrase to indicate an outflow or that spending exceeded income by that positive amount.
+  - Initialize `output_lines = []` to accumulate response strings.
+  - Use `output_lines.append("text")` to add each line of the response.
+  - Return `tuple[bool, str]` where `success` is True if response can be provided, False if data is missing.
+  - Join all output lines with `chr(10).join(output_lines)` before returning.
+  - **CRITICAL**: Check if required financial data is available in the **Previous Conversation**. If missing, return `(False, "message explaining data is needed and promoting account linking")`.
+  - **Always display all monetary amounts as positive values.** If negative, rephrase to indicate an outflow.
 
 ## Critical Rules
 
 **1. NEVER Invent Financial Data:**
 - **NEVER make up, invent, or fabricate any financial data.** Only use information explicitly provided in the **Previous Conversation** or **Last User Request**.
-- Check if required financial data exists in the conversation before using it. If not available, return `(False, "message explaining that the data is not available")`.
-- Do NOT create example data, placeholder data, or hypothetical financial information.
+- If data is missing, use `output_lines.append("message explaining data is not available and promoting account linking with specific capabilities")` and return `(False, chr(10).join(output_lines))`.
 
 **2. Financial Data Requests:**
-- Extract and use data **ONLY from the Previous Conversation**. If Previous Conversation contains relevant financial information, reference it to construct the response.
-- For questions about accounts, transactions, spending, income, or comparisons/summaries/calculations, generate code that uses only data from the conversation.
+- Extract and use data **ONLY from the Previous Conversation**.
+- When data is needed but unavailable, directly state what the user needs to do in the Hey Penny app to satisfy their request.
+- Directly explain: "To [satisfy request], link your bank accounts in the Hey Penny app. Once linked, the Hey Penny app will [specific capabilities]."
+- Always refer to "Hey Penny app" when describing capabilities.
+- Highlight specific value they'll receive (e.g., "real-time spending analysis, automatic transaction categorization, personalized recommendations").
 
 **3. Financial Advice and Analysis:**
-- For questions requiring specific financial data, generate code that analyzes the provided data and constructs insights.
-- For general financial advice, complex analysis, long-term planning, or what-if scenarios, generate code that provides thoughtful guidance.
+- For specific data questions, analyze provided data and construct insights.
+- For general advice, complex analysis, or planning scenarios, provide thoughtful guidance.
+- **When users ask "what can you do?" or about capabilities**: Generate code that describes the Hey Penny app's capabilities (comprehensive financial overview, intelligent spending analysis, smart budgeting & goal setting, forecasting & planning, subscription management, personalized insights, goal achievement support, smart reminders & alerts, and iMessage integration). Explain that to access these features, users need to link their bank accounts in the Hey Penny app.
 
 **4. Budget Goals and Reminders:**
-- **Budget Limits/Goals**: When users ask to set budgets or spending limits, generate code that acknowledges this capability and provides guidance.
-- **Savings Goals vs Plans**: When users ask to "save $X" or "set a savings goal", generate code that clarifies savings goals cannot be set as trackable goals, but provides a detailed savings plan with strategies, timelines, and recommendations.
-- **Reminders/Notifications**: When users ask for reminders, generate code that acknowledges this capability and confirms details (what, when, conditions).
+- **Budgets**: Acknowledge capability and provide guidance when users ask to set budgets or spending limits.
+- **Savings Plans**: When users ask to "save $X", clarify savings goals cannot be set as trackable goals, but provide a detailed savings plan with strategies, timelines, and recommendations.
+- **Reminders**: Acknowledge capability and confirm details (what, when, conditions).
 
 **5. Conversational Flow:**
-- For acknowledgments or general conversational turns, generate code that responds appropriately and offers continued assistance.
-- If there are pending items in the conversation, incorporate them into the response to encourage user re-engagement.
+- Respond appropriately to acknowledgments and offer continued assistance.
+- When appropriate, mention other ways the Hey Penny app can help to showcase capabilities.
 
 ## Official Categories
 
@@ -76,39 +98,29 @@ When discussing transaction categories, budgets, or spending by category, use th
 
 <EXAMPLES>
 
-input: **Last User Request**: how's my accounts doing?
+input: **Last User Request**: How much am I spending on dining out each month?
 **Previous Conversation**:
-User: Hey, do I have enough to cover rent this month?
-Assistant: You're getting close! Your checking accounts have $1,850, and rent is $2,200. You'll need about $350 more by the due date.
+User: Hi, I'm new here. What can this app help me with?
+Assistant: The Hey Penny app can help you track your spending patterns, create budgets, analyze transactions, forecast income and expenses, manage subscriptions, and provide personalized financial insights. To unlock these features, you'll need to link your bank accounts in the Hey Penny app.
 output:
 ```python
 def execute_plan() -> tuple[bool, str]:
-    response = "Based on our previous conversation, your checking accounts have $1,850. "
-    response += "Your rent is expected to be $2,200, so you'll need about $350 more by the due date.\n\n"
-    response += "Would you like me to help you find ways to cover that $350 gap?"
-    return True, response
-```
-
-input: **Last User Request**: What subscriptions am I paying for?
-**Previous Conversation**:
-
-output:
-```python
-def execute_plan() -> tuple[bool, str]:
-    response = "I don't have access to your subscription information in our conversation. "
-    response += "To help you with this, I would need to see your recent transactions or subscription details. "
-    response += "Could you share that information with me?"
-    return False, response
+    output_lines = []
+    output_lines.append("To see how much you're spending on dining out each month, link your bank accounts in the Hey Penny app.")
+    output_lines.append("Once linked, the Hey Penny app will automatically categorize all your transactions, analyze your spending habits across different categories, and show you detailed breakdowns of your dining out expenses.")
+    output_lines.append("You'll be able to compare your spending month-over-month, set budgets for dining out, track your progress, and receive alerts when you're approaching your limits.")
+    output_lines.append("The Hey Penny app will provide personalized recommendations based on your actual spending patterns.")
+    return False, chr(10).join(output_lines)
 ```
 
 </EXAMPLES>
 """
 
 class IntroPennyOptimizer:
-  """Handles all Gemini API interactions for IntroPenny financial conversations"""
+  """Handles all Gemini API interactions for Hey Penny app financial conversations"""
   
   def __init__(self, model_name="gemini-flash-lite-latest"):
-    """Initialize the Gemini agent with API configuration for IntroPenny"""
+    """Initialize the Gemini agent with API configuration for Hey Penny app"""
     # API Configuration
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
@@ -138,7 +150,7 @@ class IntroPennyOptimizer:
   
   def generate_response(self, last_user_request: str, previous_conversation: str, replacements: dict = None) -> str:
     """
-    Generate a response using Gemini API for IntroPenny.
+    Generate a response using Gemini API for Hey Penny app.
     
     Args:
       last_user_request: The last user request as a string
@@ -319,190 +331,25 @@ output:"""
   return result
 
 
-# Test cases list - add new tests here instead of creating new functions
+# Test cases list - realistic scenarios of users testing the tool-less app
 TEST_CASES = [
-  # Lookup User Accounts, Transactions, Income and Spending Patterns
   {
-    "name": "hows_my_accounts_doing",
-    "last_user_request": "how's my accounts doing?",
-    "previous_conversation": """User: Hey, do I have enough to cover rent this month?
-Assistant: You're getting close! Your checking accounts have $1,850, and rent is $2,200. You'll need about $350 more by the due date.
-User: Ugh, okay. Am I spending too much? Like am I going over what I make?
-Assistant: You're actually staying within your means, but just barely. After all expenses, you're only saving about $50 a month, which is pretty tight."""
+    "name": "user_asks_about_spending_no_accounts_linked",
+    "last_user_request": "How much am I spending on dining out?",
+    "previous_conversation": """User: Hi, I'm new here. What can this app help me with?
+Assistant: The Hey Penny app can help you with comprehensive financial planning. It can track your spending patterns, help you create budgets, analyze your transactions, forecast your income and expenses, manage subscriptions, and provide personalized financial insights. To get the most out of these features, you'll want to link your bank accounts so the Hey Penny app can access your actual financial data."""
   },
   {
-    "name": "check_account_balances",
-    "last_user_request": "What are my current account balances?",
-    "previous_conversation": ""
+    "name": "user_asks_about_savings_plan",
+    "last_user_request": "I want to save $3,000 for a vacation in 6 months. Can you help me create a plan?",
+    "previous_conversation": """User: What can you help me with?
+Assistant: I can help you understand your financial situation, create budgets, set spending limits, develop savings plans, track subscriptions, and provide personalized financial advice. Once you link your bank accounts, I can also automatically categorize your transactions, analyze your spending patterns, and forecast your income and expenses."""
   },
   {
-    "name": "recent_transactions",
-    "last_user_request": "Show me my recent transactions from last week.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "monthly_income_summary",
-    "last_user_request": "How much did I earn last month?",
-    "previous_conversation": ""
-  },
-  {
-    "name": "spending_by_category",
-    "last_user_request": "Break down my spending by category for the past 3 months.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "subscriptions_list",
-    "last_user_request": "What subscriptions am I paying for?",
-    "previous_conversation": ""
-  },
-  {
-    "name": "compare_spending_months",
-    "last_user_request": "Compare my spending this month to last month.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "forecasted_income",
-    "last_user_request": "What's my expected income for next month?",
-    "previous_conversation": ""
-  },
-  {
-    "name": "forecasted_spending",
-    "last_user_request": "What expenses am I expecting in the next few weeks?",
-    "previous_conversation": ""
-  },
-  {
-    "name": "net_worth_question",
-    "last_user_request": "how is my net worth doing lately?",
-    "previous_conversation": """User: What's the weather like today?
-Assistant: I don't have access to weather information, but I can help you with your finances!
-User: Can you help me plan a vacation to Hawaii?
-Assistant: I can help you budget for your Hawaii vacation.  Looks like you have $2,333 in your checking accounts."""
-  },
-  
-  # Create Budget or Goal or Reminder
-  {
-    "name": "create_food_budget",
-    "last_user_request": "Set a food budget of $500 for next month.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "create_savings_goal",
-    "last_user_request": "I want to save $10,000 by the end of the year.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "create_reminder_cancel_subscription",
-    "last_user_request": "Remind me to cancel Netflix on November 30th.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "create_balance_alert",
-    "last_user_request": "Notify me when my checking account balance drops below $1000.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "create_monthly_budget",
-    "last_user_request": "Create a monthly budget for dining out of $300.",
-    "previous_conversation": ""
-  },
-  
-  # Research and Strategize Financial Outcomes
-  {
-    "name": "savings_plan",
-    "last_user_request": "I want to save $5,000 in the next 6 months. What's the best plan?",
-    "previous_conversation": """User: How much am I spending on dining out?
-Assistant: Over the last 3 months, you've spent an average of $450 per month on dining out.
-User: What about my overall spending?
-Assistant: Your total monthly spending averages around $3,200, and your monthly income is about $4,500."""
-  },
-  {
-    "name": "vacation_affordability",
-    "last_user_request": "Is it feasible for me to take a 2-week vacation to Japan next year? Research the costs and tell me if I can afford it.",
-    "previous_conversation": """User: What's my current account balance?
-Assistant: You have $5,200 in your checking account and $3,100 in savings.
-User: How much am I saving per month?
-Assistant: Based on your recent spending patterns, you're saving approximately $800 per month."""
-  },
-  {
-    "name": "retirement_planning",
-    "last_user_request": "When can I retire? Help me plan for retirement.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "research_average_costs",
-    "last_user_request": "What's the average cost of dining out for a couple in Chicago, Illinois?",
-    "previous_conversation": ""
-  },
-  {
-    "name": "what_if_scenario",
-    "last_user_request": "What if I cut my dining out spending in half? How much would I save?",
-    "previous_conversation": """User: How much am I spending on dining out?
-Assistant: Over the last 3 months, you've spent an average of $450 per month on dining out."""
-  },
-  {
-    "name": "general_financial_advice",
-    "last_user_request": "What are some good ways to save money?",
-    "previous_conversation": ""
-  },
-  {
-    "name": "investment_advice",
-    "last_user_request": "What are the best ways to invest my savings?",
-    "previous_conversation": ""
-  },
-  
-  # Update Transaction Category or Create Category Rules
-  {
-    "name": "categorize_single_transaction",
-    "last_user_request": "That $21 transaction yesterday was for eating out. Please categorize it.",
-    "previous_conversation": """Assistant: There's an uncategorized $21 transaction from McDonald's."""
-  },
-  {
-    "name": "categorize_multiple_transactions",
-    "last_user_request": "All my Costco purchases under $50 are for gas. Categorize them.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "create_category_rule",
-    "last_user_request": "IRS payments should always be categorized as tax.",
-    "previous_conversation": ""
-  },
-  {
-    "name": "categorize_with_future_rule",
-    "last_user_request": "That Netflix transaction is for entertainment. Fix it and always categorize Netflix as entertainment from now on.",
-    "previous_conversation": """Assistant: There's an uncategorized $15.99 transaction from Netflix."""
-  },
-  
-  # Follow-up Conversation
-  {
-    "name": "thank_you",
-    "last_user_request": "Thank you!",
-    "previous_conversation": """User: How much am I spending on dining out?
-Assistant: Over the last 3 months, you've spent an average of $450 per month on dining out.
-User: That seems high. What about my overall spending?
-Assistant: Your total monthly spending averages around $3,200, and your monthly income is about $4,500."""
-  },
-  {
-    "name": "okay_acknowledgment",
-    "last_user_request": "Okay, got it.",
-    "previous_conversation": """User: What's my current account balance?
-Assistant: You have $5,200 in your checking account and $3,100 in savings.
-User: How much am I saving per month?
-Assistant: Based on your recent spending patterns, you're saving approximately $800 per month."""
-  },
-  {
-    "name": "closing_conversation",
-    "last_user_request": "That's all for now, thanks!",
-    "previous_conversation": """User: How's my accounts doing?
-Assistant: Your checking accounts have $1,850, and rent is $2,200. You'll need about $350 more by the due date.
-User: Ugh, okay. Am I spending too much?
-Assistant: You're actually staying within your means, but just barely. After all expenses, you're only saving about $50 a month."""
-  },
-  {
-    "name": "acknowledgment_with_pending",
-    "last_user_request": "Thanks for the update!",
-    "previous_conversation": """User: How much am I spending on food?
-Assistant: Your food spending is $615 this month, mostly from dining out. You're staying within your budget goals.
-Assistant: There's also an uncategorized $525 transaction that needs your attention."""
+    "name": "user_asks_about_budgeting_capabilities",
+    "last_user_request": "Can I set a monthly budget for groceries?",
+    "previous_conversation": """User: I'm trying to get better control of my finances. What does this app do?
+Assistant: Great question! I can help you create budgets for any spending category, set spending limits, track your progress, and get personalized recommendations. I can also help you develop savings plans, identify spending patterns, manage subscriptions, and provide financial insights. To unlock the full power of these features—like automatic transaction categorization and real-time spending analysis—you'll want to link your bank accounts."""
   },
 ]
 
@@ -630,9 +477,9 @@ def main(batch: int = None, test: str = None):
   Main function to test the intro penny optimizer
   
   Args:
-    batch: Batch number (1-5) to run a group of related tests, or None to run a single test
+    batch: Batch number (1) to run all tests, or None to run a single test
     test: Test name, index, or None. If batch is provided, test is ignored.
-      - Test name (str): e.g., "hows_my_accounts_doing"
+      - Test name (str): e.g., "user_asks_about_spending_no_accounts_linked"
       - Test index (str): e.g., "0" (will be converted to int)
       - None: If batch is also None, prints available tests
   """
@@ -641,24 +488,8 @@ def main(batch: int = None, test: str = None):
   # Define test batches
   BATCHES = {
     1: {
-      "name": "Lookup User Data (Accounts, Transactions, Income, Spending)",
-      "tests": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # Accounts, transactions, income, spending, subscriptions, comparisons, forecasts
-    },
-    2: {
-      "name": "Create Budget/Goal/Reminder",
-      "tests": [10, 11, 12, 13, 14]  # Budgets, goals, reminders
-    },
-    3: {
-      "name": "Research and Strategize Financial Outcomes",
-      "tests": [15, 16, 17, 18, 19, 20, 21]  # Savings plans, research, planning, advice
-    },
-    4: {
-      "name": "Update Transaction Category or Create Category Rules",
-      "tests": [22, 23, 24, 25]  # Categorization and rules
-    },
-    5: {
-      "name": "Follow-up Conversation",
-      "tests": [26, 27, 28, 29]  # Acknowledgments, closing conversations
+      "name": "User Testing Scenarios",
+      "tests": [0, 1, 2]  # All 3 realistic user testing scenarios
     },
   }
   
@@ -696,7 +527,7 @@ def main(batch: int = None, test: str = None):
   else:
     # Print available options
     print("Usage:")
-    print("  Run a batch: --batch <1-5>")
+    print("  Run a batch: --batch <1>")
     print("  Run a single test: --test <name_or_index>")
     print("\nAvailable batches:")
     for b, info in BATCHES.items():
@@ -712,18 +543,18 @@ def main(batch: int = None, test: str = None):
 """
 Sample Usage Examples:
   python intro_penny_optimizer.py --batch 1
-  python intro_penny_optimizer.py --test hows_my_accounts_doing
+  python intro_penny_optimizer.py --test user_asks_about_spending_no_accounts_linked
   python intro_penny_optimizer.py --test 0
-  run_test("hows_my_accounts_doing")
+  run_test("user_asks_about_spending_no_accounts_linked")
   run_tests([0, 1, 2])
 """
 
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run intro penny optimizer tests in batches or individually')
-  parser.add_argument('--batch', type=int, choices=[1, 2, 3, 4, 5],
-                      help='Batch number to run (1-5)')
+  parser.add_argument('--batch', type=int, choices=[1],
+                      help='Batch number to run (1)')
   parser.add_argument('--test', type=str,
-                      help='Test name or index to run individually (e.g., "hows_my_accounts_doing" or "0")')
+                      help='Test name or index to run individually (e.g., "user_asks_about_spending_no_accounts_linked" or "0")')
   args = parser.parse_args()
   main(batch=args.batch, test=args.test)
