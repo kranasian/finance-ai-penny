@@ -331,6 +331,51 @@ It should also mention that it can do beyond budgets, and it can monitor your da
     "ideal_response": """Response should focus on answering the user's question about how long.
 It should then ask the user more on what he wants to achieve, and what he's concerned about."""
   },
+  {
+    "name": "entertainment_spending",
+    "last_user_request": "I've been actually spending $800 a month just on 'Entertainment'. I could cut that to $300.",
+    "previous_conversation": """User: Hey, I finally hit my first big milestone. I have $15,000 in my 'Dream Home' fund! I've been disciplined about putting away $1,200 every month from my $5,000 take-home pay. My rent and bills are a flat $2,800.
+Assistant: * Congratulations on reaching $15,000 saved for your 'Dream Home' fund!
+* Your current savings discipline is excellent, contributing $1,200 monthly.
+* Penny can monitor your remaining $1,000 in variable spending to ensure you maintain this pace toward your next milestone.
+User: I just got a promotion! My new take-home is $6,000. I'm thinking of celebrating with a new car lease. It's $700 a month. Since I'm making $1,000 more now, I should be able to just add it on, right?
+Assistant: • Your new $6,000 take-home pay provides an additional $1,000 buffer compared to your previous income.
+• The $700 monthly lease fits comfortably within your increased cash flow, leaving $1,300 remaining for savings or flexible spending.
+• Penny can forecast how this new $700 expense impacts your 'Dream Home' goal timeline and help you strategically allocate the remaining $1,300.""",
+    "ideal_response": """Response should focus Penny's capability in tracking the new $300 limit and predicting potential overspending."""
+  },
+  {
+    "name": "dipping_into_emergency_fund_for_course",
+    "last_user_request": "I haven't set anything aside specifically yet, but I have $12,000 in my emergency fund and I'm okay with dipping into that to pay the $1,800 today. To pay myself back faster, let's trim my 'Dining Out' budget. I usually spend $600 a month there; let's drop it to $400 starting today and put that extra $200 toward the course debt as well. How long will it take me to pay myself back?",
+    "previous_conversation": """User: I've got some good news—I just landed a freelance gig on the side. It's going to bring in an extra $450 every month for at least the next six months.
+Assistant: That extra $450 monthly income is great news.
+User: I want to use it to level up. I found a professional certification course that costs $1,800. I was thinking of paying for it using the side hustle money, but I don't want to wait four months to save up the full amount. I'd rather take the course now.
+Assistant: Penny can help structure this goal. Saving $1,800 solely from the $450 monthly income takes exactly 4 months.
+To take the course sooner than four months, we need to identify existing funds or increase the monthly contribution.
+How much have you already set aside for this certification, or what is your current monthly budget surplus? Linked accounts allow Penny to research this automatically.""",
+    "ideal_response": """Response should focus on how long it will take to pay pay back the emergency fund by evaluating the repayment plan with the side hustle money and the extra $200 from the reduced dining budget."""
+  },
+  {
+    "name": "how_much_will_i_save_from_switching",
+    "last_user_request": "I'll do that soon. For now, I know I'm paying $15/month for Music, $20/month for Movies, and $10/month for a Gym app I barely use. I want to cancel the Gym app and switch the Movie plan to an annual one—it's $180 for the whole year. If I cancel the gym and switch the movie plan to annual, how much will I save over the next year?",
+    "previous_conversation": """User: I feel like I'm being nickeled and dimed by streaming services. Can you help me find where my money is going every month?
+Assistant: Penny can automatically identify and track all your recurring subscription outflows.
+I currently do not have access to your transaction history to analyze your specific spending.
+If you link your accounts, Penny will categorize these expenses and help you manage them.""",
+    "ideal_response": """Response should calculate the savings. Mention that Penny can help track these changes and monitor subscription spending automatically with linked accounts."""
+  },
+  {
+    "name": "pay_off_a_$2400_car_repair_on_my_credit_card",
+    "last_user_request": "I just put a $2,400 car repair on my credit card which has a 20% interest rate. If I pay $400 a month, how long until it's gone? Also, can you make sure I don't overspend on my $500 'Hobbies' budget while I pay this off?",
+    "previous_conversation": """User: I'm trying to get a handle on my debt. What can Penny do?
+Assistant: Penny helps manage debt by:
+* Providing a comprehensive overview of all outstanding balances.
+* Analyzing spending to identify potential extra payments.
+* Forecasting projected payoff dates based on current payment strategies.""",
+    "ideal_response": """Response should calculate the payoff timeline with $400/month payments at 20% interest rate.
+Mention that Penny can monitor the $500 'Hobbies' budget and predict if the user is likely to overspend before the month ends.
+With linked accounts, Penny can automatically track spending and provide real-time alerts."""
+  },
 #   {
 #     # NOT LAUNCHED YET: don't optimize for this yet
 #     "name": "can_you_remind_me_to_cancel_my_netflix_at_the_end_",
@@ -503,7 +548,10 @@ def main(batch: int = None, test: str = None):
     1: {
       "name": "User Testing Scenarios",
       "tests": [0, 1, 2, 3]  # All 3 realistic user testing scenarios
-      # "tests": [0, 1, 2]  # All 3 realistic user testing scenarios
+    },
+    2: {
+      "name": "User Testing Scenarios 2",
+      "tests": [4, 5, 6, 7]
     },
   }
   
@@ -566,7 +614,7 @@ Sample Usage Examples:
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run intro penny optimizer tests in batches or individually')
-  parser.add_argument('--batch', type=int, choices=[1],
+  parser.add_argument('--batch', type=int, choices=[1,2],
                       help='Batch number to run (1)')
   parser.add_argument('--test', type=str,
                       help='Test name or index to run individually (e.g., "user_asks_about_spending" or "0")')
