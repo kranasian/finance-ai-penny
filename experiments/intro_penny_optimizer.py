@@ -13,81 +13,31 @@ if parent_dir not in sys.path:
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial planner agent designed to showcase Penny's capabilities and help users understand its value.
-
-## Penny Capabilities
-
-Penny helps users with: comprehensive financial overview, intelligent spending analysis, smart budgeting & goal setting, forecasting & planning, subscription management, personalized insights, goal achievement support, and iMessage integration for managing finances and requesting reminders/notifications.
-
-**Naming Convention**: Use "Penny" for the solution in general, "Hey Penny app" when specifically referring to the mobile app (e.g., linking accounts).
+SYSTEM_PROMPT = """You are a financial planner agent named Penny. Your goal is to be helpful, concise, and demonstrate value without being "salesy".
 
 ## Your Tasks
+1. **Analyze Context**: Check **Previous Conversation** for data. You DO NOT have access to live data unless it is in the text.
+2. **Generate Response**: Write a Python function `execute_plan` returning `(success: bool, response: str)`.
+   - `success`: `True` ONLY if you can fully answer the user's request with available data. `False` if you need to ask a question, request data, or cannot fulfill the request.
+   - `response`: A concise, helpful message joined by `chr(10)`.
 
-1. **Prioritize the Last User Request**: Address the **Last User Request** directly while showcasing Penny's helpfulness.
-2. **Use Previous Conversation for Context**: Analyze `Previous Conversation` to understand intent. For new general questions, don't use specific details from Previous Conversation unless directly relevant.
-3. **Output Python Code**: Write a Python function `execute_plan` that:
-   - Initializes `output_lines = []` and uses `output_lines.append("text")` for each line
-   - Returns `tuple[bool, str]` where `success` is True if response can be provided, False if data is missing
-   - Joins output with `chr(10).join(output_lines)` before returning
-   - Checks if required financial data is in **Previous Conversation**. If missing, return `(False, "message explaining what Penny can do to help")`
-   - Always displays monetary amounts as positive values (rephrase negatives as outflows)
-
-## Critical Rules
-
-**1. NEVER Invent Financial Data:**
-- Only use information from **Previous Conversation** or **Last User Request**. If data is missing, explain what Penny can do to help.
-
-**2. Financial Data Requests:**
-- Extract data **ONLY from Previous Conversation**. When unavailable, explain what Penny can do, focusing on capabilities and value.
-- Only mention account linking in the Hey Penny app if directly relevant to the request.
-
-**3. Capabilities Questions:**
-- When users ask "what can you do?" or about capabilities, describe Penny's features. Only mention account linking if user specifically asks about accessing financial data.
-
-**4. Budget Goals and Reminders:**
-- **Budgets**: Provide guidance when users ask to set budgets or spending limits.
-- **Savings Plans**: When users ask to "save $X", clarify savings goals cannot be set as trackable goals, but provide a detailed savings plan with strategies, timelines, and recommendations.
-- **Reminders/Notifications**: Reminders can be requested through iMessage (no reminders section in app). When users ask about reminders, explain they can request them via iMessage and confirm details (what, when, conditions).
-
-**5. Conversational Flow:**
-- **DO NOT add unnecessary follow-up questions** when user asks a specific question. Answer directly and completely.
-- Respond appropriately to acknowledgments. Mention other ways Penny can help only when natural and relevant.
-
-## Official Categories
-
-When discussing transaction categories, budgets, or spending by category, use these official categories:
-
-- `income`: salary, bonuses, interest, side hussles. (`income_salary`, `income_sidegig`, `income_business`, `income_interest`)
-- `meals`: food spending. (`meals_groceries`, `meals_dining_out`, `meals_delivered_food`)
-- `leisure`: recreation/travel. (`leisure_entertainment`, `leisure_travel`)
-- `bills`: recurring costs. (`bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`)
-- `shelter`: housing. (`shelter_home`, `shelter_utilities`, `shelter_upkeep`)
-- `education`: learning/kids. (`education_kids_activities`, `education_tuition`)
-- `shopping`: discretionary. (`shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `shopping_pets`)
-- `transportation`: car/public. (`transportation_public`, `transportation_car`)
-- `health`: medical/wellness. (`health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`)
-- `donations_gifts`: charity/gifts.
-- `uncategorized`: unknown.
-- `transfers`: internal movements.
-- `miscellaneous`: other.
-
-<EXAMPLES>
-
-input: **Last User Request**: How much am I spending on dining out each month?
-**Previous Conversation**:
-User: Hi, I'm new here. What can this app help me with?
-Assistant: Penny can help you track your spending patterns, create budgets, analyze transactions, forecast income and expenses, manage subscriptions, and provide personalized financial insights.
-output:
-```python
-def execute_plan() -> tuple[bool, str]:
-    output_lines = []
-    output_lines.append("To see how much you're spending on dining out each month, Penny can automatically categorize your transactions and analyze your spending habits across different categories.")
-    output_lines.append("Penny will show you detailed breakdowns of your dining out expenses, compare your spending month-over-month, and help you set budgets for dining out.")
-    output_lines.append("You'll be able to track your progress and receive personalized recommendations based on your actual spending patterns.")
-    return False, chr(10).join(output_lines)
-```
-
-</EXAMPLES>
+## Critical Guidelines
+1. **Missing Data Protocol**:
+   - If the user asks for insights you don't have (e.g., "How much did I spend?"):
+     - **Directly state** you don't have that information yet.
+     - **Briefly** mention that linking accounts in the "Hey Penny app" enables automatic tracking/analysis.
+     - **Avoid fluff**: Do not list every feature Penny has unless asked.
+2. **Savings & Goals**:
+   - If the user has a savings goal (e.g., "save $3000 in 6 months"):
+     - Validate the math (e.g., "$500/month").
+     - **Prompt the user**: Ask about their current progress or financial capacity (e.g., "Do you have any savings for this yet?").
+     - Mention that with linked accounts, Penny can research their finances to find this money automatically.
+     - Note: Savings goals are not trackable in-app yet, but you can help strategize.
+3. **General Capabilities**:
+   - Only mention account linking if the user asks about accessing their data or if it's the only way to answer their question.
+   - Reminders can be requested via iMessage.
+4. **Formatting**:
+   - Always display monetary amounts as positive values.
 """
 
 class IntroPennyOptimizer:
@@ -177,13 +127,40 @@ output:""")
 
     # Generate response
     output_text = ""
+    thought_summary = ""
+    
+    # According to Gemini API docs: iterate through chunks and check part.thought boolean
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
       config=generate_content_config,
     ):
+      # Extract text content (non-thought parts)
       if chunk.text is not None:
         output_text += chunk.text
+      
+      # Extract thought summary from chunk
+      if hasattr(chunk, 'candidates') and chunk.candidates:
+        for candidate in chunk.candidates:
+          # Extract thought summary from parts (per Gemini API docs)
+          # Check part.thought boolean to identify thought parts
+          if hasattr(candidate, 'content') and candidate.content:
+            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+              for part in candidate.content.parts:
+                # Check if this part is a thought summary (per documentation)
+                if hasattr(part, 'thought') and part.thought:
+                  if hasattr(part, 'text') and part.text:
+                    # Accumulate thought summary text (for streaming, it may come in chunks)
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
+    
+    if thought_summary:
+      print("-" * 80)
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("-" * 80)
     
     return output_text
   
@@ -250,30 +227,23 @@ def _run_test_with_logging(last_user_request: str, previous_conversation: str, o
 output:"""
   
   # Print the input
-  print("=" * 80)
   print("LLM INPUT:")
-  print("=" * 80)
+  print("-" * 80)
   print(llm_input)
-  print("=" * 80)
-  print()
+  print("-" * 80)
   
   result = optimizer.generate_response(last_user_request, previous_conversation, replacements=replacements)
   
   # Print the output
-  print("=" * 80)
   print("LLM OUTPUT:")
-  print("=" * 80)
+  print("-" * 80)
   print(result)
-  print("=" * 80)
-  print()
+  print("-" * 80)
   
   # Extract and execute the generated code
   code = extract_python_code(result)
   
   if code:
-    print("=" * 80)
-    print("EXECUTING GENERATED CODE:")
-    print("=" * 80)
     try:
       # Create a namespace for executing the code
       namespace = {}
@@ -283,24 +253,20 @@ output:"""
       
       # Call execute_plan if it exists
       if 'execute_plan' in namespace:
-        print("\n" + "=" * 80)
-        print("Calling execute_plan()...")
-        print("=" * 80)
         success, output = namespace['execute_plan']()
-        print("\n" + "=" * 80)
-        print("execute_plan() FINAL RESULT:")
-        print("=" * 80)
+        print("EXECUTION RESULT:")
+        print("-" * 80)
         print(f"  success: {success}")
         print(f"  output: {output}")
-        print("=" * 80)
+        print("-" * 80)
       else:
         print("Warning: execute_plan() function not found in generated code")
-        print("=" * 80)
+        print("-" * 80)
     except Exception as e:
       print(f"Error executing generated code: {str(e)}")
       import traceback
       print(traceback.format_exc())
-      print("=" * 80)
+      print("-" * 80)
   
   return result
 
@@ -308,16 +274,21 @@ output:"""
 # Test cases list - realistic scenarios of users testing the tool-less app
 TEST_CASES = [
   {
-    "name": "user_asks_about_spending_no_accounts_linked",
+    "name": "user_asks_about_spending",
     "last_user_request": "How much am I spending on dining out?",
     "previous_conversation": """User: Hi, I'm new here. What can this app help me with?
-Assistant: Penny can help you with comprehensive financial planning. It can track your spending patterns, help you create budgets, analyze your transactions, forecast your income and expenses, manage subscriptions, and provide personalized financial insights."""
+Assistant: Penny can help you with comprehensive financial planning. It can track your spending patterns, help you create budgets, analyze your transactions, forecast your income and expenses, manage subscriptions, and provide personalized financial insights.""",
+    "ideal_response": """Response should focus on that Penny does not know given no information is linked.
+Penny needs to then tell that with transactions linked, we can track spending passively and answer these questions."""
   },
   {
     "name": "user_asks_about_savings_plan",
     "last_user_request": "I want to save $3,000 for a vacation in 6 months. Can you help me create a plan?",
     "previous_conversation": """User: What can you help me with?
-Assistant: I can help you understand your financial situation, create budgets, set spending limits, develop savings plans, track subscriptions, and provide personalized financial advice. Once you link your bank accounts, I can also automatically categorize your transactions, analyze your spending patterns, and forecast your income and expenses."""
+Assistant: I can help you understand your financial situation, create budgets, set spending limits, develop savings plans, track subscriptions, and provide personalized financial advice. Once you link your bank accounts, I can also automatically categorize your transactions, analyze your spending patterns, and forecast your income and expenses.""",
+    "ideal_response": """Response should focus on we can do that.
+Prompt the user to say how much they have saved so far and how far they could save.
+Also mention that with Penny, they don't need to provide this information as it can be researched by Penny."""
   },
   {
     "name": "user_asks_about_budgeting_capabilities",
@@ -393,14 +364,20 @@ def run_test(test_name_or_index_or_dict, optimizer: IntroPennyOptimizer = None, 
       test_replacements = test_name_or_index_or_dict.get("replacements", replacements)
       print(f"\n{'='*80}")
       print(f"Running test: {test_name}")
-      print(f"{'='*80}\n")
+      print(f"{'-'*80}")
       
-      return _run_test_with_logging(
+      result = _run_test_with_logging(
         test_name_or_index_or_dict["last_user_request"],
         test_name_or_index_or_dict.get("previous_conversation", ""),
         optimizer,
         replacements=test_replacements
       )
+      
+      if test_name_or_index_or_dict.get("ideal_response", ""):
+        print(f"Ideal response: {test_name_or_index_or_dict['ideal_response']}")
+        print(f"{'='*80}\n")
+      
+      return result
     else:
       print(f"Invalid test dict: must contain 'last_user_request' key.")
       return None
@@ -415,12 +392,18 @@ def run_test(test_name_or_index_or_dict, optimizer: IntroPennyOptimizer = None, 
   print(f"Running test: {test_case['name']}")
   print(f"{'='*80}\n")
   
-  return _run_test_with_logging(
+  result = _run_test_with_logging(
     test_case["last_user_request"],
     test_case["previous_conversation"],
     optimizer,
     replacements=replacements
   )
+  
+  if test_case.get("ideal_response", ""):
+    print(f"Ideal response: {test_case['ideal_response']}")
+    print(f"{'='*80}\n")
+  
+  return result
 
 
 def run_tests(test_names_or_indices_or_dicts, optimizer: IntroPennyOptimizer = None, replacements: dict = None):
@@ -473,7 +456,7 @@ def main(batch: int = None, test: str = None):
   Args:
     batch: Batch number (1) to run all tests, or None to run a single test
     test: Test name, index, or None. If batch is provided, test is ignored.
-      - Test name (str): e.g., "user_asks_about_spending_no_accounts_linked"
+      - Test name (str): e.g., "user_asks_about_spending"
       - Test index (str): e.g., "0" (will be converted to int)
       - None: If batch is also None, prints available tests
   """
@@ -483,7 +466,8 @@ def main(batch: int = None, test: str = None):
   BATCHES = {
     1: {
       "name": "User Testing Scenarios",
-      "tests": [0, 1, 2]  # All 3 realistic user testing scenarios
+      "tests": [0, 1]  # All 3 realistic user testing scenarios
+      # "tests": [0, 1, 2]  # All 3 realistic user testing scenarios
     },
   }
   
@@ -537,9 +521,9 @@ def main(batch: int = None, test: str = None):
 """
 Sample Usage Examples:
   python intro_penny_optimizer.py --batch 1
-  python intro_penny_optimizer.py --test user_asks_about_spending_no_accounts_linked
+  python intro_penny_optimizer.py --test user_asks_about_spending
   python intro_penny_optimizer.py --test 0
-  run_test("user_asks_about_spending_no_accounts_linked")
+  run_test("user_asks_about_spending")
   run_tests([0, 1, 2])
 """
 
@@ -549,6 +533,6 @@ if __name__ == "__main__":
   parser.add_argument('--batch', type=int, choices=[1],
                       help='Batch number to run (1)')
   parser.add_argument('--test', type=str,
-                      help='Test name or index to run individually (e.g., "user_asks_about_spending_no_accounts_linked" or "0")')
+                      help='Test name or index to run individually (e.g., "user_asks_about_spending" or "0")')
   args = parser.parse_args()
   main(batch=args.batch, test=args.test)
