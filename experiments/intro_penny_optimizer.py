@@ -13,31 +13,58 @@ if parent_dir not in sys.path:
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial planner agent named Penny. Your goal is to be helpful, concise, and demonstrate value without being "salesy".
+SYSTEM_PROMPT = """You are a financial planner agent designed to showcase Penny's capabilities and help users understand its value.
+
+## Penny Capabilities
+
+Penny helps users with: comprehensive financial overview, intelligent spending analysis, smart budgeting & goal setting, forecasting & planning, subscription management, personalized insights, goal achievement support, and iMessage integration for managing finances and requesting reminders/notifications.
+
+**Naming Convention**: Use "Penny" for the solution in general. Use "Hey Penny app" *only* when specifically instructing the user to link accounts.
 
 ## Your Tasks
-1. **Analyze Context**: Check **Previous Conversation** for data. You DO NOT have access to live data unless it is in the text.
-2. **Generate Response**: Write a Python function `execute_plan` returning `(success: bool, response: str)`.
-   - `success`: `True` ONLY if you can fully answer the user's request with available data. `False` if you need to ask a question, request data, or cannot fulfill the request.
-   - `response`: A concise, helpful message joined by `chr(10)`.
 
-## Critical Guidelines
-1. **Missing Data Protocol**:
-   - If the user asks for insights you don't have (e.g., "How much did I spend?"):
-     - **Directly state** you don't have that information yet.
-     - **Briefly** mention that linking accounts in the "Hey Penny app" enables automatic tracking/analysis.
-     - **Avoid fluff**: Do not list every feature Penny has unless asked.
-2. **Savings & Goals**:
-   - If the user has a savings goal (e.g., "save $3000 in 6 months"):
-     - Validate the math (e.g., "$500/month").
-     - **Prompt the user**: Ask about their current progress or financial capacity (e.g., "Do you have any savings for this yet?").
-     - Mention that with linked accounts, Penny can research their finances to find this money automatically.
-     - Note: Savings goals are not trackable in-app yet, but you can help strategize.
-3. **General Capabilities**:
-   - Only mention account linking if the user asks about accessing their data or if it's the only way to answer their question.
-   - Reminders can be requested via iMessage.
-4. **Formatting**:
-   - Always display monetary amounts as positive values.
+1. **Prioritize the Last User Request**: Address the **Last User Request** directly.
+2. **Use Previous Conversation for Context**: Analyze `Previous Conversation` to understand intent. For new general questions, don't use specific details from Previous Conversation unless directly relevant.
+3. **Output Python Code**: Write a Python function `execute_plan` that:
+   - Initializes `output_lines = []` and uses `output_lines.append("text")` for each line
+   - Returns `tuple[bool, str]` where `success` is True (unless there is an unexpected code failure).
+   - Joins output with `chr(10).join(output_lines)` before returning
+   - Checks if required financial data is in **Previous Conversation**. If missing, explain what Penny can do to help.
+   - Always displays monetary amounts as positive values (rephrase negatives as outflows)
+   - **IMPORTANT**: Use f-strings (e.g., `f"Value: {x}"`) when including variables in strings.
+   - **CRITICAL**: The final output MUST be a valid Python code block wrapped in ```python ... ```. Do not output the response text directly.
+
+## Critical Rules
+
+**1. Tone & Style:**
+- **Be Direct**: Start immediately with the answer or the necessary explanation. Avoid fluff like "That's a great question!", "Absolutely!", or "Penny excels at...".
+- **Helpful, Not Salesy**: Focus on *how* Penny helps. Avoid marketing jargon.
+- **Account Linking**: Mention linking accounts only when it is the **solution** to the user's missing data problem. Use natural phrasing like "With linked accounts..." or "If you link your accounts...".
+- **Reduce Promotion**: If the benefits of linking accounts (e.g., "automatic categorization", "real-time analysis") were already mentioned in the **Previous Conversation**, DO NOT repeat the pitch. Just state that the data is currently missing and Penny can help if accounts are linked.
+
+**2. Missing Financial Data:**
+- If the user asks for data you don't have (e.g., "How much did I spend?"):
+  - State clearly that you don't have that information yet.
+  - Explain that linking accounts allows Penny to track this passively and answer automatically.
+
+**3. Budgeting & Forecasting:**
+- **Budgets**: When asked about budgets, mention that Penny monitors daily spending and can **predict** if the user is likely to overshoot *before* the month ends.
+- **Savings Plans**: When asked to create a plan (e.g., "save $X"):
+  - Validate the math if possible.
+  - **Ask the user** about their current progress (e.g., "How much have you saved so far?") or capacity.
+  - Mention that linked accounts allow Penny to research this automatically.
+- **Long-term Goals**: If asked "how long" (e.g., retirement):
+  - Answer the calculation based on provided numbers.
+  - **Ask follow-up questions** about their broader goals or concerns to better tailor future advice.
+
+**4. Reminders:**
+- Reminders are requested via iMessage. Explain this channel and confirm details.
+
+## Thinking Process
+
+- **Format**: Use a bulleted list with max 3 items.
+- **Content**: Identify the Goal -> Check Data Availability -> Formulate Response Strategy.
+- **Constraint**: Keep it under 50 words.
 """
 
 class IntroPennyOptimizer:
@@ -70,7 +97,6 @@ class IntroPennyOptimizer:
     
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
-
   
   def generate_response(self, last_user_request: str, previous_conversation: str, replacements: dict = None) -> str:
     """
@@ -294,28 +320,38 @@ Also mention that with Penny, they don't need to provide this information as it 
     "name": "user_asks_about_budgeting_capabilities",
     "last_user_request": "Can I set a monthly budget for groceries?",
     "previous_conversation": """User: I'm trying to get better control of my finances. What does this app do?
-Assistant: Great question! I can help you create budgets for any spending category, set spending limits, track your progress, and get personalized recommendations. I can also help you develop savings plans, identify spending patterns, manage subscriptions, and provide financial insights. To unlock the full power of these features—like automatic transaction categorization and real-time spending analysis—you'll want to link your bank accounts."""
+Assistant: Great question! I can help you create budgets for any spending category, set spending limits, track your progress, and get personalized recommendations. I can also help you develop savings plans, identify spending patterns, manage subscriptions, and provide financial insights. To unlock the full power of these features—like automatic transaction categorization and real-time spending analysis—you'll want to link your bank accounts.""" ,
+    "ideal_response": """Response should focus on Penny can do that.
+It should also mention that it can do beyond budgets, and it can monitor your daily spending and predict if you're likely going to overshoot way before the month ends."""
   },
   {
-    "name": "can_you_remind_me_to_cancel_my_netflix_at_the_end_",
-    "last_user_request": "can you remind me to cancel my netflix at the end of next month?",
-    "previous_conversation": """User: hello!
-Assistant: Hello! I'm here to help you manage your finances effectively.
-Penny can assist you with several key areas:
-- Comprehensive financial overview
-- Intelligent spending analysis
-- Smart budgeting & goal setting
-- Forecasting & planning
-- Subscription management
-- Personalized insights
-- Goal achievement support
-- iMessage integration for managing finances and requesting reminders/notifications.
-How can I assist you with your finances today?
-User: ok, tell me how much i'm expected to earn next month.
-Assistant: Penny excels at forecasting and planning, which includes projecting your expected earnings for the next month.
-To generate an accurate forecast based on your historical income patterns, linking your bank accounts in the Hey Penny app enables Penny to automatically track your income sources and calculate reliable projections.
-Once set up, Penny will provide you with detailed insights into your projected cash flow for the upcoming month, helping you plan future expenses and savings goals with confidence."""
+    "name": "saved_3000_per_month_for_my_retirement",
+    "last_user_request": "If I saved 3000 per month for my retirement, how long do I need to wait to have 1M saved up?",
+    "previous_conversation": """""",
+    "ideal_response": """Response should focus on answering the user's question about how long.
+It should then ask the user more on what he wants to achieve, and what he's concerned about."""
   },
+#   {
+#     # NOT LAUNCHED YET: don't optimize for this yet
+#     "name": "can_you_remind_me_to_cancel_my_netflix_at_the_end_",
+#     "last_user_request": "can you remind me to cancel my netflix at the end of next month?",
+#     "previous_conversation": """User: hello!
+# Assistant: Hello! I'm here to help you manage your finances effectively.
+# Penny can assist you with several key areas:
+# - Comprehensive financial overview
+# - Intelligent spending analysis
+# - Smart budgeting & goal setting
+# - Forecasting & planning
+# - Subscription management
+# - Personalized insights
+# - Goal achievement support
+# - iMessage integration for managing finances and requesting reminders/notifications.
+# How can I assist you with your finances today?
+# User: ok, tell me how much i'm expected to earn next month.
+# Assistant: Penny excels at forecasting and planning, which includes projecting your expected earnings for the next month.
+# To generate an accurate forecast based on your historical income patterns, linking your bank accounts in the Hey Penny app enables Penny to automatically track your income sources and calculate reliable projections.
+# Once set up, Penny will provide you with detailed insights into your projected cash flow for the upcoming month, helping you plan future expenses and savings goals with confidence."""
+#   },
 ]
 
 
@@ -466,7 +502,7 @@ def main(batch: int = None, test: str = None):
   BATCHES = {
     1: {
       "name": "User Testing Scenarios",
-      "tests": [0, 1]  # All 3 realistic user testing scenarios
+      "tests": [0, 1, 2, 3]  # All 3 realistic user testing scenarios
       # "tests": [0, 1, 2]  # All 3 realistic user testing scenarios
     },
   }
