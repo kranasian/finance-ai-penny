@@ -27,7 +27,7 @@ SYSTEM_PROMPT = """Transform account names to concise, readable format. Output J
 7. Detect duplicates: Compare all names. If any appears 2+ times, mark all instances.
 8. Add masks: Append " **" + 4-digit `mask` ONLY to duplicates. Format: "Name **1234" (space before **, no space between ** and digits).
 
-Preserve all `input_id`s. Output valid JSON array.
+Preserve all input `id`s. Output valid JSON array.
 """
 
 class AccountRenamerOptimizer:
