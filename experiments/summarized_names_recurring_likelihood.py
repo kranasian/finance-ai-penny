@@ -78,12 +78,17 @@ Identify recurring transactions, then the likelihood for them to be bills, salar
 - `UNLIKELY`: 50-50 between being and not being in the category
 
 ### Processing Rules
-1. **Recurring Check**: Based on `description`, determine if a transaction is recurring (e.g., paid/received weekly, monthly, yearly).
-   - **If NOT Recurring**: Tag `is_bills`, `is_salary`, and `is_sidegig` as `IMPOSSIBLE`.
-2. **Directionality Check**:
-   - **Outflows (Payments/Expenses)**: If the transaction is an outflow (e.g., "monthly subscription", "monthly rent", "monthly membership fee", "monthly cell phone bill"), `is_salary` MUST be `IMPOSSIBLE`. However, it may be a side-gig expense (categorized under `is_sidegig` if it supports freelance work) or a bill.
-   - **Inflows (Income)**: If the transaction is an inflow (e.g., "salary payment", "payment for logo design gig"), it could be `is_salary` or `is_sidegig`.
-3. **Categorization**: Determine the likelihood of the transaction to be categorized as a bill, salary, and/or sidegig following the options above."""
+1. **Recurring Check (CRITICAL FIRST STEP)**: Based on the `name` and `description`, determine if a transaction is likely to be recurring.
+    - **Consider the nature of the business:** A subscription service is almost guaranteed to be recurring (`LIKELY`). A bank may have recurring fees, but not all bank transactions are recurring, so it's less certain (`UNLIKELY`). A grocery store is rarely a recurring bill (`IMPOSSIBLE`).
+    - Subscriptions (e.g., streaming services, software, meal kits), utilities, rent, insurance, or payroll are typically recurring.
+    - One-time purchases from retailers, ride-sharing, or P2P transfers are typically not.
+   - **If the transaction does not appear to be recurring, you MUST tag `is_bills`, `is_salary`, and `is_sidegig` as `IMPOSSIBLE`.**
+2. **Directionality Inference**: From the `description`, infer if the transaction is an **inflow** (income) or an **outflow** (expense).
+3. **Categorization Logic (only if recurring)**:
+   - **Outflows (Payments/Expenses)**: If the transaction is an outflow, it is most likely a `bill`. `is_salary` MUST be `IMPOSSIBLE`.
+     - **Side-Gig Expense Check**: Consider if the outflow could also be a business expense for a side gig (e.g., software subscription for a freelance designer). If so, `is_sidegig` could be `UNLIKELY` or `LIKELY`, and `is_bills` might be `UNLIKELY` if it's purely a business expense.
+   - **Inflows (Income)**: If the transaction is an inflow, it can be a `salary` or `sidegig`. `is_bills` MUST be `IMPOSSIBLE`. Differentiate between a stable salary and more variable side gig income.
+4. **Final Review**: Briefly review your classifications for common sense. For example, a university (`NYU`) is not a monthly bill, but it does have recurring tuition payments, so `is_bills` should be `UNLIKELY`, not `IMPOSSIBLE`."""
 
 
 class SummarizedNamesRecurringLikelihood:
@@ -257,27 +262,27 @@ def test_provided_examples(classifier: SummarizedNamesRecurringLikelihood = None
         {
             "id": 8630,
             "name": "Municipal Water and Sewer",
-            "description": "water utility company that collects water service fees"
+            "description": "Public utility for water and wastewater management."
         },
         {
             "id": 1657,
             "name": "Lyft",
-            "description": "ride-sharing service where customers pay for transportation"
+            "description": "A technology company that facilitates peer-to-peer transportation."
         },
         {
             "id": 12010,
             "name": "Pret A Manger",
-            "description": "sells sandwiches, salads, and other food items"
+            "description": "A chain of sandwich shops."
         },
         {
             "id": 953,
             "name": "Travelers Insurance",
-            "description": "sells various types of insurance, including auto, home, renters, and business insurance"
+            "description": "An insurance company providing a range of coverage options."
         },
         {
             "id": 22891,
             "name": "Visa Provisioning Service",
-            "description": "a debit card authorization for a credit from a Visa provisioning service"
+            "description": "Service for managing and provisioning Visa card credentials for digital wallets."
         }
     ]
     return _run_test_with_logging(transactions, classifier)
@@ -286,11 +291,11 @@ def test_provided_examples(classifier: SummarizedNamesRecurringLikelihood = None
 def test_batch_1(classifier: SummarizedNamesRecurringLikelihood = None):
     """Batch 1: Outflows and Inflows mix"""
     transactions = [
-        {"id": 1, "name": "Netflix", "description": "monthly streaming subscription service"},
-        {"id": 2, "name": "Starbucks", "description": "coffee shop for daily caffeine fix"},
-        {"id": 3, "name": "Company Payroll", "description": "bi-weekly salary payment from employer"},
-        {"id": 4, "name": "Upwork", "description": "freelance platform payment for software project"},
-        {"id": 5, "name": "Landlord", "description": "monthly rent payment for apartment"}
+        {"id": 1, "name": "Netflix", "description": "An online streaming service for movies and TV shows."},
+        {"id": 2, "name": "Starbucks", "description": "A global chain of coffeehouses."},
+        {"id": 3, "name": "Direct Deposit", "description": "An electronic transfer of payment into a checking or savings account."},
+        {"id": 4, "name": "Stripe", "description": "An online payment processing platform for businesses."},
+        {"id": 5, "name": "John Smith", "description": "A person-to-person transfer."}
     ]
     return _run_test_with_logging(transactions, classifier)
 
@@ -298,11 +303,11 @@ def test_batch_1(classifier: SummarizedNamesRecurringLikelihood = None):
 def test_batch_2(classifier: SummarizedNamesRecurringLikelihood = None):
     """Batch 2: Ambiguous and Non-recurring"""
     transactions = [
-        {"id": 6, "name": "Home Depot", "description": "one-time purchase of garden tools"},
-        {"id": 7, "name": "State Farm", "description": "monthly auto insurance premium"},
-        {"id": 8, "name": "Uber", "description": "occasional ride-sharing for weekend outings"},
-        {"id": 9, "name": "Local Gym", "description": "monthly membership fee for fitness center"},
-        {"id": 10, "name": "Amazon", "description": "various online shopping purchases"}
+        {"id": 6, "name": "Home Depot", "description": "A retail company that sells home improvement and construction products."},
+        {"id": 7, "name": "State Farm", "description": "An insurance and financial services company."},
+        {"id": 8, "name": "Uber", "description": "A technology company that offers ride-hailing and food delivery services."},
+        {"id": 9, "name": "ClassPass", "description": "A subscription service providing access to a network of fitness studios and gyms."},
+        {"id": 10, "name": "Amazon", "description": "An e-commerce and cloud computing company."}
     ]
     return _run_test_with_logging(transactions, classifier)
 
@@ -310,11 +315,11 @@ def test_batch_2(classifier: SummarizedNamesRecurringLikelihood = None):
 def test_batch_3(classifier: SummarizedNamesRecurringLikelihood = None):
     """Batch 3: Potential Side-gig expenses vs Salary"""
     transactions = [
-        {"id": 11, "name": "Adobe Creative Cloud", "description": "monthly subscription for design software used in freelance work"},
-        {"id": 12, "name": "H&M", "description": "clothing store purchase for personal wardrobe"},
-        {"id": 13, "name": "T-Mobile", "description": "monthly cell phone bill"},
-        {"id": 14, "name": "Fiverr", "description": "payment for logo design gig"},
-        {"id": 15, "name": "Chevron", "description": "gas station for car fuel"}
+        {"id": 11, "name": "Adobe Creative Cloud", "description": "A suite of software and services for creative professionals."},
+        {"id": 12, "name": "H&M", "description": "A multinational retail company for fashion."},
+        {"id": 13, "name": "Verizon", "description": "A telecommunications company offering wireless and wireline services."},
+        {"id": 14, "name": "Patreon", "description": "A membership platform for creators to run a subscription content service."},
+        {"id": 15, "name": "Chevron", "description": "An energy corporation involved in petroleum and natural gas."}
     ]
     return _run_test_with_logging(transactions, classifier)
 
@@ -322,13 +327,39 @@ def test_batch_3(classifier: SummarizedNamesRecurringLikelihood = None):
 def test_batch_4(classifier: SummarizedNamesRecurringLikelihood = None):
     """Batch 4: Bills vs One-offs"""
     transactions = [
-        {"id": 16, "name": "ConEd", "description": "monthly electricity and gas utility bill"},
-        {"id": 17, "name": "Best Buy", "description": "purchase of a new laptop"},
-        {"id": 18, "name": "Zelle Transfer", "description": "received money from a friend for dinner"},
-        {"id": 19, "name": "Blue Apron", "description": "weekly meal kit subscription service"},
-        {"id": 20, "name": "Apple Services", "description": "monthly iCloud storage fee"}
+        {"id": 16, "name": "ConEd", "description": "An energy company that provides electric, gas, and steam service."},
+        {"id": 17, "name": "Affirm", "description": "A financial technology company offering installment loans for consumers at the point of sale."},
+        {"id": 18, "name": "Zelle", "description": "A digital payments network."},
+        {"id": 19, "name": "Blue Apron", "description": "A meal kit delivery service."},
+        {"id": 20, "name": "Apple Services", "description": "Digital services from Apple, such as App Store, iCloud, and Apple Music."}
     ]
     return _run_test_with_logging(transactions, classifier)
+
+
+def test_batch_5(classifier: SummarizedNamesRecurringLikelihood = None):
+    """Batch 5: Financial, Government, and Healthcare"""
+    transactions = [
+        {"id": 21, "name": "Chase Bank", "description": "Financial institution offering banking and investment services."},
+        {"id": 22, "name": "IRS", "description": "United States Internal Revenue Service, responsible for collecting federal taxes."},
+        {"id": 23, "name": "CVS Pharmacy", "description": "Retail pharmacy and healthcare company."},
+        {"id": 24, "name": "Kaiser Permanente", "description": "Integrated managed care consortium, combining health care services with health plan coverage."},
+        {"id": 25, "name": "Department of Motor Vehicles", "description": "Government agency that administers vehicle registration and driver licensing."}
+    ]
+    return _run_test_with_logging(transactions, classifier)
+
+
+def test_batch_6(classifier: SummarizedNamesRecurringLikelihood = None):
+    """Batch 6: Education, Travel, and Entertainment"""
+    transactions = [
+        {"id": 26, "name": "NYU", "description": "A private research university in New York City."},
+        {"id": 27, "name": "Delta Airlines", "description": "A major American airline."},
+        {"id": 28, "name": "Marriott Hotels", "description": "A multinational hospitality company."},
+        {"id": 29, "name": "Ticketmaster", "description": "A ticket sales and distribution company."},
+        {"id": 30, "name": "American Red Cross", "description": "A humanitarian organization providing emergency assistance and disaster relief."}
+    ]
+    return _run_test_with_logging(transactions, classifier)
+
+
 
 
 def main():
@@ -338,7 +369,7 @@ def main():
     print("Testing SummarizedNamesRecurringLikelihood\n")
     classifier = SummarizedNamesRecurringLikelihood()
 
-    batches = [test_batch_1, test_batch_2, test_batch_3, test_batch_4]
+    batches = [test_batch_1, test_batch_2, test_batch_3, test_batch_4, test_batch_5, test_batch_6]
     
     for i, batch in enumerate(batches):
         print(f"Running Batch {i+1}")
@@ -347,6 +378,7 @@ def main():
         print("\n")
 
     print("All tests completed!")
+
 
 
 if __name__ == "__main__":
