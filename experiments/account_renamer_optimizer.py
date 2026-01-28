@@ -13,21 +13,54 @@ if parent_dir not in sys.path:
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """Transform account names to concise, readable format. Output JSON array: each object has "id" and "account_name".
+SYSTEM_PROMPT = """Transform a list of financial accounts into a concise, distinguishable, and standardized format. 
 
-**Step 1: Process each account to create preliminary name**
-1. Select source: Use `long_account_name` if more descriptive, else `account_name`.
-2. Remove words: Delete (case-insensitive) "Free", "Visa", "Mastercard", "Discover", "Signature Card", "Card", "Account".
-3. Shorten bank: Convert to common consumer name (e.g., "Technology Credit Union" → "Tech CU", "Citibank" → "Citi").
-4. Build: [Shortened Bank] + " " + [Cleaned Name]
-5. Title case: Apply Title Case (preserve acronyms).
-6. Truncate: If >35 chars, remove words from right at whole-word boundaries. Never truncate bank prefix.
+### Output Format Requirement
+Return ONLY a valid JSON array of objects. Each object must have exactly two keys: "id" and "account_name". No preamble, no postscript, and no parent wrapping object.
 
-**Step 2: After ALL preliminary names are created, handle duplicates**
-7. Detect duplicates: Compare all names. If any appears 2+ times, mark all instances.
-8. Add masks: Append " **" + 4-digit `mask` ONLY to duplicates. Format: "Name **1234" (space before **, no space between ** and digits).
+### Phase 1: Strategic Batch Analysis (Analyze BEFORE processing individual accounts)
+1. **Bank Necessity**: 
+   - Identify the primary bank for every account. 
+   - If ALL accounts in the input batch belong to the SAME bank, bank names are REDUNDANT. Global Flag: `Include_Bank = False`.
+   - If accounts belong to DIFFERENT banks, the bank name is REQUIRED for distinction. Global Flag: `Include_Bank = True`.
+2. **Redundancy Identification**: Scan for words that appear in every single record (e.g., "Account", "Checking"). These are candidates for removal to maximize brevity.
 
-Preserve all input `id`s. Output valid JSON array.
+### Phase 2: Preliminary Name Generation (Apply to each record)
+1. **Selection**: Select the most descriptive source between `long_account_name` and `account_name` (e.g., "High Yield" is better than "Savings").
+2. **Aggressive Cleaning**: 
+   - Strip all special symbols (®, ™, ©, *, etc.).
+   - Delete common filler words (case-insensitive): "Free", "Visa", "Mastercard", "Discover", "Signature Card", "Signature", "Card", "Account". 
+   - **MANDATORY**: "Free" MUST be removed.
+3. **Internal Redundancy Filter**: If the bank's name (or variants like "Amex", "Citi", "BofA") exists in the cleaned string from the step above, remove it to prevent duplicates (e.g., "Chase Chase Checking").
+4. **Assembly**:
+   - If `Include_Bank` is True: Result = [Bank Short Name] + " " + [Cleaned Name].
+   - If `Include_Bank` is False: Result = [Cleaned Name] only.
+   - **Bank Short Names**: Technology Credit Union -> "Tech CU", Citibank -> "Citi", Bank of America -> "BofA". Others like Amex, Chase, Truist, Patelco, Alliant stay as-is.
+   - **Fallback**: If the name becomes empty or non-descriptive, use the original cleaned `account_name`.
+5. **Formatting**: Apply Title Case. Use ALL CAPS for acronyms (SM, CU, CD, HELOC).
+6. **Character Limit**: Limit to 35 chars. If longer, remove words from the RIGHT end. NEVER truncate the bank prefix.
+
+### Phase 3: Strategic Masking Logic (Batch-Level)
+This phase MUST be performed by comparing the results of ALL records from Phase 2.
+
+**MASKING DECISION ALGORITHM:**
+1.  **Count occurrences** of each preliminary name string (case-insensitive).
+2.  **IF Count == 1**: Output the name exactly as it is. **DO NOT ADD A MASK.**
+3.  **IF Count >= 2**: Append the mask to **EVERY** instance of that specific name.
+    - **Format**: "Name **1234" (Exactly one space before **, no space after).
+
+### CRITICAL MASKING CONSTRAINTS
+- **THE TWIN RULE**: If an `account_name` includes a mask, there **MUST** be at least one other `account_name` in the batch that is identical word-for-word (excluding the mask).
+- **THE ZERO-MASK RULE**: If a name is unique in the batch, adding a mask is a CRITICAL FAILURE. Never mask a unique name.
+
+### Formatting Rule for Acronyms
+- **ALWAYS use ALL CAPS for acronyms.** This includes SM, CU, CD, HELOC, AMEX, BofA, etc. (e.g., "UnitedSM" should be "UnitedSM" or "United SM").
+
+### Final Self-Correction Step
+Before finalizing the JSON, perform this check for every account:
+"Is there any other account in this batch with the exact same name (excluding the mask)?"
+- If **NO**: You MUST remove the mask.
+- If **YES**: You MUST ensure both have masks.
 """
 
 class AccountRenamerOptimizer:
@@ -42,7 +75,7 @@ class AccountRenamerOptimizer:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 4096
+    self.thinking_budget = 1024
     self.model_name = model_name
     
     # Generation Configuration Constants (from accounts_rename in gen_ai_lib.py)
@@ -350,6 +383,270 @@ Key validations:
 - Accounts 544 and 692: Both become "Wells Fargo Savings" (duplicate) -> add masks
 - Mask format: " **" (space + two asterisks) followed by 4-digit mask, no space before mask"""
   },
+  {
+    "name": "same_bank_multiple_account_types",
+    "account_list": [
+      {
+        "id": 101,
+        "account_name": "FREE CHECKING",
+        "long_account_name": "Chase Total Checking Account",
+        "bank_name": "Chase",
+        "mask": 1234
+      },
+      {
+        "id": 102,
+        "account_name": "SAVINGS ACCOUNT",
+        "long_account_name": "Chase Premier Savings",
+        "bank_name": "Chase",
+        "mask": 5678
+      },
+      {
+        "id": 103,
+        "account_name": "CREDIT CARD",
+        "long_account_name": "Chase Sapphire Preferred Visa Signature Card",
+        "bank_name": "Chase",
+        "mask": 9012
+      },
+      {
+        "id": 104,
+        "account_name": "MONEY MARKET",
+        "long_account_name": "Chase Money Market Select",
+        "bank_name": "Chase",
+        "mask": 3456
+      },
+      {
+        "id": 105,
+        "account_name": "INVESTMENT ACCOUNT",
+        "long_account_name": "Chase You Invest Brokerage Account",
+        "bank_name": "Chase",
+        "mask": 7890
+      }
+    ],
+    "ideal_response": """Expected output:
+[
+  {"id": 101, "account_name": "Chase Total Checking"},
+  {"id": 102, "account_name": "Chase Premier Savings"},
+  {"id": 103, "account_name": "Chase Sapphire Preferred"},
+  {"id": 104, "account_name": "Chase Money Market Select"},
+  {"id": 105, "account_name": "Chase You Invest Brokerage"}
+]
+Key validations:
+- All accounts from same bank (Chase)
+- Remove "FREE" from account 101
+- Remove "Account" from accounts 101, 102, 105
+- Remove "Visa Signature Card" from account 103
+- Use long_account_name when more descriptive
+- All names unique, no masks needed"""
+  },
+  {
+    "name": "different_banks_each_account",
+    "account_list": [
+      {
+        "id": 201,
+        "account_name": "CHECKING",
+        "long_account_name": "Chase Total Checking Account",
+        "bank_name": "Chase",
+        "mask": 1111
+      },
+      {
+        "id": 202,
+        "account_name": "SAVINGS",
+        "long_account_name": "Bank of America Advantage Savings",
+        "bank_name": "Bank of America",
+        "mask": 2222
+      },
+      {
+        "id": 203,
+        "account_name": "CREDIT CARD",
+        "long_account_name": "Wells Fargo Cash Wise Visa Signature Card",
+        "bank_name": "Wells Fargo",
+        "mask": 3333
+      },
+      {
+        "id": 204,
+        "account_name": "MONEY MARKET",
+        "long_account_name": "Capital One 360 Money Market Account",
+        "bank_name": "Capital One",
+        "mask": 4444
+      },
+      {
+        "id": 205,
+        "account_name": "INVESTMENT",
+        "long_account_name": "Citi Self Invest Account",
+        "bank_name": "Citibank",
+        "mask": 5555
+      }
+    ],
+    "ideal_response": """Expected output:
+[
+  {"id": 201, "account_name": "Chase Total Checking"},
+  {"id": 202, "account_name": "BofA Advantage Savings"},
+  {"id": 203, "account_name": "Wells Fargo Cash Wise"},
+  {"id": 204, "account_name": "Capital One 360 Money Market"},
+  {"id": 205, "account_name": "Citi Self Invest"}
+]
+Key validations:
+- Each account from different bank
+- Remove "Account" from accounts 201, 204, 205
+- Remove "Visa Signature Card" from account 203
+- Shorten "Bank of America" to "BofA"
+- Shorten "Citibank" to "Citi"
+- Use long_account_name when more descriptive
+- All names unique, no masks needed"""
+  },
+  {
+    "name": "test_example_1",
+    "account_list": [
+      {
+        "id": 8525,
+        "account_name": "Amex Checking",
+        "bank_name": None,
+        "long_account_name": "Amex Checking",
+        "account_mask": "4507"
+      },
+      {
+        "id": 8526,
+        "account_name": "Citi® Checking",
+        "bank_name": None,
+        "long_account_name": "Citi® Checking",
+        "account_mask": "3686"
+      },
+      {
+        "id": 8527,
+        "account_name": "Amex Gold",
+        "bank_name": None,
+        "long_account_name": "Amex Gold",
+        "account_mask": "1587"
+      },
+      {
+        "id": 8528,
+        "account_name": "Citi Double Cash®",
+        "bank_name": None,
+        "long_account_name": "Citi Double Cash®",
+        "account_mask": "3297"
+      },
+      {
+        "id": 8529,
+        "account_name": "Amex High Yield Savings",
+        "bank_name": None,
+        "long_account_name": "Amex High Yield Savings",
+        "account_mask": "1676"
+      },
+      {
+        "id": 8530,
+        "account_name": "Citi® Savings",
+        "bank_name": None,
+        "long_account_name": "Citi® Savings",
+        "account_mask": "2977"
+      }
+    ],
+    "ideal_response": """Expected output:
+[
+  {"id": 8525, "account_name": "Amex Checking"},
+  {"id": 8526, "account_name": "Citi Checking"},
+  {"id": 8527, "account_name": "Amex Gold"},
+  {"id": 8528, "account_name": "Citi Double Cash"},
+  {"id": 8529, "account_name": "Amex High Yield Savings"},
+  {"id": 8530, "account_name": "Citi Savings"}
+]
+Key validations:
+- Remove special characters like ®
+- All names unique, no masks needed"""
+  },
+  {
+    "name": "test_example_2",
+    "account_list": [
+      {
+        "id": 6799,
+        "account_name": "Alliant Checking",
+        "bank_name": None,
+        "long_account_name": "Alliant Checking",
+        "account_mask": "3149"
+      },
+      {
+        "id": 6800,
+        "account_name": "Alliant Credit",
+        "bank_name": None,
+        "long_account_name": "Alliant Credit",
+        "account_mask": "4080"
+      },
+      {
+        "id": 6801,
+        "account_name": "Alliant Checking",
+        "bank_name": None,
+        "long_account_name": "Alliant Checking",
+        "account_mask": "2182"
+      },
+      {
+        "id": 6802,
+        "account_name": "Alliant Credit",
+        "bank_name": None,
+        "long_account_name": "Alliant Credit",
+        "account_mask": "5972"
+      }
+    ],
+    "ideal_response": """Expected output:
+[
+  {"id": 6799, "account_name": "Alliant Checking **3149"},
+  {"id": 6800, "account_name": "Alliant Credit **4080"},
+  {"id": 6801, "account_name": "Alliant Checking **2182"},
+  {"id": 6802, "account_name": "Alliant Credit **5972"}
+]
+Key validations:
+- Duplicate names "Alliant Checking" and "Alliant Credit" -> add masks to all"""
+  },
+  {
+    "name": "test_example_3",
+    "account_list": [
+      {
+        "id": 4816,
+        "account_name": "Visa Card 2746",
+        "bank_name": "Truist",
+        "long_account_name": "Truist Enjoy Cash - 3/2/1",
+        "account_mask": "2746"
+      },
+      {
+        "id": 4817,
+        "account_name": "Mortgage 4503",
+        "bank_name": "Truist",
+        "long_account_name": "Mortgage",
+        "account_mask": "4503"
+      },
+      {
+        "id": 4818,
+        "account_name": "HELOC Fixed Draw *5001",
+        "bank_name": "Truist",
+        "long_account_name": "HOME EQUITY LINE FIXED DRAW",
+        "account_mask": "5001"
+      },
+      {
+        "id": 4819,
+        "account_name": "Home Equity Line *5998",
+        "bank_name": "Truist",
+        "long_account_name": "HOME EQUITY LINE OF CREDIT",
+        "account_mask": "5998"
+      },
+      {
+        "id": 4820,
+        "account_name": "Home Equity Line Summary",
+        "bank_name": "Truist",
+        "long_account_name": "HOME EQUITY LINE OF CREDIT",
+        "account_mask": "5998"
+      }
+    ],
+    "ideal_response": """Expected output:
+[
+  {"id": 4816, "account_name": "Enjoy Cash - 3/2/1"},
+  {"id": 4817, "account_name": "Mortgage"},
+  {"id": 4818, "account_name": "Home Equity Line Fixed Draw"},
+  {"id": 4819, "account_name": "Home Equity Line **5998"},
+  {"id": 4820, "account_name": "Home Equity Line **5998"}
+]
+Key validations:
+- All from same bank (Truist) -> omit bank name
+- "Home Equity Line" is duplicate (from long_account_name) -> add masks
+- Note: id 4820 has same mask as 4819, which is fine as they are the same account or just share the mask"""
+  },
 ]
 
 
@@ -393,9 +690,9 @@ def run_test(test_name_or_index_or_dict, optimizer: AccountRenamerOptimizer = No
   if isinstance(test_name_or_index_or_dict, dict):
     if "account_list" in test_name_or_index_or_dict:
       test_name = test_name_or_index_or_dict.get("name", "custom_test")
-      print(f"\n{'='*80}")
+      print(f"\\n{'='*80}")
       print(f"Running test: {test_name}")
-      print(f"{'-'*80}\n")
+      print(f"{'-'*80}\\n")
       
       result = _run_test_with_logging(
         test_name_or_index_or_dict["account_list"],
@@ -404,7 +701,7 @@ def run_test(test_name_or_index_or_dict, optimizer: AccountRenamerOptimizer = No
       
       if test_name_or_index_or_dict.get("ideal_response", ""):
         print(f"Ideal response: {test_name_or_index_or_dict['ideal_response']}")
-        print(f"{'='*80}\n")
+        print(f"{'='*80}\\n")
       
       return result
     else:
@@ -417,9 +714,9 @@ def run_test(test_name_or_index_or_dict, optimizer: AccountRenamerOptimizer = No
     print(f"Test case '{test_name_or_index_or_dict}' not found.")
     return None
   
-  print(f"\n{'='*80}")
+  print(f"\\n{'='*80}")
   print(f"Running test: {test_case['name']}")
-  print(f"{'='*80}\n")
+  print(f"{'='*80}\\n")
   
   result = _run_test_with_logging(
     test_case["account_list"],
@@ -428,7 +725,7 @@ def run_test(test_name_or_index_or_dict, optimizer: AccountRenamerOptimizer = No
   
   if test_case.get("ideal_response", ""):
     print(f"Ideal response: {test_case['ideal_response']}")
-    print(f"{'='*80}\n")
+    print(f"{'='*80}\\n")
   
   return result
 
@@ -489,8 +786,24 @@ def main(batch: int = None, test: str = None):
   # Define test batches
   BATCHES = {
     1: {
-      "name": "Account Renamer Test Cases",
-      "tests": [0, 1, 2]  # All 3 test cases
+      "name": "All Test Cases - Comprehensive",
+      "tests": [0, 1, 2, 3, 4, 5, 6, 7]  # All 8 test cases
+    },
+    2: {
+      "name": "Same Bank Scenarios",
+      "tests": [3, 7]  # same_bank_multiple_account_types, test_example_3
+    },
+    3: {
+      "name": "Different Banks Scenarios",
+      "tests": [0, 4, 5]  # Tests with multiple banks
+    },
+    4: {
+      "name": "Duplicate Handling",
+      "tests": [2, 6, 7]  # duplicate_detection_and_masking, test_example_2, test_example_3
+    },
+    5: {
+      "name": "Word Removal and Truncation",
+      "tests": [1, 5]  # credit_cards_word_removal, test_example_1
     },
   }
   
@@ -498,20 +811,20 @@ def main(batch: int = None, test: str = None):
     # Run a batch of tests
     if batch not in BATCHES:
       print(f"Invalid batch number: {batch}. Available batches: {list(BATCHES.keys())}")
-      print("\nBatch descriptions:")
+      print("\\nBatch descriptions:")
       for b, info in BATCHES.items():
         test_names = [TEST_CASES[idx]["name"] for idx in info["tests"]]
         print(f"  Batch {b}: {info['name']} - {', '.join(test_names)}")
       return
     
     batch_info = BATCHES[batch]
-    print(f"\n{'='*80}")
+    print(f"\\n{'='*80}")
     print(f"BATCH {batch}: {batch_info['name']}")
-    print(f"{'='*80}\n")
+    print(f"{'='*80}\\n")
     
     for test_idx in batch_info["tests"]:
       run_test(test_idx, optimizer)
-      print("\n" + "-"*80 + "\n")
+      print("\\n" + "-"*80 + "\\n")
   
   elif test is not None:
     # Run a single test
@@ -521,7 +834,7 @@ def main(batch: int = None, test: str = None):
     
     result = run_test(test, optimizer)
     if result is None:
-      print(f"\nAvailable test cases:")
+      print(f"\\nAvailable test cases:")
       for i, test_case in enumerate(TEST_CASES):
         print(f"  {i}: {test_case['name']}")
   
@@ -530,13 +843,13 @@ def main(batch: int = None, test: str = None):
     print("Usage:")
     print("  Run a batch: --batch <1>")
     print("  Run a single test: --test <name_or_index>")
-    print("\nAvailable batches:")
+    print("\\nAvailable batches:")
     for b, info in BATCHES.items():
       test_names = [TEST_CASES[idx]["name"] for idx in info["tests"]]
       print(f"  Batch {b}: {info['name']}")
       for idx in info["tests"]:
         print(f"    - {idx}: {TEST_CASES[idx]['name']}")
-    print("\nAll test cases:")
+    print("\\nAll test cases:")
     for i, test_case in enumerate(TEST_CASES):
       print(f"  {i}: {test_case['name']}")
 
@@ -553,8 +866,8 @@ Sample Usage Examples:
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run account renamer optimizer tests in batches or individually')
-  parser.add_argument('--batch', type=int, choices=[1],
-                      help='Batch number to run (1)')
+  parser.add_argument('--batch', type=int, choices=[1, 2, 3, 4, 5],
+                      help='Batch number to run (1-5)')
   parser.add_argument('--test', type=str,
                       help='Test name or index to run individually (e.g., "example_1_patelco_and_chase" or "0")')
   args = parser.parse_args()
