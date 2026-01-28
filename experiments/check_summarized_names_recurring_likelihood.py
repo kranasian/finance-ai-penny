@@ -17,6 +17,7 @@ SYSTEM_PROMPT = """You are an AI assistant that evaluates the output of a transa
 ## Key Definitions
 - **Recurring**: Any transaction that is expected to occur at regular intervals (e.g., monthly, weekly, bi-weekly, annually, quarterly).
 - **Bills**: Any recurring outflow of money (payment). This is a broad definition and not limited to traditional utility bills. For example, a monthly Netflix subscription is a bill.
+- **Side-gig**: Recurring income from freelance work, contract jobs, or other non-employer sources. It is **always an inflow** of money.
 
 ## Input Schema
 - `EVAL_INPUT`: A JSON array of transactions, each with `id`, `name`, and `description`.
@@ -50,13 +51,13 @@ You must output a single JSON object with the following structure:
     - **If Outflow (Expense)**:
         - `is_salary` **MUST** be `IMPOSSIBLE`. Salary is always an inflow.
         - The transaction is likely a bill, so `is_bills` should be `LIKELY` or `UNLIKELY`.
-        - `is_sidegig` could be `LIKELY` or `UNLIKELY` if it's a business expense for a side gig.
+        - `is_sidegig` **MUST** be `IMPOSSIBLE` as side-gigs are always inflows.
     - **If Inflow (Income)**:
         - `is_bills` **MUST** be `IMPOSSIBLE`. Bills are always outflows.
         - It could be a `salary` or `sidegig`.
 
 ### Likelihood Flexibility
-- Sometimes, both `LIKELY` and `UNLIKELY` can be acceptable. For example, a subscription could be a personal bill (`UNLIKELY` for `is_sidegig`) or a business expense for a side gig (`LIKELY` for `is_sidegig`).
+- Sometimes, both `LIKELY` and `UNLIKELY` can be acceptable.
 - **Only flag an issue if the output is `IMPOSSIBLE` when it should be `LIKELY` or `UNLIKELY`.**
 
 ### Likelihood Definitions

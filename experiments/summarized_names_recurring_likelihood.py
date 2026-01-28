@@ -70,7 +70,7 @@ Identify recurring transactions, then the likelihood for them to be bills, salar
 ### Categories
 - `Bill`: outflow that is a consistent payment for a loan, goods, or services
 - `Salary`: inflow for work performed as a permanent employee
-- `Sidegig`: inflow for work performed as a supplemental, contract, or freelance worker
+- `Sidegig`: Recurring income from freelance work, contract jobs, or other non-employer sources. It is **always an inflow** of money.
 
 ### Likelihood Options
 - `LIKELY`: high probability of being in the category
@@ -84,9 +84,9 @@ Identify recurring transactions, then the likelihood for them to be bills, salar
     - One-time purchases from retailers, ride-sharing, or P2P transfers are typically not.
    - **If the transaction does not appear to be recurring, you MUST tag `is_bills`, `is_salary`, and `is_sidegig` as `IMPOSSIBLE`.**
 2. **Directionality Inference**: From the `description`, infer if the transaction is an **inflow** (income) or an **outflow** (expense).
+   - **If the direction is ambiguous**: Assume the transaction type that is more common for the establishment. For example, "Netflix" is typically an outflow (payment), while a transaction from a known payroll company is an inflow.
 3. **Categorization Logic (only if recurring)**:
-   - **Outflows (Payments/Expenses)**: If the transaction is an outflow, it is most likely a `bill`. `is_salary` MUST be `IMPOSSIBLE`.
-     - **Side-Gig Expense Check**: Consider if the outflow could also be a business expense for a side gig (e.g., software subscription for a freelance designer). If so, `is_sidegig` could be `UNLIKELY` or `LIKELY`, and `is_bills` might be `UNLIKELY` if it's purely a business expense.
+   - **Outflows (Payments/Expenses)**: If the transaction is an outflow, it is most likely a `bill`. `is_salary` and `is_sidegig` **MUST** be `IMPOSSIBLE`.
    - **Inflows (Income)**: If the transaction is an inflow, it can be a `salary` or `sidegig`. `is_bills` MUST be `IMPOSSIBLE`. Differentiate between a stable salary and more variable side gig income.
 4. **Final Review**: Briefly review your classifications for common sense. For example, a university (`NYU`) is not a monthly bill, but it does have recurring tuition payments, so `is_bills` should be `UNLIKELY`, not `IMPOSSIBLE`."""
 
