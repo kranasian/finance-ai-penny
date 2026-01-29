@@ -2,7 +2,6 @@ from google import genai
 from google.genai import types
 import os
 import sys
-import json
 from dotenv import load_dotenv
 
 # Add the parent directory to the path so we can import the tools
@@ -10,34 +9,75 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
   sys.path.insert(0, parent_dir)
 
+from penny.tool_funcs.update_transaction_category_or_create_category_rules import update_transaction_category_or_create_category_rules
+
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """Map category descriptions to category IDs. Return JSON: {"category_id": integer} or {"category_id": -1} if no match.
+SYSTEM_PROMPT = """You are an agent that creates categorization rules. This prompt is used only from the Penny Categorization (rules only) screen.
 
-**Matching Rules** (try in order):
-1. Exact match (case-insensitive)
-2. Word match: Check if any input word (length > 3) matches a category name or word within it. Always prefer more specific categories over general ones (e.g., "Entertainment" over "Leisure", "Upkeep" over "Shelter").
-3. Handle variations:
-   - Plural/singular forms (salaries→salary, businesses→business)
-   - "and" matches "&" in category names ("car and fuel" → "Car & Fuel")
-   - Hyphens match spaces ("side gig" → "Side-Gig")
-4. Semantic match: Ignore descriptive words like "stores", "expenses", "payments" that don't change category meaning.
-5. If no reasonable match: return -1
+## Tasks
 
-**Category List** (ID: Name):
--1: Uncategorized | 1: Meals | 2: Dining Out | 3: Delivered Food | 4: Groceries | 5: Leisure | 6: Entertainment | 7: Travel & Vacations
-9: Bills | 10: Connectivity | 11: Insurance | 12: Taxes | 13: Service Fees | 14: Shelter | 15: Home | 16: Utilities | 17: Upkeep
-18: Education | 19: Kids Activities | 20: Tuition | 21: Shopping | 22: Clothing | 23: Gadgets | 24: Kids | 8: Pets
-25: Transport | 26: Car & Fuel | 27: Public Transit | 28: Health | 29: Medical & Pharmacy | 30: Gym & Wellness | 31: Personal Care
-32: Donations & Gifts | 33: Miscellaneous | 45: Transfer | 36: Salary | 37: Side-Gig | 38: Business | 39: Interest
+1. Create categorization rules from Last User Request. Use Previous Conversation for context (e.g., follow-ups, clarification answers).
+2. Return clarification if Last User Request is unintelligible.
+3. Extract merchant names, amounts, dates, and category names from the request and pass them in the categorize_request.
+
+## Code Output Format
+
+**CRITICAL**: Output Python function `execute_plan() -> tuple[bool, str]`:
+- The only available skill returns `tuple[bool, str]`. Return its result directly.
+- For rule creation: `return update_transaction_category_or_create_category_rules(categorize_request="...")`
+- For unintelligible input: `return False, "clarification message"`
+
+<AVAILABLE_SKILL_FUNCTIONS>
+
+- `update_transaction_category_or_create_category_rules(categorize_request: str, input_info: str = None) -> tuple[bool, str]`
+  - Creates categorization rules. `categorize_request` is a natural-language description of the rule (merchant/criteria → category). Category grounding is done inside this function. Returns `tuple[bool, str]`.
+
+</AVAILABLE_SKILL_FUNCTIONS>
+
+<EXAMPLES>
+
+input: **Last User Request**: Walmart purchases should be groceries
+**Previous Conversation**:
+None
+output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Walmart purchases should be groceries"
+    )
+```
+
+input: **Last User Request**: Categorize all my Starbucks transactions as dining out
+**Previous Conversation**:
+User: How much am I spending at Starbucks?
+Assistant: You've spent $120 at Starbucks over the last 3 months across 15 transactions.
+output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Create a rule to categorize all Starbucks transactions as dining out"
+    )
+```
+
+input: **Last User Request**: +&-$|(){}#@!%^&*_=[]:;,.<>/?`~
+**Previous Conversation**:
+None
+output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return False, "The input appears to be unintelligible. Please provide a valid categorization rule request (e.g., 'Walmart purchases should be groceries' or 'always categorize Costco as groceries')."
+```
+
+</EXAMPLES>
 """
 
 class CategoryGrounderOptimizer:
-  """Handles all Gemini API interactions for Category Grounding"""
+  """Handles all Gemini API interactions for Categorization Rule Creation"""
   
-  def __init__(self, model_name="gemini-flash-lite-latest"):
-    """Initialize the Gemini agent with API configuration for Category Grounding"""
+  def __init__(self, model_name="gemini-3-pro-preview"):
+    """Initialize the Gemini agent with API configuration for categorization rule creation"""
     # API Configuration
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
@@ -48,11 +88,10 @@ class CategoryGrounderOptimizer:
     self.thinking_budget = 4096
     self.model_name = model_name
     
-    # Generation Configuration Constants (matching account_renamer_optimizer.py)
-    self.temperature = 0.3
+    # Generation Configuration Constants (matching goal_agent_optimizer.py)
+    self.temperature = 0.6
     self.top_p = 0.95
-    self.top_k = 40
-    self.max_output_tokens = 4098
+    self.max_output_tokens = 2048
     
     # Safety Settings
     self.safety_settings = [
@@ -64,19 +103,27 @@ class CategoryGrounderOptimizer:
     
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
+
   
-  def generate_response(self, category_description: str) -> dict:
+  def generate_response(self, last_user_request: str, previous_conversation: str) -> str:
     """
-    Generate a response using Gemini API for Category Grounding.
+    Generate a response using Gemini API for categorization rule creation planning.
     
     Args:
-      category_description: String description of the category to ground
+      last_user_request: The last user request as a string
+      previous_conversation: The previous conversation as a string
       
     Returns:
-      Dictionary containing response JSON and thought_summary
+      Generated code as a string
     """
-    # Create request text with category description
-    request_text = types.Part.from_text(text=f"input: {category_description}\n\noutput:")
+    # Create request text with Last User Request and Previous Conversation
+    request_text = types.Part.from_text(text=f"""**Last User Request**: {last_user_request}
+
+**Previous Conversation**:
+
+{previous_conversation}
+
+output:""")
     
     # Create content and configuration
     contents = [types.Content(role="user", parts=[request_text])]
@@ -84,7 +131,6 @@ class CategoryGrounderOptimizer:
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
-      top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
@@ -92,7 +138,6 @@ class CategoryGrounderOptimizer:
         thinking_budget=self.thinking_budget,
         include_thoughts=True
       ),
-      response_mime_type="application/json",
     )
 
     # Generate response
@@ -126,24 +171,16 @@ class CategoryGrounderOptimizer:
                     else:
                       thought_summary = part.text
     
-    # Parse JSON response
-    response_json = None
-    try:
-      response_json = json.loads(output_text) if output_text else None
-    except json.JSONDecodeError as e:
-      print(f"Error parsing JSON response: {str(e)}")
-      print(f"Raw output: {output_text}")
-    
+    # Display thought summary if available
     if thought_summary:
-      print("-" * 80)
+      print("\n" + "-" * 80)
       print("THOUGHT SUMMARY:")
-      print(thought_summary.strip())
       print("-" * 80)
+      print(thought_summary.strip())
+      print("-" * 80 + "\n")
     
-    return {
-      "response": response_json,
-      "thought_summary": thought_summary.strip() if thought_summary else ""
-    }
+    return output_text
+  
   
   def get_available_models(self):
     """
@@ -159,129 +196,325 @@ class CategoryGrounderOptimizer:
       raise Exception(f"Failed to get models: {str(e)}")
 
 
-def _run_test_with_logging(category_description: str, optimizer: CategoryGrounderOptimizer = None):
+def extract_python_code(text: str) -> str:
+    """Extract Python code from generated response (look for ```python blocks).
+    
+    Args:
+        text: The generated response containing Python code
+        
+    Returns:
+        str: Extracted Python code
+    """
+    code_start = text.find("```python")
+    if code_start != -1:
+        code_start += len("```python")
+        code_end = text.find("```", code_start)
+        if code_end != -1:
+            return text[code_start:code_end].strip()
+        else:
+            # No closing ``` found, use the entire response as code
+            return text[code_start:].strip()
+    else:
+        # No ```python found, try to use the entire response as code
+        return text.strip()
+
+
+def _run_test_with_logging(last_user_request: str, previous_conversation: str, optimizer: CategoryGrounderOptimizer = None):
   """
   Internal helper function that runs a test with consistent logging.
   
   Args:
-    category_description: Category description string to ground
+    last_user_request: The last user request as a string
+    previous_conversation: The previous conversation as a string
     optimizer: Optional CategoryGrounderOptimizer instance. If None, creates a new one.
     
   Returns:
-    The generated response dictionary
+    The generated response string
   """
   if optimizer is None:
     optimizer = CategoryGrounderOptimizer()
   
-  # Print the input
-  print("LLM INPUT:")
-  print("-" * 80)
-  print(f"Category Description: {category_description}")
-  print("-" * 80)
+  # Construct LLM input
+  llm_input = f"""**Last User Request**: {last_user_request}
+
+**Previous Conversation**:
+
+{previous_conversation}
+
+output:"""
   
-  result = optimizer.generate_response(category_description)
+  # Print the input
+  print("=" * 80)
+  print("LLM INPUT:")
+  print("=" * 80)
+  print(llm_input)
+  print("=" * 80)
+  print()
+  
+  result = optimizer.generate_response(last_user_request, previous_conversation)
   
   # Print the output
+  print("=" * 80)
   print("LLM OUTPUT:")
-  print("-" * 80)
-  print(json.dumps(result["response"], indent=2) if result["response"] else "No response")
-  print("-" * 80)
+  print("=" * 80)
+  print(result)
+  print("=" * 80)
+  print()
+  
+  # Extract and execute the generated code
+  code = extract_python_code(result)
+  
+  if code:
+    print("=" * 80)
+    print("EXECUTING GENERATED CODE:")
+    print("=" * 80)
+    try:
+      # Create wrapper for the only available skill (categorization rules only)
+      def wrapped_categorize(*args, **kwargs):
+        print(f"\n[FUNCTION CALL] update_transaction_category_or_create_category_rules")
+        print(f"  args: {args}")
+        print(f"  kwargs: {kwargs}")
+        result = update_transaction_category_or_create_category_rules(*args, **kwargs)
+        print(f"  [RETURN] success: {result[0]}")
+        print(f"  [RETURN] output: {result[1]}")
+        return result  # Returns tuple[bool, str]
+
+      namespace = {
+        'update_transaction_category_or_create_category_rules': wrapped_categorize,
+      }
+      
+      # Execute the code
+      exec(code, namespace)
+      
+      # Call execute_plan if it exists
+      if 'execute_plan' in namespace:
+        print("\n" + "=" * 80)
+        print("Calling execute_plan()...")
+        print("=" * 80)
+        execution_result = namespace['execute_plan']()
+        print("\n" + "=" * 80)
+        print("EXECUTION RESULT:")
+        print("=" * 80)
+        print(f"  success: {execution_result[0]}")
+        print(f"  output: {execution_result[1]}")
+        print("=" * 80)
+        print()
+      else:
+        print("Warning: execute_plan() function not found in generated code")
+        print("=" * 80)
+        execution_result = None
+    except Exception as e:
+      print(f"Error executing generated code: {str(e)}")
+      import traceback
+      print(traceback.format_exc())
+      print("=" * 80)
+      execution_result = None
+  else:
+    execution_result = None
   
   return result
 
 
+# Test cases list - add new tests here instead of creating new functions
 TEST_CASES = [
   {
-    "name": "exact_and_word_match",
-    "category_description": "shelter upkeep",
+    "name": "simple_categorization_rule",
+    "last_user_request": "Walmart purchases should be groceries",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": 17
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Walmart purchases should be groceries"
+    )
+```
 Key validations:
-- "shelter upkeep" contains the word "upkeep" which matches category "Upkeep" (ID: 17)
-- Should not match "Shelter" (ID: 14) as "Upkeep" is more specific"""
+- Creates a categorization rule for Walmart purchases
+- Grounds "groceries" to appropriate category
+- No lookup needed as request is explicit"""
   },
   {
-    "name": "semantic_matching_and_variations",
-    "category_description": "home improvement stores",
+    "name": "amount_filter_rule",
+    "last_user_request": "schneider greater than $400 to wall construction",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": 17
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="schneider greater than $400 to wall construction"
+    )
+```
 Key validations:
-- "home improvement" semantically relates to "Upkeep" (home maintenance/repair)
-- "stores" is a descriptor that doesn't change the core category meaning"""
+- Creates rule with amount filter (> $400)
+- Grounds "wall construction" to appropriate category (likely Upkeep)
+- Includes both merchant name and amount criteria"""
   },
   {
-    "name": "plural_singular_and_multiword",
-    "category_description": "groceries",
+    "name": "multiple_merchants_rule",
+    "last_user_request": "John's, Henries and moms and pops needs to all be in supermarkets",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": 4
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="John's, Henries and moms and pops needs to all be in supermarkets"
+    )
+```
 Key validations:
-- "groceries" exactly matches "Groceries" (ID: 4) case-insensitively
-- Should handle plural form correctly"""
+- Creates categorization rules for multiple merchants (John's, Henries, moms and pops)
+- Grounds "supermarkets" to Groceries category
+- Handles multiple merchant names in single request"""
   },
   {
-    "name": "complex_phrase_and_synonyms",
-    "category_description": "medical and pharmacy expenses",
+    "name": "date_filter_rule",
+    "last_user_request": "Barnes & Noble and Bed Bath & Beyond before last week must be put on shopping",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": 29
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Barnes & Noble and Bed Bath & Beyond before last week must be put on shopping"
+    )
+```
 Key validations:
-- "medical and pharmacy" matches "Medical & Pharmacy" (ID: 29)
-- Should handle "and" matching "&" in category name
-- "expenses" is a descriptor that doesn't change the category"""
+- Creates rules with date filter (before last week)
+- Multiple merchants (Barnes & Noble, Bed Bath & Beyond)
+- Grounds "shopping" to Shopping category
+- Handles date relative references"""
   },
   {
-    "name": "special_characters_and_conversion",
-    "category_description": "car and fuel",
+    "name": "unintelligible_input",
+    "last_user_request": "+&-$|(){}#@!%^&*_=[]:;,.<>/?`~",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": 26
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return False, "The input appears to be unintelligible. Please provide a valid categorization rule request (e.g., 'Walmart purchases should be groceries' or 'always categorize Costco as groceries')."
+```
 Key validations:
-- "car and fuel" should match "Car & Fuel" (ID: 26) exactly
-- Should handle "and" → "&" conversion in matching
-- Both words "car" and "fuel" are present in the category name"""
+- Returns False with clarification message
+- Does not attempt to create rules from unintelligible input
+- Provides helpful guidance on valid request format"""
   },
   {
-    "name": "income_category_matching",
-    "category_description": "side gig",
+    "name": "regex_pattern_rule",
+    "last_user_request": "coffee in the establishment name should be in aviation and if business like cricket* after 8/24 will be in explosions",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": 37
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="coffee in the establishment name should be in aviation and if business like cricket* after 8/24 will be in explosions"
+    )
+```
 Key validations:
-- "side gig" should match "Side-Gig" (ID: 37)
-- Should handle hyphen vs space variations ("Side-Gig" vs "side gig")
-- Should not match general "Income" (ID: 46/47) when specific match exists"""
+- Creates rules with regex pattern (cricket*)
+- Handles multiple rules in one request (coffee -> aviation, cricket* -> explosions)
+- Includes date filter (after 8/24)
+- Grounds categories appropriately (or returns -1 if no match)"""
   },
   {
-    "name": "invalid_unknown_category",
-    "category_description": "xyz123unknown",
+    "name": "complex_multi_condition_rule",
+    "last_user_request": "Costco purchases over $100 and under $500 from last month should be groceries",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": -1
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Costco purchases over $100 and under $500 from last month should be groceries"
+    )
+```
 Key validations:
-- Invalid/nonsensical category should return category_id: -1
-- Should not attempt to force a match to any category"""
+- Creates rule with multiple AND conditions (merchant + amount range + date)
+- Amount greater than $100 AND less than $500
+- Date filter (from last month)
+- Grounds "groceries" to Groceries category"""
   },
   {
-    "name": "disambiguation_specificity",
-    "category_description": "entertainment",
+    "name": "income_category_rule",
+    "last_user_request": "PayPal transfers from employer are salary",
+    "previous_conversation": "",
     "ideal_response": """Expected output:
-{
-  "category_id": 6
-}
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="PayPal transfers from employer are salary"
+    )
+```
 Key validations:
-- "entertainment" exactly matches "Entertainment" (ID: 6)
-- Should prefer specific "Entertainment" over general "Leisure" (ID: 5)
-- When multiple categories could match, choose the most specific one"""
+- Creates rule for income category (salary)
+- Handles income transactions (PayPal from employer)
+- Grounds "salary" to Salary category
+- Tests income category grounding (different from spending categories)"""
+  },
+  {
+    "name": "rule_creation_with_context",
+    "last_user_request": "Categorize all my Starbucks transactions as dining out",
+    "previous_conversation": """User: How much am I spending at Starbucks?
+Assistant: You've spent $120 at Starbucks over the last 3 months across 15 transactions.""",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Create a rule to categorize all Starbucks transactions as dining out"
+    )
+```
+Key validations:
+- Single call to update_transaction_category_or_create_category_rules (no lookup; categorization screen is rules-only)
+- Uses previous conversation for context; categorize_request describes the rule
+- Grounding of "dining out" is done inside the function"""
+  },
+  {
+    "name": "clarification_answer_rule",
+    "last_user_request": "Yes, create a rule for all Target purchases to be shopping",
+    "previous_conversation": """User: I want to categorize Target purchases
+Assistant: I need more information to create the categorization rule. What category should Target purchases be assigned to? For example, are they groceries, shopping, or another category?""",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Create a rule for all Target purchases to be shopping"
+    )
+```
+Key validations:
+- Responds to clarification question from previous conversation
+- Creates rule based on user's answer
+- Grounds "shopping" to Shopping category
+- Uses context from previous conversation to understand intent"""
+  },
+  {
+    "name": "always_keyword_rule",
+    "last_user_request": "Always categorize Amazon purchases as shopping",
+    "previous_conversation": "",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Always categorize Amazon purchases as shopping"
+    )
+```
+Key validations:
+- Uses "always" keyword indicating permanent rule
+- Creates rule for Amazon purchases
+- Grounds "shopping" to Shopping category
+- Explicit future/permanent intent"""
+  },
+  {
+    "name": "amount_range_and_date_rule",
+    "last_user_request": "Gas station purchases between $20 and $80 from this year should be transportation",
+    "previous_conversation": "",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return update_transaction_category_or_create_category_rules(
+        categorize_request="Gas station purchases between $20 and $80 from this year should be transportation"
+    )
+```
+Key validations:
+- Creates rule with amount range ($20-$80)
+- Includes date filter (from this year)
+- Grounds "transportation" to appropriate category (likely Car & Fuel)
+- Multiple AND conditions in single rule"""
   },
 ]
 
@@ -314,34 +547,39 @@ def run_test(test_name_or_index_or_dict, optimizer: CategoryGrounderOptimizer = 
   
   Args:
     test_name_or_index_or_dict: One of:
-      - Test case name (str): e.g., "exact_and_word_match"
+      - Test case name (str): e.g., "simple_categorization_rule"
       - Test case index (int): e.g., 0
-      - Test data dict: {"category_description": "...", "name": "..."}
+      - Test data dict: {"last_user_request": "...", "previous_conversation": "..."}
     optimizer: Optional CategoryGrounderOptimizer instance. If None, creates a new one.
     
   Returns:
-    The generated response dictionary, or None if test not found
+    The generated response string, or None if test not found
   """
   # Check if it's a dict with test data
   if isinstance(test_name_or_index_or_dict, dict):
-    if "category_description" in test_name_or_index_or_dict:
+    if "last_user_request" in test_name_or_index_or_dict:
       test_name = test_name_or_index_or_dict.get("name", "custom_test")
       print(f"\n{'='*80}")
       print(f"Running test: {test_name}")
       print(f"{'-'*80}\n")
       
       result = _run_test_with_logging(
-        test_name_or_index_or_dict["category_description"],
+        test_name_or_index_or_dict["last_user_request"],
+        test_name_or_index_or_dict.get("previous_conversation", ""),
         optimizer
       )
       
+      # Display ideal response if available
       if test_name_or_index_or_dict.get("ideal_response", ""):
-        print(f"Ideal response: {test_name_or_index_or_dict['ideal_response']}")
-        print(f"{'='*80}\n")
+        print("\n" + "=" * 80)
+        print("IDEAL RESPONSE:")
+        print("=" * 80)
+        print(test_name_or_index_or_dict["ideal_response"])
+        print("=" * 80 + "\n")
       
       return result
     else:
-      print(f"Invalid test dict: must contain 'category_description' key.")
+      print(f"Invalid test dict: must contain 'last_user_request' key.")
       return None
   
   # Otherwise, treat it as a test name or index
@@ -355,13 +593,18 @@ def run_test(test_name_or_index_or_dict, optimizer: CategoryGrounderOptimizer = 
   print(f"{'='*80}\n")
   
   result = _run_test_with_logging(
-    test_case["category_description"],
+    test_case["last_user_request"],
+    test_case["previous_conversation"],
     optimizer
   )
   
+  # Display ideal response if available
   if test_case.get("ideal_response", ""):
-    print(f"Ideal response: {test_case['ideal_response']}")
-    print(f"{'='*80}\n")
+    print("\n" + "=" * 80)
+    print("IDEAL RESPONSE:")
+    print("=" * 80)
+    print(test_case["ideal_response"])
+    print("=" * 80 + "\n")
   
   return result
 
@@ -374,11 +617,11 @@ def run_tests(test_names_or_indices_or_dicts, optimizer: CategoryGrounderOptimiz
     test_names_or_indices_or_dicts: One of:
       - None: Run all tests from TEST_CASES
       - List of test case names (str), indices (int), or test data dicts
-        Each dict should have: {"category_description": "...", "name": "..."}
+        Each dict should have: {"last_user_request": "...", "previous_conversation": "..."}
     optimizer: Optional CategoryGrounderOptimizer instance. If None, creates a new one.
     
   Returns:
-    List of generated response dictionaries
+    List of generated response strings
   """
   if test_names_or_indices_or_dicts is None:
     # Run all tests
@@ -392,28 +635,29 @@ def run_tests(test_names_or_indices_or_dicts, optimizer: CategoryGrounderOptimiz
   return results
 
 
-def test_with_inputs(category_description: str, optimizer: CategoryGrounderOptimizer = None):
+def test_with_inputs(last_user_request: str, previous_conversation: str, optimizer: CategoryGrounderOptimizer = None):
   """
-  Convenient method to test the category grounder optimizer with custom inputs.
+  Convenient method to test the categorization rule creation optimizer with custom inputs.
   
   Args:
-    category_description: Category description string to ground
+    last_user_request: The last user request as a string
+    previous_conversation: The previous conversation as a string
     optimizer: Optional CategoryGrounderOptimizer instance. If None, creates a new one.
     
   Returns:
-    The generated response dictionary
+    The generated response string
   """
-  return _run_test_with_logging(category_description, optimizer)
+  return _run_test_with_logging(last_user_request, previous_conversation, optimizer)
 
 
 def main(batch: int = None, test: str = None):
   """
-  Main function to test the category grounder optimizer
+  Main function to test the categorization rule creation optimizer
   
   Args:
-    batch: Batch number (1) to run all tests, or None to run a single test
+    batch: Batch number (1 or 2) to run all tests, or None to run a single test
     test: Test name, index, or None. If batch is provided, test is ignored.
-      - Test name (str): e.g., "exact_and_word_match"
+      - Test name (str): e.g., "simple_categorization_rule"
       - Test index (str): e.g., "0" (will be converted to int)
       - None: If batch is also None, prints available tests
   """
@@ -422,12 +666,16 @@ def main(batch: int = None, test: str = None):
   # Define test batches
   BATCHES = {
     1: {
-      "name": "Category Grounder Test Cases - Batch 1",
-      "tests": [0, 1, 2, 3]  # First 4 test cases
+      "name": "Categorization Rule Creation Test Cases - Batch 1",
+      "tests": [0, 1, 2, 3]  # Simple rule, amount filter, multiple merchants, date filter
     },
     2: {
-      "name": "Category Grounder Test Cases - Batch 2",
-      "tests": [4, 5, 6, 7]  # Second 4 test cases
+      "name": "Categorization Rule Creation Test Cases - Batch 2",
+      "tests": [4, 5, 6, 7]  # Unintelligible, regex pattern, complex multi-condition, income category
+    },
+    3: {
+      "name": "Categorization Rule Creation Test Cases - Batch 3",
+      "tests": [8, 9, 10, 11]  # Rule with context, clarification answer, always keyword, amount range and date
     },
   }
   
@@ -465,7 +713,7 @@ def main(batch: int = None, test: str = None):
   else:
     # Print available options
     print("Usage:")
-    print("  Run a batch: --batch <1>")
+    print("  Run a batch: --batch <1, 2, or 3>")
     print("  Run a single test: --test <name_or_index>")
     print("\nAvailable batches:")
     for b, info in BATCHES.items():
@@ -481,18 +729,18 @@ def main(batch: int = None, test: str = None):
 """
 Sample Usage Examples:
   python agent_categorize_optimizer.py --batch 1
-  python agent_categorize_optimizer.py --test exact_and_word_match
+  python agent_categorize_optimizer.py --test simple_categorization_rule
   python agent_categorize_optimizer.py --test 0
-  run_test("exact_and_word_match")
+  run_test("simple_categorization_rule")
   run_tests([0, 1, 2, 3])
 """
 
 if __name__ == "__main__":
   import argparse
-  parser = argparse.ArgumentParser(description='Run category grounder optimizer tests in batches or individually')
-  parser.add_argument('--batch', type=int, choices=[1, 2],
-                      help='Batch number to run (1 or 2)')
+  parser = argparse.ArgumentParser(description='Run categorization rule creation optimizer tests in batches or individually')
+  parser.add_argument('--batch', type=int, choices=[1, 2, 3],
+                      help='Batch number to run (1, 2, or 3)')
   parser.add_argument('--test', type=str,
-                      help='Test name or index to run individually (e.g., "exact_and_word_match" or "0")')
+                      help='Test name or index to run individually (e.g., "simple_categorization_rule" or "0")')
   args = parser.parse_args()
   main(batch=args.batch, test=args.test)
