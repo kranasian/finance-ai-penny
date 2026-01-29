@@ -20,17 +20,27 @@ SYSTEM_PROMPT = """You are a checker verifying goal agent optimizer outputs agai
 Only review the generated code and execution results. The inputs of each tool are out of scope.
 
 JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: **(CODE QUALITY ONLY)** True if GENERATED_CODE perfectly follows all code generation rules from the "Rules" section.
-- `info_correct`: **(EXECUTION RESULT ONLY)** True if EXECUTION_RESULT shows that execution completed successfully and appropriately addressed the Last User Request.
-- `eval_text`: Required if either boolean is False. Explains why without referring to the guidelines as "Rule 1", "Rule 2", etc. Be specific and concise (less than 25 words).
+- `good_copy`: **(CODE QUALITY & PLAN LOGIC)** True if `GENERATED_CODE` perfectly follows all rules in the "Rules" section. This includes:
+    - Correct code structure and function definition.
+    - **Skill Accuracy**: Proper skills are called to accurately and effectively respond to the user request.
+    - High-quality, natural language request parameters that incorporate context.
+    - Proper error handling logic (return False, error_msg on failure, unless failure is from a non-critical lookup that is intended to be used as optional context).
+- `info_correct`: **(EXECUTION ACCURACY & DATA TRUTH)** True if `EXECUTION_RESULT` shows that the plan was executed accurately against the `EVAL_INPUT`. This includes:
+    - The execution log shows the correct skills were actually called with appropriate parameters.
+    - The final string result (second element of the return tuple) from `execute_plan()` correctly addresses the `Last User Request` based on the data provided in the execution.
+    - **Feasibility Alignment**: 
+        a) Evaluate if the `Last User Request` is feasible based on available skills and data in `EXECUTION_RESULT`.
+        b) Check if your evaluation of feasibility aligns with the actual `True/False` status returned by `execute_plan()`. 
+        c) If misaligned (e.g., request is feasible but code returned `False`, or request is unsupported but code returned `True`), `info_correct` MUST be `False`.
+- `eval_text`: Required ONLY if either boolean is False. Must be an empty string if both `good_copy` and `info_correct` are True. Explains why without referring to the guidelines as "Rule 1", "Rule 2", etc. Be specific and concise (less than 25 words).
 
 ## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
 **MANDATORY**: If PAST_REVIEW_OUTCOMES flags issues that still exist in GENERATED_CODE or EXECUTION_RESULT, mark as incorrect.
-- Extract all issues from past `eval_text` fields
-- Check if GENERATED_CODE or EXECUTION_RESULT repeats the same mistakes
-- If past reviews say "contains unnecessary chaining" and it's still there → mark `good_copy: False`
-- If past reviews say "missing error handling" and it's still missing → mark `good_copy: False`
-- If past reviews say "execution failed" and execution still fails → mark `info_correct: False`
+- Extract all issues from past `eval_text` fields.
+- Check if the current GENERATED_CODE or EXECUTION_RESULT repeats the same mistakes.
+- If past reviews flagged a missing step or improper skill use, and it's still present → mark `good_copy: False`.
+- If past reviews flagged an execution error, and it's still present → mark `info_correct: False`.
+- Do not repeat previously identified errors in `eval_text` if they have been fixed, but ALWAYS flag them if they persist.
 
 ## Rules
 
@@ -42,7 +52,7 @@ JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
    - `research_and_strategize_financial_outcomes(strategize_request: str, input_info: str = None) -> tuple[bool, str]`
    - `update_transaction_category_or_create_category_rules(categorize_request: str, input_info: str = None) -> tuple[bool, str]`
 3. **No Other Python Functions**: Should not use other Python functions beyond skill functions, conditional operations, and string concatenations. No imports, no datetime operations, no other libraries.
-4. **Error Handling**: Should check `success` from each skill function call and return early if `success` is False. Must not proceed to next step if previous step failed.
+4. **Error Handling**: Critical skills must check `success` and return early if `success` is False. However, non-critical lookup skills (Step 1) do not have to return early on failure and can proceed to the next step if the next step can handle missing or error-based context. Passing a lookup's failure result as `input_info` to a subsequent skill is acceptable and should not be penalized as "inappropriate parameters" if the intention is to provide whatever context is available.
 
 ### Task Prioritization (`good_copy` ONLY)
 1. **Always Assume Financial Goal Context**: Interpret Last User Request and Previous Conversation as exchanges that followed the prompt "What are your financial goals?".
@@ -72,8 +82,13 @@ JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
 1. **Must Use Categorization Skill**: If the user wants to categorize transactions or create categorization rules, the plan MUST use the `update_transaction_category_or_create_category_rules` skill.
 2. **Category Rules**: If user hints at doing this in the future as well, specify that a category rule needs to be created on top of updating transaction categories.
 
-### Skill Usage Guidelines (`good_copy` ONLY)
-1. **create_budget_or_goal Usage**: 
+### Skill Selection Guidelines (`good_copy` ONLY)
+1. **Effective Skill Choice**: Must select the most direct and effective skills for the task. 
+   - Do not use `create_budget_or_goal` for questions.
+   - Use `lookup_user_accounts_transactions_income_and_spending_patterns` for any personal financial data needs.
+   - Use `research_and_strategize_financial_outcomes` only for external data or complex planning.
+   - Using an incorrect skill for the request type (e.g., using `create_budget_or_goal` to answer "how much did I spend") must result in `good_copy: False`.
+2. **create_budget_or_goal Usage**: 
    - This is the default final step for goal-oriented requests
    - Should NOT be used for categorization tasks
    - Should NOT be used for information-seeking questions
@@ -89,23 +104,55 @@ JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
    - Can be skipped if Previous Conversation contains the EXACT, COMPLETE information needed
 
 ### Request Parameter Quality (`good_copy` ONLY)
-1. **Comprehensive Request Parameters**: Request parameters (e.g., `lookup_request`, `creation_request`, `strategize_request`) must effectively incorporate relevant information from Previous Conversation and, when available, the `input_info` to accurately address the Last User Request.
+1. **Comprehensive Request Parameters**: Request parameters must effectively incorporate relevant information from Previous Conversation and, when available, the `input_info`. If `input_info` contains a failure message from a previous non-critical lookup, it is acceptable to pass it along as context; the subsequent skill is responsible for handling it.
 2. **Natural Language**: Request parameters must be written in natural language and be descriptive enough to capture the user's intent comprehensively.
 3. **Context Incorporation**: When `input_info` is available, must incorporate it concisely into subsequent skill function calls. The `input_info` should refine and enhance the request parameter.
 4. **Multiple Requests Support**: All skill functions can accept multiple requests written as multiple sentences in their request parameters. Use this capability when appropriate.
 
 ### Execution Result (`info_correct` ONLY)
-1. **Execution Success**: EXECUTION_RESULT should show that all function calls completed successfully (returned `True` for success). If any function call failed, execution should have stopped and returned early.
-2. **Final Output Relevance**: The final output from `execute_plan()` should directly address the Last User Request. Should not include unnecessary information or omit critical information.
+1. **Execution Logic and Outcome**: EXECUTION_RESULT should show that the plan was executed as intended and reached a logically correct outcome.
+    - **Feasibility Check**: Determine if the request is supported by the skills. If it is supported, `execute_plan()` should return `True` on successful execution. If it is unsupported, it should return `False`.
+    - **Alignment**: If the code returns `True` for an unsupported request, or `False` for a supported and successfully executed request, mark `info_correct: False`.
+    - **Expected Handled State**: If a critical skill call fails (e.g., database error), `execute_plan()` should return `False` with a clear explanation. This is a correctly handled failure.
+2. **Final Output Relevance**: The final string result from `execute_plan()` must directly and fully answer the Last User Request. All of the user's requests must be answered by the output of `execute_plan()`.
 3. **Function Call Appropriateness**: All function calls in EXECUTION_RESULT should match what the GENERATED_CODE intended. Check that function names match, request parameters are appropriate and contextually relevant, and `input_info` is properly passed between functions when chaining.
-4. **Error Handling in Execution**: If execution failed, the output should contain meaningful error information or indicate what additional information is needed. The code should have handled errors gracefully.
+4. **Error Handling in Execution**: If execution failed (e.g., a skill returned `False`), the output should contain meaningful error information or indicate what additional information is needed. The code should have handled errors gracefully. info_correct is True only if the `True/False` status of the final result matches the logical reality of the execution.
+
+### Unsupported Requests Policy
+1. **Identify Unsupported Requests**: If the Last User Request is something that cannot be fulfilled by the provided skills, the `GENERATED_CODE` should return `False` and a message explaining it's unsupported.
+2. **Correctness of Unsupported Response**: 
+    - If the code correctly identifies a request as unsupported and returns an appropriate explanation, mark `good_copy: True` and `info_correct: True`.
+    - It is INCORRECT for the code to attempt to use a skill for a purpose it's not intended for.
+    - It is INCORRECT for the code to imply it can do something it cannot.
+3. **Smooth Execution**: If the code returns a clear "unsupported" message with `False` status, this is considered a successful addressal of the request. The `eval_text` MUST be an empty string if an unsupported request is handled correctly with a `False` status and clear explanation.
+
+## Verification Logic
+
+**Step 1: Skill Suitability Check**
+- Identify the nature of the `Last User Request` (Information seeking? Goal setting? Categorization?).
+- Verify if the skills used in `GENERATED_CODE` are the most direct and effective for this nature. If not, `good_copy` is False.
+
+**Step 2: Feasibility & Alignment Check**
+1. **Determine Feasibility**: Based on the `EXECUTION_RESULT` and available skills, is the user's request something that *can* be fulfilled?
+2. **Check execute_plan() Status**:
+   - If the request is feasible and executed successfully, `execute_plan()` MUST return `True`.
+   - If the request is unsupported OR if a critical skill failed, `execute_plan()` MUST return `False`.
+3. **Compare**: If the code's `True/False` status does not align with the feasibility/outcome (e.g., returned `True` but failed/unsupported), `info_correct` is False.
+
+**Step 3: Response Completeness**
+- Ensure the output string from `execute_plan()` answers ALL parts of the user request.
 
 ## Verification Steps
 
+**CRITICAL PRIORITY: FEASIBILITY ALIGNMENT**
+1. Analyze the request's feasibility against skills.
+2. Check if `execute_plan()`'s True/False status reflects this feasibility.
+3. If misaligned, mark `info_correct: False` and explain.
+
 1. **Check PAST_REVIEW_OUTCOMES first**: Extract all flagged issues. If GENERATED_CODE or EXECUTION_RESULT repeats them → mark False
-2. **Verify good_copy**: Does GENERATED_CODE follow the code structure, task prioritization, efficiency, and request parameter quality guidelines listed above?
-3. **Verify info_correct**: Does EXECUTION_RESULT show successful execution that appropriately addressed the Last User Request?
-4. **Write eval_text**: If good_copy and/or info_correct is False, explain the specific issues.
+2. **Verify good_copy**: Follow Step 1 of Verification Logic.
+3. **Verify info_correct**: Follow Step 2 & 3 of Verification Logic.
+4. **Write eval_text**: If good_copy and/or info_correct is False, explain the specific issues. If BOTH are True, eval_text MUST be an empty string "".
 --
 """
 
@@ -361,12 +408,196 @@ Error calling P:Func:CreateBudgetOrGoalOrReminder template: 'NoneType' object ha
   return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
 
 
+def test_incorrect_unnecessary_chaining(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "What was my total spending on groceries last month?"
+  previous_conversation = "User: How much did I spend on dining out last month?\nAssistant: You spent $450 on dining out."
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    success, lookup_result = lookup_user_accounts_transactions_income_and_spending_patterns(
+        lookup_request="Calculate total spending on groceries last month."
+    )
+    if not success:
+        return False, lookup_result
+    
+    # Unnecessary chaining: research is not needed for a simple grocery lookup
+    success, research_result = research_and_strategize_financial_outcomes(
+        strategize_request="Provide general tips on how to save on groceries based on this spending: " + lookup_result
+    )
+    if not success:
+        return False, research_result
+        
+    return True, lookup_result + "\\n\\nTips: " + research_result
+"""
+  execution_result = """lookup_user_accounts_transactions_income_and_spending_patterns:
+  lookup_request: Calculate total spending on groceries last month.
+  return: (True, "Your total spending on groceries last month was $350.")
+research_and_strategize_financial_outcomes:
+  strategize_request: Provide general tips on how to save on groceries based on this spending: Your total spending on groceries last month was $350.
+  return: (True, "1. Use coupons. 2. Buy in bulk.")
+execute_plan:
+True
+Your total spending on groceries last month was $350.
+
+Tips: 1. Use coupons. 2. Buy in bulk."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
+
+def test_incorrect_missing_lookup_for_data_request(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "Can I afford a $500 bike this month?"
+  previous_conversation = None
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    # Missing lookup for current month's remaining budget/spending
+    success, creation_result = create_budget_or_goal(
+        creation_request="Create a goal for a $500 bike."
+    )
+    if not success:
+        return False, creation_result
+    return True, creation_result
+"""
+  execution_result = """create_budget_or_goal:
+  creation_request: Create a goal for a $500 bike.
+  return: (True, "Goal for $500 bike created.")
+execute_plan:
+True
+Goal for $500 bike created."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
+
+def test_incorrect_missing_error_handling(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "Move my grocery transactions to the 'Food' category."
+  previous_conversation = None
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    success, result = update_transaction_category_or_create_category_rules(
+        categorize_request="Move all grocery transactions to 'Food' category."
+    )
+    # Missing if not success check
+    return True, result
+"""
+  execution_result = """update_transaction_category_or_create_category_rules:
+  categorize_request: Move all grocery transactions to 'Food' category.
+  return: (False, "Database connection error.")
+execute_plan:
+True
+Database connection error."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
+
+def test_past_review_outcomes_issue_persists(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "I want to save $1000 for a new laptop."
+  previous_conversation = None
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    success, result = create_budget_or_goal(
+        creation_request="Save $1000 for a laptop."
+    )
+    if not success:
+        return False, result
+    return True, result
+"""
+  execution_result = """create_budget_or_goal:
+  creation_request: Save $1000 for a laptop.
+  return: (True, "Goal created.")
+execute_plan:
+True
+Goal created."""
+
+  past_review_outcomes = [
+    {
+      "generated_code": generated_code,
+      "execution_result": execution_result,
+      "output": {
+        "good_copy": False,
+        "info_correct": True,
+        "eval_text": "The plan should first lookup current finances to see if $1000 is feasible."
+      }
+    }
+  ]
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, past_review_outcomes, checker)
+
+def test_unsupported_request_handling(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "Book a flight to Paris for me."
+  previous_conversation = None
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    # This is unsupported by the current skills
+    return False, "I'm sorry, I cannot book flights directly. I can help you research the cost or set a savings goal for it."
+"""
+  execution_result = """execute_plan:
+False
+I'm sorry, I cannot book flights directly. I can help you research the cost or set a savings goal for it."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
+
+def test_handled_error_execution(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "What is my current balance?"
+  previous_conversation = None
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    success, result = lookup_user_accounts_transactions_income_and_spending_patterns(
+        lookup_request="Get current balance for all accounts."
+    )
+    if not success:
+        return False, "I encountered an error while fetching your balances: " + result
+    return True, result
+"""
+  execution_result = """lookup_user_accounts_transactions_income_and_spending_patterns:
+  lookup_request: Get current balance for all accounts.
+  return: (False, "Service temporarily unavailable.")
+execute_plan:
+False
+I encountered an error while fetching your balances: Service temporarily unavailable."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
+
+def test_incorrect_success_on_failure(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "Move my grocery transactions to the 'Food' category."
+  previous_conversation = None
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    success, result = update_transaction_category_or_create_category_rules(
+        categorize_request="Move all grocery transactions to 'Food' category."
+    )
+    # Incorrectly returns True even if success is False
+    return True, result
+"""
+  execution_result = """update_transaction_category_or_create_category_rules:
+  categorize_request: Move all grocery transactions to 'Food' category.
+  return: (False, "Database connection error.")
+execute_plan:
+True
+Database connection error."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
+
+def test_incorrect_failure_on_success(checker: CheckGoalAgentOptimizer = None):
+  last_user_request = "What is my total spending on groceries?"
+  previous_conversation = None
+  
+  generated_code = """def execute_plan() -> tuple[bool, str]:
+    success, result = lookup_user_accounts_transactions_income_and_spending_patterns(
+        lookup_request="Total grocery spending."
+    )
+    # Incorrectly returns False even if success is True
+    return False, result
+"""
+  execution_result = """lookup_user_accounts_transactions_income_and_spending_patterns:
+  lookup_request: Total grocery spending.
+  return: (True, "Your total grocery spending is $150.")
+execute_plan:
+False
+Your total grocery spending is $150."""
+
+  return _run_test_with_logging(last_user_request, previous_conversation, generated_code, execution_result, None, checker)
+
 def main(batch: int = 1):
   """
   Main function to test the checker optimizer
   
   Args:
-    batch: Batch number (1, 2, 3, or 4) to determine which tests to run
+    batch: Batch number (1, 2, 3, 4, 5, or 6) to determine which tests to run
   """
   print("Testing CheckGoalAgentOptimizer\n")
   
@@ -376,29 +607,49 @@ def main(batch: int = 1):
     print("-" * 80)
     test_vacation_fund_goal_with_error_handling()
     print("\n")
-  # elif batch == 2:
-  #   # Incorrect efficiency cases
-  #   print("Test 1: Incorrect unnecessary chaining")
-  #   print("-" * 80)
-  #   test_incorrect_unnecessary_chaining()
-  #   print("\n")
+  elif batch == 2:
+    # Incorrect efficiency cases
+    print("Test 1: Incorrect unnecessary chaining")
+    print("-" * 80)
+    test_incorrect_unnecessary_chaining()
+    print("\n")
     
-  #   print("Test 2: Incorrect missing lookup for data request")
-  #   print("-" * 80)
-  #   test_incorrect_missing_lookup_for_data_request()
-  #   print("\n")
-  #   # Incorrect code structure cases
-  #   print("Test 1: Incorrect missing error handling")
-  #   print("-" * 80)
-  #   test_incorrect_missing_error_handling()
-  #   print("\n")
-  # elif batch == 3:
-  #   print("Test 2: Past review outcomes issue persists")
-  #   print("-" * 80)
-  #   test_past_review_outcomes_issue_persists()
-  #   print("\n")
+    print("Test 2: Incorrect missing lookup for data request")
+    print("-" * 80)
+    test_incorrect_missing_lookup_for_data_request()
+    print("\n")
+    # Incorrect code structure cases
+    print("Test 3: Incorrect missing error handling")
+    print("-" * 80)
+    test_incorrect_missing_error_handling()
+    print("\n")
+  elif batch == 3:
+    print("Test 1: Past review outcomes issue persists")
+    print("-" * 80)
+    test_past_review_outcomes_issue_persists()
+    print("\n")
+  elif batch == 4:
+    print("Test 1: Unsupported request handling")
+    print("-" * 80)
+    test_unsupported_request_handling()
+    print("\n")
+  elif batch == 5:
+    print("Test 1: Handled error execution (should be info_correct: True)")
+    print("-" * 80)
+    test_handled_error_execution()
+    print("\n")
+  elif batch == 6:
+    print("Test 1: Incorrect Success on Failure (should be info_correct: False)")
+    print("-" * 80)
+    test_incorrect_success_on_failure()
+    print("\n")
+    
+    print("Test 2: Incorrect Failure on Success (should be info_correct: False)")
+    print("-" * 80)
+    test_incorrect_failure_on_success()
+    print("\n")
   else:
-    raise ValueError("batch must be 1, 2, 3, or 4")
+    raise ValueError("batch must be 1, 2, 3, 4, 5, or 6")
   
   print("All tests completed!")
 
@@ -406,8 +657,8 @@ def main(batch: int = 1):
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run tests in batches')
-  parser.add_argument('--batch', type=int, default=1, choices=[1, 2, 3, 4],
-                      help='Batch number to run (1, 2, 3, or 4)')
+  parser.add_argument('--batch', type=int, default=1, choices=[1, 2, 3, 4, 5, 6],
+                      help='Batch number to run (1, 2, 3, 4, 5, or 6)')
   args = parser.parse_args()
   main(batch=args.batch)
 
