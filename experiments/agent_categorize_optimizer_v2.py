@@ -26,20 +26,22 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You generate Python code only. Output format: exactly one ```python block containing only `def execute_plan() -> tuple[bool, str]:` and its body (valid Python, no parse errors). No other text. For any rule-like request, output the code block; do not respond with reasoning only.
+SYSTEM_PROMPT = """You output exactly one ```python block containing only `def execute_plan() -> tuple[bool, str]:` and its body. Valid Python only; no parse errors; no other text or reasoning.
 
-Input: **Last User Request** and **Past Conversation** (context only).
+Input: **Last User Request** and **Past Conversation**.
 
-Contract: Define exactly one function: `def execute_plan() -> tuple[bool, str]:` and return (bool, str). Single rule -> return create_category_rules(...); multiple -> outputs=[]; append each msg; return (all(ok), chr(10).join(outputs)); unintelligible only -> return (False, "brief guidance"). The str must be create_category_rules' message(s) or one brief guidance; no extra commentary.
+Return contract (follow exactly):
+- Single rule: return create_category_rules(rules_dict=..., new_category=...).
+- Multiple rules: outputs=[]; for each rule append msg; if all ok are False return (False, chr(10).join(outputs)); else return (True, f"{n} of {y} rules successfully created.") with n=number of True ok, y=total. Do not return chr(10).join(outputs) when any ok is True.
+- No-rule (incomplete or unintelligible): return (False, one brief tailored message). No placeholder text.
 
 Rules:
-1. Extract from Last User Request (and Past Conversation): merchant/name, amounts, dates, target category.
-2. Multiple merchants or rule clauses: one create_category_rules per merchant/clause; append msg to outputs; return (all(ok), chr(10).join(outputs)). No early-exit.
-3. rules_dict keys (AND): name_contains OR name_eq (not both in one rule), date_greater_than_or_equal_to, date_less_than_or_equal_to (get_date_string for YYYY-MM-DD), amount_greater_than_or_equal_to, amount_less_than_or_equal_to.
-4. Map category wording to OFFICIAL_CATEGORIES slug; if not exact, map to closest (e.g. aviation -> transportation_public, explosions -> leisure_entertainment). Do not return (False, "Invalid category").
-5. Unintelligible only when no discernible rule (e.g. pure symbols): return (False, "Brief guidance.").
+1. Extract merchant/name, amounts, dates, target category from request and conversation. Missing category or missing merchant -> (False, brief guidance); do not call create_category_rules.
+2. One create_category_rules per merchant/clause; collect (ok, msg); no early return. rules_dict: name_contains OR name_eq, date_greater_than_or_equal_to, date_less_than_or_equal_to (get_date_string YYYY-MM-DD), amount_greater_than_or_equal_to, amount_less_than_or_equal_to.
+3. Category must map to OFFICIAL_CATEGORIES slug. Unmappable (random letters, symbols, unknown) -> do not call create_category_rules; set (False, "Invalid category provided for <merchant>. Please specify a valid category.") and append. Use merchant from rules_dict (e.g. name_contains) in the message.
+4. Incomplete = merchant only no category, or category only no merchant. Unintelligible = no discernible rule (e.g. symbols only).
 
-Date helpers: datetime, get_date(y,m,d), get_start_of_month, get_end_of_month, get_start_of_year, get_end_of_year, get_start_of_week, get_end_of_week, get_after_periods(date, granularity, count) (granularity: "monthly"|"weekly"|"yearly", count e.g. -1), get_date_string(date) -> "YYYY-MM-DD".
+Date helpers: datetime, get_date(y,m,d), get_start_of_month, get_end_of_month, get_start_of_year, get_end_of_year, get_start_of_week, get_end_of_week, get_after_periods(date, granularity, count), get_date_string(date).
 
 <OFFICIAL_CATEGORIES>
 income: income_salary, income_sidegig, income_business, income_interest
@@ -57,59 +59,56 @@ donations_gifts, uncategorized, transfers, miscellaneous
 Only callable: create_category_rules(rules_dict: dict, new_category: str) -> tuple[bool, str]
 
 <EXAMPLES>
-
-Last User Request: Safeway purchases should be groceries
-Past Conversation: None
+**Last User Request**: Safeway purchases should be groceries
+**Past Conversation**: None
 ```python
 def execute_plan() -> tuple[bool, str]:
     rules_dict = {"name_contains": "safeway"}
     return create_category_rules(rules_dict=rules_dict, new_category="meals_groceries")
 ```
 
-Last User Request: Shell fuel from last 3 months under $50 are for car
-Past Conversation: None
-```python
-def execute_plan() -> tuple[bool, str]:
-    today = datetime.now()
-    start = get_date_string(get_after_periods(today, granularity="monthly", count=-3))
-    rules_dict = {"name_contains": "shell", "date_greater_than_or_equal_to": start, "amount_less_than_or_equal_to": 50}
-    return create_category_rules(rules_dict=rules_dict, new_category="transportation_car")
-```
-
-Last User Request: Kroger and Trader Joe's should be groceries
-Past Conversation: None
+**Last User Request**: Kroger and Trader Joe's should be groceries
+**Past Conversation**: None
 ```python
 def execute_plan() -> tuple[bool, str]:
     outputs = []
-    cat = "meals_groceries"
-    ok1, msg1 = create_category_rules(rules_dict={"name_contains": "kroger"}, new_category=cat)
+    ok1, msg1 = create_category_rules(rules_dict={"name_contains": "kroger"}, new_category="meals_groceries")
     outputs.append(msg1)
-    ok2, msg2 = create_category_rules(rules_dict={"name_contains": "trader joe"}, new_category=cat)
+    ok2, msg2 = create_category_rules(rules_dict={"name_contains": "trader joe"}, new_category="meals_groceries")
     outputs.append(msg2)
-    return (ok1 and ok2, chr(10).join(outputs))
+    if not (ok1 or ok2):
+        return (False, chr(10).join(outputs))
+    n = (1 if ok1 else 0) + (1 if ok2 else 0)
+    return (True, f"{n} of 2 rules successfully created.")
 ```
 
-Last User Request: tea in name should be travel and yoga* after 6/1 should be wellness
-Past Conversation: None
+**Last User Request**: set amazon to entertainment and walmart to TRJTOERJ
+**Past Conversation**: None
 ```python
 def execute_plan() -> tuple[bool, str]:
     outputs = []
-    ok1, msg1 = create_category_rules(rules_dict={"name_contains": "tea"}, new_category="leisure_travel")
+    ok1, msg1 = create_category_rules(rules_dict={"name_contains": "amazon"}, new_category="leisure_entertainment")
     outputs.append(msg1)
-    date_61 = get_date_string(get_date(2025, 6, 1))
-    ok2, msg2 = create_category_rules(
-        rules_dict={"name_contains": "yoga", "date_greater_than_or_equal_to": date_61},
-        new_category="health_gym_wellness"
-    )
+    ok2, msg2 = (False, "Invalid category provided for walmart. Please specify a valid category.")
     outputs.append(msg2)
-    return (ok1 and ok2, chr(10).join(outputs))
+    if not (ok1 or ok2):
+        return (False, chr(10).join(outputs))
+    n = (1 if ok1 else 0) + (1 if ok2 else 0)
+    return (True, f"{n} of 2 rules successfully created.")
 ```
 
-Last User Request: !!!@@@ gibberish
-Past Conversation: None
+**Last User Request**: Amazon
+**Past Conversation**: None
 ```python
 def execute_plan() -> tuple[bool, str]:
-    return False, "Provide a valid categorization rule (e.g. 'X purchases should be Y')."
+    return False, "Which category should Amazon purchases be assigned to? For example: groceries, shopping, or another category."
+```
+
+**Last User Request**: !!!@@@
+**Past Conversation**: None
+```python
+def execute_plan() -> tuple[bool, str]:
+    return False, "Please provide a valid categorization rule (e.g. 'Walmart should be groceries')."
 ```
 </EXAMPLES>
 """
@@ -195,22 +194,22 @@ output:""")
       if chunk.text is not None:
         output_text += chunk.text
       
-    #   # Extract thought summary from chunk
-    #   if hasattr(chunk, 'candidates') and chunk.candidates:
-    #     for candidate in chunk.candidates:
-    #       # Extract thought summary from parts (per Gemini API docs)
-    #       # Check part.thought boolean to identify thought parts
-    #       if hasattr(candidate, 'content') and candidate.content:
-    #         if hasattr(candidate.content, 'parts') and candidate.content.parts:
-    #           for part in candidate.content.parts:
-    #             # Check if this part is a thought summary (per documentation)
-    #             if hasattr(part, 'thought') and part.thought:
-    #               if hasattr(part, 'text') and part.text:
-    #                 # Accumulate thought summary text (for streaming, it may come in chunks)
-    #                 if thought_summary:
-    #                   thought_summary += part.text
-    #                 else:
-    #                   thought_summary = part.text
+      # Extract thought summary from chunk
+      # if hasattr(chunk, 'candidates') and chunk.candidates:
+      #   for candidate in chunk.candidates:
+      #     # Extract thought summary from parts (per Gemini API docs)
+      #     # Check part.thought boolean to identify thought parts
+      #     if hasattr(candidate, 'content') and candidate.content:
+      #       if hasattr(candidate.content, 'parts') and candidate.content.parts:
+      #         for part in candidate.content.parts:
+      #           # Check if this part is a thought summary (per documentation)
+      #           if hasattr(part, 'thought') and part.thought:
+      #             if hasattr(part, 'text') and part.text:
+      #               # Accumulate thought summary text (for streaming, it may come in chunks)
+      #               if thought_summary:
+      #                 thought_summary += part.text
+      #               else:
+      #                 thought_summary = part.text
     
     # Display thought summary if available
     if thought_summary:
@@ -395,6 +394,38 @@ Key validations:
 - name_contains schneider, amount_gte 400, new_category shelter_upkeep"""
   },
   {
+    "name": "set_amazon_to_clothing_and_set_walmart_to_gibberish",
+    "last_user_request": "set amazon to clothing and set walmart to $#^*$^*#$",
+    "previous_conversation": "",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    outputs = []
+    ok1, msg1 = create_category_rules(rules_dict={"name_contains": "amazon"}, new_category="shopping_clothing")
+    outputs.append(msg1)
+    ok2, msg2 = (False, "Invalid category provided for walmart. Please specify a valid category.")
+    outputs.append(msg2)
+    if not (ok1 or ok2):
+        return (False, chr(10).join(outputs))
+    n = (1 if ok1 else 0) + (1 if ok2 else 0)
+    return (True, f"{n} of 2 rules successfully created.")
+```
+Key validations:
+- amazon -> shopping_clothing (call create_category_rules); walmart -> gibberish category: do not call create_category_rules, use (False, "Invalid category...") and append. Return (True, "1 of 2 rules successfully created.")."""
+  },
+  {
+    "name": "set_amazon_and_walmart_to_gibberish_categories",
+    "last_user_request": "set amazon to #!$#!$ and set walmart to $#^*$^*#$",
+    "previous_conversation": "",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return False, "Please specify valid categories (e.g. groceries, shopping, dining out). The category names you gave are not recognized."
+```
+Key validations:
+- User gave unintelligible category names (#!$#!$, $#^*$^*#$). Return (False, guidance) asking for valid categories; do not call create_category_rules with those strings."""
+  },
+  {
     "name": "multiple_merchants_rule",
     "last_user_request": "John's, Henries and moms and pops needs to all be in supermarkets",
     "previous_conversation": "",
@@ -409,10 +440,13 @@ def execute_plan() -> tuple[bool, str]:
     outputs.append(msg2)
     ok3, msg3 = create_category_rules(rules_dict={"name_contains": "moms and pops"}, new_category=cat)
     outputs.append(msg3)
-    return (ok1 and ok2 and ok3, chr(10).join(outputs))
+    if not (ok1 or ok2 or ok3):
+        return (False, chr(10).join(outputs))
+    n = (1 if ok1 else 0) + (1 if ok2 else 0) + (1 if ok3 else 0)
+    return (True, f"{n} of 3 rules successfully created.")
 ```
 Key validations:
-- Creates 3 rules: one per merchant (John's, Henries, moms and pops). new_category meals_groceries for supermarkets. No early exit; return (all(successes), chr(10).join(outputs))."""
+- Creates 3 rules: one per merchant. Only concat when all False; else (True, "x of 3 rules successfully created.")."""
   },
   {
     "name": "date_filter_rule",
@@ -429,10 +463,13 @@ def execute_plan() -> tuple[bool, str]:
     outputs.append(msg1)
     ok2, msg2 = create_category_rules(rules_dict={"name_contains": "bed bath", "date_less_than_or_equal_to": last_week}, new_category=cat)
     outputs.append(msg2)
-    return (ok1 and ok2, chr(10).join(outputs))
+    if not (ok1 or ok2):
+        return (False, chr(10).join(outputs))
+    n = (1 if ok1 else 0) + (1 if ok2 else 0)
+    return (True, f"{n} of 2 rules successfully created.")
 ```
 Key validations:
-- Creates 2 rules: one per merchant (Barnes & Noble, Bed Bath & Beyond), same date_lte (before last week) and new_category shopping_clothing. No early exit; return (all(successes), chr(10).join(outputs))."""
+- Creates 2 rules: Barnes & Noble, Bed Bath & Beyond. Only concat when all False; else (True, "x of 2 rules successfully created.")."""
   },
   {
     "name": "unintelligible_input",
@@ -447,6 +484,44 @@ Key validations:
 - Returns False with clarification message
 - Does not attempt to create rules from unintelligible input
 - Provides helpful guidance on valid request format"""
+  },
+  {
+    "name": "incomplete_request",
+    "last_user_request": "Amazon",
+    "previous_conversation": "",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return False, "Which category should Amazon purchases be assigned to? For example: groceries, shopping, dining out, or another category."
+```
+Key validations:
+- User specified merchant only (Amazon), no target category. Return (False, "brief guidance") asking for the category; do not call create_category_rules."""
+  },
+  {
+    "name": "incomplete_request_followup",
+    "last_user_request": "Shopping",
+    "previous_conversation": """User: set rule for Amazon
+Penny: Which category should Amazon purchases be assigned to? For example: groceries, shopping, dining out, or another category.""",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    rules_dict = {"name_contains": "amazon"}
+    return create_category_rules(rules_dict=rules_dict, new_category="shopping_clothing")
+```
+Key validations:
+- Follow-up to incomplete_request: Past Conversation has user "Amazon" and assistant asked for category; last_user_request "Shopping" supplies category. Create rule name_contains amazon, new_category shopping_clothing."""
+  },
+  {
+    "name": "category_only_request",
+    "last_user_request": "Groceries",
+    "previous_conversation": "",
+    "ideal_response": """Expected output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    return False, "Which transactions or merchant should be categorized as groceries? For example: 'Walmart purchases should be groceries' or 'Costco should be groceries'."
+```
+Key validations:
+- User specified category only (Groceries), no merchant/name. Return (False, "brief guidance") asking which transactions or merchant; do not call create_category_rules."""
   },
   {
     "name": "regex_pattern_rule",
@@ -466,10 +541,13 @@ def execute_plan() -> tuple[bool, str]:
         new_category="leisure_entertainment"
     )
     outputs.append(msg2)
-    return (ok1 and ok2, chr(10).join(outputs))
+    if not (ok1 or ok2):
+        return (False, chr(10).join(outputs))
+    n = (1 if ok1 else 0) + (1 if ok2 else 0)
+    return (True, f"{n} of 2 rules successfully created.")
 ```
 Key validations:
-- Creates 2 rules: (1) name_contains coffee -> aviation mapped to transportation_public; (2) name_contains cricket + date_gte 8/24 -> explosions mapped to leisure_entertainment. No early exit; return (all(successes), chr(10).join(outputs))."""
+- Creates 2 rules: coffee -> transportation_public; cricket + date_gte 8/24 -> leisure_entertainment. Only concat when all False; else (True, "x of 2 rules successfully created.")."""
   },
   {
     "name": "complex_multi_condition_rule",
@@ -508,7 +586,7 @@ Key validations:
     "name": "rule_creation_with_context",
     "last_user_request": "Categorize all my Starbucks transactions as dining out",
     "previous_conversation": """User: How much am I spending at Starbucks?
-Assistant: You've spent $120 at Starbucks over the last 3 months across 15 transactions.""",
+Penny: You've spent $120 at Starbucks over the last 3 months across 15 transactions.""",
     "ideal_response": """Expected output:
 ```python
 def execute_plan() -> tuple[bool, str]:
@@ -522,7 +600,7 @@ Key validations:
     "name": "clarification_answer_rule",
     "last_user_request": "Yes, create a rule for all Target purchases to be shopping",
     "previous_conversation": """User: I want to categorize Target purchases
-Assistant: I need more information to create the categorization rule. What category should Target purchases be assigned to? For example, are they groceries, shopping, or another category?""",
+Penny: I need more information to create the categorization rule. What category should Target purchases be assigned to? For example, are they groceries, shopping, or another category?""",
     "ideal_response": """Expected output:
 ```python
 def execute_plan() -> tuple[bool, str]:
