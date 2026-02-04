@@ -1,6 +1,7 @@
 from google import genai
 from google.genai import types
 import os
+import sys
 import json
 from dotenv import load_dotenv
 
@@ -10,70 +11,47 @@ load_dotenv()
 SYSTEM_PROMPT = """You are a checker verifying verbalizer outputs against rules.
 
 ## Input:
-- **EVAL_INPUT**: Notable activity in personal finance (string)
+- **EVAL_INPUT**: Notable activity in personal finance (string). This is the **source of truth** for all factual checks.
 - **PAST_REVIEW_OUTCOMES**: Array of past reviews, each with `output`, `good_copy`, `info_correct`, `eval_text`
 - **REVIEW_NEEDED**: Highlights from EVAL_INPUT rewritten as actionable messages (string)
 
 ## Output:
 JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: **(FORMATTING ONLY)** True if REVIEW_NEEDED perfectly follows all formatting rules from the "Rules" section. This includes colors, links, character limits, and no unnecessary characters.
-- `info_correct`: **(ACCURACY ONLY)** True if all information in REVIEW_NEEDED is factually accurate when compared to EVAL_INPUT. EVAL_INPUT is the only source of truth.
-- `eval_text`: Required if either boolean is False. Explains why. Be specific. For multiple insights, refer to them by number (e.g., "Insight 1: ...", "Insight 2: ...").
+- `good_copy`: **(FORMATTING ONLY)** True if REVIEW_NEEDED perfectly follows all formatting rules from the "Rules" section.
+- `info_correct`: **(ACCURACY ONLY)** True if all information in REVIEW_NEEDED is factually accurate when compared to EVAL_INPUT. EVAL_INPUT is the sole source of truth.
+- `eval_text`: Required ONLY if either boolean is False. For each issue: state the issue and **indicate why** (e.g. what is wrong and what it should be, or which rule). Use short phrases. Refer to insights by number (e.g., "Insight 1: ..."). **If text color is wrong**, state whether the error is in the **category** or **amount** color and why (e.g., "Insight 1: Wrong color on category (should be green for lower spending)", "Insight 2: Wrong color on amount (should be red for uncat outflow)"). No long paragraphs.
 
-## Critical Priority: Strict Compliance (Recall over Precision)
-- **Recall over Precision**: It is better to mark an issue as Incorrect (False) if you are unsure, than to let a potential issue pass as Correct (True).
-- Mark `info_correct` or `good_copy` as False if there is **ANY potential violation** of the rules below or a factual error.
-- False positives (flagging correct content as issues) are preferred over false negatives (missing actual issues).
-
-## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
-**MANDATORY**: If PAST_REVIEW_OUTCOMES flags issues that still exist in REVIEW_NEEDED, mark as incorrect.
-- Extract all issues from past `eval_text` fields
-- Check if REVIEW_NEEDED repeats the same mistakes
+## Critical Priority: Strict Compliance
+- **Evaluate only REVIEW_NEEDED**: Match each item in REVIEW_NEEDED to EVAL_INPUT by `key`; do not require or judge insights that are not in REVIEW_NEEDED.
+- **Recall over Precision**: Flag ANY potential violation. False positives preferred over false negatives.
+- **Learn from PAST_REVIEW_OUTCOMES**: If issues from past `eval_text` persist, mark as incorrect.
+- **Conciseness**: Keep `eval_text` short. For each issue include a brief reason: e.g. "Wrong color on category (should be green for lower spending)", "Missing link (spend_vs_forecast category must be linked)", "Timeframe mismatch (text says 'last week' but link has '/monthly')", "Decimals in amount (use whole dollars)", "Comma in amount under 1000 (no comma for $999)", "Missing comma in amount 1000 or more ($1,000 required)".
 
 ## Rules
 
 ### Part 1: Content Rules
-1.  **Factual Accuracy**: All information in REVIEW_NEEDED must be perfectly accurate based on EVAL_INPUT.
-2.  **No Greetings**: Do not include conversational openers. Phrases that introduce insights are acceptable.
-3.  **Appropriate Tone**: Match the tone to the insight. Positive for good news (e.g., lower spending), concerned for issues (e.g., lower income).
-4.  **Prepositions**: Use correct directional prepositions. Inflows are *from* an establishment, outflows are *to* one.
-5.  **Specific Messaging per Insight Type**:
-    *   `...large_txn`: Must include transaction name, amount, and whether it's smaller/larger than usual.
-    *   `...spend_vs_forecast`: Must include amounts, timeframe (weekly/monthly), and severity of divergence. Avoid "higher by X", use "higher at X". Specify inflow/income vs outflow/spending.
-    *   `...uncat_txn`: Must include transaction name, amount, and ask for categorization.
+1.  **Factual Accuracy**: All information in REVIEW_NEEDED must match EVAL_INPUT. EVAL_INPUT is the source of truth.
+2.  **Openers**: Conversational openers (e.g. "Great news!", "Heads up!", "Awesome!", "Hey!", "Note:") are **optional**. ONLY formal greetings like "Hi", "Hello", "Good morning", and "Good evening" are forbidden.
+3.  **Required Info**: ONLY category, amount, and direction (high/low) are required. Magnitude (e.g., "slightly", "significantly") and other details (e.g. parent categories, breakdown of sub-categories) are NOT required. If the insight mentions a sub-category (e.g. "Medical & Pharmacy") but the parent category (e.g. "Health") is not mentioned in the output, this is ACCEPTABLE.
+4.  **Prepositions**: Inflows *from* establishment, outflows *to* establishment.
+5.  **Amounts**: Treat **$0** as a valid amount; it must appear correctly if present in EVAL_INPUT.
+6.  **Insight-Specific**:
+    *   `...large_txn`: Include name, amount, and larger/smaller.
+    *   `...spend_vs_forecast`: Include category, amount, and higher/lower. Category MUST be linked.
+    *   `...uncat_txn`: Include name, amount, and ask for category.
 
 ### Part 2: Formatting Rules (`good_copy` ONLY)
-1.  **Color and Linking Logic (CRITICAL)**:
-    *   **Good Outcomes = GREEN `g{...}`**: Lower spending, higher income, on-track forecasts.
-    *   **Bad Outcomes = RED `r{...}`**: Higher spending, lower income.
-    *   **Insight-Specific Formatting**:
-        *   `...large_txn`:
-            *   Outflow larger/Inflow smaller: Amount in `r{}`.
-            *   Outflow smaller/Inflow larger: Amount in `g{}`.
-        *   `...spend_vs_forecast`:
-            *   **Both Category and Amount MUST be colored and Category linked.**
-            *   Outflow HIGHER / Inflow LOWER: `r{[Category](/...)}` and `r{$Amount}`.
-            *   Outflow LOWER / Inflow HIGHER / On Track: `g{[Category](/...)}` and `g{$Amount}`.
-        *   `...uncat_txn`:
-            *   Outflow: Amount in `r{}`.
-            *   Inflow: Amount in `g{}`.
-            *   Category suggestion is NEVER colored.
-2.  **Monetary Amounts**: Must use currency symbol and commas, and exclude decimals (e.g., `$1,000`).
-3.  **Emojis**: Use them conversationally and naturally.
-4.  **No Unnecessary Characters**: No extra spaces, symbols, or text not implied by EVAL_INPUT.
-5.  **Matching Brackets/Braces/Parentheses**: All opening brackets `[`, braces `{`, and parentheses `(` must have matching closing brackets `]`, braces `}`, and parentheses `)`. All pairs must be properly nested and balanced.
+1.  **Colors**: Based on performance (EVAL_INPUT is source of truth):
+    *   **GREEN `g{...}`** = good: spending lower/expected, income higher/expected, uncategorized **inflow**; for `...large_txn`: outflow **smaller** than usual, inflow **larger** than usual.
+    *   **RED `r{...}`** = bad: spending higher than expected, income lower than expected, uncategorized **outflow**; for `...large_txn`: outflow **larger** than usual, inflow **smaller** than usual.
+    *   For `...spend_vs_forecast`: category and amount share the same color per insight. For `...uncat_txn`: outflow amount RED, inflow amount GREEN. For `...large_txn`: only the amount is colored (no category link).
+2.  **Links**: `...spend_vs_forecast` category MUST be linked and colored.
+3.  **Amounts**: Use `$`, no decimals. **Commas only when the absolute value of the amount is 1,000 or more** (e.g., `$999` no comma; `$1,000` with comma; `$0` is valid, no comma).
+4.  **Emojis**: Allowed.
+5.  **Syntax**: Balanced `[]`, `{}`, `()`.
 
 ### Part 3: Character Count Rule (`good_copy` ONLY)
-1.  **Strict Limit**: 100 characters maximum.
-2.  **What to Count**: Count only the visible text and emojis the user sees.
-3.  **What NOT to Count**: Exclude ALL formatting characters: `g{`, `r{`, `}`, `[`, `]`, `(`, `)` and the URL part of links (e.g., `g{[Food](/cat)}` counts as 4 characters for "Food").
-
-## Verification Steps
-
-1.  **Check PAST_REVIEW_OUTCOMES first**: Extract all flagged issues. If REVIEW_NEEDED repeats them -> mark False.
-2.  **Verify Information Correctness (`info_correct`)**: Check REVIEW_NEEDED against EVAL_INPUT for any factual errors, based on the **Content Rules**.
-3.  **Verify Formatting and Copy (`good_copy`)**: Check REVIEW_NEEDED for any violations of the **Formatting Rules** and **Character Count Rule**.
-4.  **Write eval_text**: If any check fails, list the specific issues, referencing the rule that was broken.
+1.  **Strict Limit**: 100 characters maximum per insight. Count only **visible text and spaces**; exclude all markup (`g{`, `r{`, `}`, `[]`, `()`, link syntax, and URL). Flag only when the visible character count clearly exceeds 100.
 """
 
 class CheckJsonOptimizer:
@@ -88,7 +66,7 @@ class CheckJsonOptimizer:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 4096
+    self.thinking_budget = 1024
     self.model_name = model_name
     
     # Generation Configuration Constants
@@ -658,6 +636,24 @@ TEST_CASES = [
         "eval_text": "good_copy is False: Insight omits core information (Health spending of $169). info_correct is False: Exceeds 100 characters. Category 'Medical & Pharmacy' is red, but should be green for an outflow lower than forecast."
       }
     ]
+  },
+  {
+    "name": "zero_amount_valid",
+    "eval_input": [{"key": "25:spend_vs_forecast", "insight": "Transport spending was zero this month, now at $0."}],
+    "review_needed": [{"key": "25:spend_vs_forecast", "insight": "Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$0}!"}],
+    "past_review_outcomes": []
+  },
+  {
+    "name": "comma_only_when_1000_or_more",
+    "eval_input": [{"key": "25:spend_vs_forecast", "insight": "Transport spending was slightly reduced this month, now at $999."}],
+    "review_needed": [{"key": "25:spend_vs_forecast", "insight": "Great news! Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$999}!"}],
+    "past_review_outcomes": []
+  },
+  {
+    "name": "comma_required_when_1000_or_more",
+    "eval_input": [{"key": "9:spent_vs_forecast", "insight": "Service Fees spending decreased last week, now at $1000."}],
+    "review_needed": [{"key": "9:spent_vs_forecast", "insight": "Awesome! Your g{[Service Fees spending](/bills_service_fees/weekly)} was lower last week at g{$1000}!"}],
+    "past_review_outcomes": []
   }
 ]
 
@@ -772,14 +768,12 @@ def run_tests(test_names: list = None, checker: CheckJsonOptimizer = None):
 
 
 def main():
-  """Main function to test the checker optimizer"""
+  """Main function to test the checker optimizer. Pass batch 1..4 to run that batch."""
   checker = CheckJsonOptimizer()
-  
-  # Run all tests
-  run_tests(checker=checker)
-  
-  # Or run specific tests:
-  # run_tests(["spend_vs_forecast_correct_lower_outflow", "uncat_txn_outflow_red"], checker=checker)
+  batch_num = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+  batch_names = BATCHES[batch_num - 1]
+  print(f"Running Batch {batch_num} ({len(batch_names)} tests): {batch_names}")
+  run_tests(batch_names, checker=checker)
 
 
 if __name__ == "__main__":
