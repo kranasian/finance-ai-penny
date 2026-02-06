@@ -1,5 +1,6 @@
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 import os
 import sys
 from dotenv import load_dotenv
@@ -17,80 +18,55 @@ from penny.tool_funcs.research_and_strategize_financial_outcomes import research
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial planner agent very good at understanding conversation.
+SYSTEM_PROMPT = """You are a financial planner agent that is very good at understanding conversation and creating a plan to achieve a user's financial goals.
 
-## Your Tasks
+## Core Directives
 
-1. **Prioritize the Last User Request**: Your main goal is to create a plan that directly addresses the **Last User Request**.
-2. **Use Previous Conversation for Context ONLY**:
-    - If the **Last User Request** is a follow-up (e.g., "yes, do that"), use the context.
-    - If the **Last User Request** is vague (e.g., "what about the other thing?"), use the context.
-    - **CRITICAL**: For all skill requests, thoroughly analyze the `Previous Conversation` to gain an accurate understanding of the user's intent, identify any unresolved issues, and ensure the request parameter of the skill function is comprehensive and contextually relevant.
-    - **If the Last User Request is a new, general question (e.g., "how's my accounts doing?"), DO NOT use specific details from the Previous Conversation in your plan.**
-3. **Create a Focused Plan**: The steps in your plan should only be for achieving the **Last User Request**. Avoid adding steps related to past topics unless absolutely necessary.
-4. **Output Python Code**: The plan must be written as a Python function `execute_plan`.
-
-Write a python function `execute_plan` that takes no arguments:
-  - Express actionable steps as **calls to skill functions**, passing in a natural language request and optionally another input from another skill.
-  - Do not use other python functions, just available skill functions, conditional operations and string concatenations.
-
-## Critical Efficiency Rules
-
-**1. Prioritize `lookup_user_accounts_transactions_income_and_spending_patterns` for ALL Data-Related Inquiries, Including Comparisons, Summaries, and Calculations on User Data:**
-- **If the Last User Request requires ANY user account, transaction, income, or spending data, or asks for comparisons, summaries, or calculations based on this user data, you MUST call `lookup_user_accounts_transactions_income_and_spending_patterns` FIRST.**
-- Even if Previous Conversation contains some financial information, if the request needs current/fresh user data, involves a comparison (e.g., "compare X to Y"), a summary (e.g., "summarize my spending"), or a calculation (e.g., "calculate my savings rate") on user data, you MUST call lookup FIRST.
-- For any question about the user's financial status, accounts, transactions, spending, income, or requests involving comparisons, summaries, or calculations of this user data, ALWAYS start with lookup. It is designed to provide the most current and comprehensive user data and perform these data-driven assessments directly.
-- Only skip lookup if Previous Conversation contains the EXACT, COMPLETE user data needed AND the request does not imply needing current user data, comparison, summary, or calculation, AND the request is about a specific past event already discussed.
-- The `lookup_user_accounts_transactions_income_and_spending_patterns` skill is highly capable of collecting comprehensive user data, performing necessary calculations (e.g., totals, averages, differences) on user data, and generating relevant summaries or comparisons within its `lookup_request` parameter. It is the go-to skill for all user financial data needs and can often provide a complete response. Use it as the primary, and often sole, data source and analytical tool for these types of user inquiries.
-
-**2. Use Other Skills ONLY When `lookup` Cannot Fully Address the Request; Avoid Unnecessary Chaining:**
-- **Do not chain skills unnecessarily. If `lookup_user_accounts_transactions_income_and_spending_patterns` alone can fully answer the Last User Request (especially for direct user data retrieval, comparisons, summaries, or calculations on user data), return it directly - do NOT chain with `research_and_strategize_financial_outcomes`.**
-- **CRITICAL DECISION RULE: After calling lookup, evaluate if its output directly and completely answers the Last User Request. If yes, return it immediately - do NOT add `research_and_strategize_financial_outcomes`. This applies strongly to requests for user data, comparisons, summaries, and calculations on user data.**
-- Only use `research_and_strategize_financial_outcomes` if the request explicitly requires *complex* analysis, *long-term* planning, *multi-step* strategy, *future* forecasting, *what-if* scenarios, *research*, *general advice*, or *simulations* that demonstrably go beyond what `lookup_user_accounts_transactions_income_and_spending_patterns` can provide (e.g., "what's the best *plan* to...", "how should I...", "create a *plan* to...", "compare *long-term* options", "*complex financial modeling*", "*research* average spending", "*advice* on investing").
-- If the Last User Request is primarily an information question, a comparison, a summary, or a direct calculation on user data (e.g., "how's my accounts doing?", "what's my balance?", "what are the steps to...?", "compare my spending this month to last month", "summarize my investment performance", "calculate my net worth"), `lookup_user_accounts_transactions_income_and_spending_patterns` alone is almost always sufficient - do NOT chain with `research_and_strategize_financial_outcomes`.
-- Use strategize ONLY when the request explicitly asks for:
-  - A plan or strategy (e.g., "what's the best plan to...", "how should I...", "create a plan to...")
-  - Analysis or comparison of outcomes (e.g., "what if scenarios")
-  - Financial calculations requiring modeling (e.g., "when can I retire")
-  - *Research* or *general advice* (e.g., "what are the best ways to save?", "average cost of a car in my area")
-- **For Goal-Setting or Planning Requests (e.g., "save for X", "tips for Y"):**
-  - Always perform a `lookup_user_accounts_transactions_income_and_spending_patterns` first to understand the user's current financial situation.
-  - Then, use `research_and_strategize_financial_outcomes` to develop the plan or provide tips, incorporating the `input_info` from the lookup.
-  - Avoid calling `create_budget_or_goal` unless the user explicitly asks to *create* a budget or goal.
-- **For Simple Informational Questions (e.g., "how's my accounts doing?"):**
-  - `lookup_user_accounts_transactions_income_and_spending_patterns` alone is often sufficient. If its output directly answers the question, return it immediately.
-  - Avoid chaining with `research_and_strategize_financial_outcomes` if no analysis, planning, or strategy is requested.
-- CRITICAL: If lookup provides sufficient information to answer the question, return it directly without additional skills. Avoid adding strategize "just to be thorough" - only add it if truly needed.
-
-**3. Avoid Unnecessary `create_budget_or_goal` Calls:**
-- If the Last User Request is a question (e.g., "what are the steps to save money?"), avoid using `create_budget_or_goal`.
-- Only use `create_budget_or_goal` if the user explicitly asks you to *create*, *set up*, *establish*, or *track* a budget or goal.
+1.  **Always Assume Financial Goal Context**: Interpret Last User Request and Previous Conversation as exchanges that followed the prompt "What are your financial goals?".
+2.  **Analyze User Intent**: Analyze the **Last User Request** in the context of the other previous messages in **Previous Conversation**. Determine if the user is stating an explicit/implicit financial goal, or asking a question. Return clarification if **Last User Request** is unintelligible.
+3.  **Goal-Oriented Flow**: If the user states a financial goal, follow this flow:
+    *   **Step 1: Gather Data (If Necessary).** Call lookup only when you need a baseline (e.g. current spending), feasibility check, or data the user did not provide. If the user already gave amount, scope (category or goal type), and period/timeline, call `create_budget_or_goal` directly with that and optional `input_info` from Previous Conversation. Use `research_and_strategize_financial_outcomes` only for data outside the user's finances (e.g. market estimates, travel costs).
+    *   **Step 2: Strategize.** If the goal is complex (e.g. retirement, college savings, debt paydown), use `research_and_strategize_financial_outcomes` once. Simple budgets or savings goals (e.g. "$X per week for groceries", "save $Y monthly for emergency fund") do not require this step.
+    *   **Step 3: Create Goal.** Final step: one precise `create_budget_or_goal` call per goal. `creation_request` must be one sentence: amount + scope + period (e.g. "Create a weekly grocery budget of $150."). `create_budget_or_goal` will ask for any missing information; do not preempt with extra lookup.
+4.  **Information-Seeking Flow**: If the user asks a question, the plan should consist of the necessary `lookup` or `research` skills to acquire the information. The plan's final output should be the information itself.
+5.  **Extract Key Information**: Vigilantly identify and extract critical details from the user's request, such as **amounts and timelines**.
+6.  **Use Conversation History for Clarity**: Refer to the `Previous Conversation` to resolve ambiguity.
+7.  **Handle Multiple Goals Sequentially**: Address multiple goals one by one in the plan. When the plan has **multiple** `create_budget_or_goal` calls: collect (success, create_result) for each; **no early return** on failure. Use variables like success1, create_result1, success2, create_result2, outputs. If all fail, return `(False, chr(10).join(outputs))`. If at least one succeeds, return `(True, f"{n} of {y} goals successfully created.")` with n = number of successes, y = total. Do not return the joined outputs when any call succeeded.
+8.  **Output Python Code**: The plan must be a Python function `execute_plan`.
+9.  **Request and result conciseness**: Keep every request parameter (`lookup_request`, `creation_request`, `strategize_request`) to one clear sentence (or two only when necessary). Do not add filler or paragraphs. Return exactly the tuple from the last step: `(success, output)` — no extra commentary, prefixes, or wrapping. The execution result must be concise but complete: the skill's output string or the "n of y goals" summary only.
 
 <AVAILABLE_SKILL_FUNCTIONS>
 
 These are the **available skills** that can be stacked and sequenced using `input_info` for efficient information flow between steps.
-- All of these skills can accept **multiple requests**, written as multiple sentences in their request parameters.
-- All **skill functions** return a `tuple[bool, str]`.
-    - The first element is `success` boolean.  `True` if information was found and the request was achieved and `False` if information not available, an error occured or more information needed from the user.
-    - The second element is `output_info` string.  It contains the output of the **skill function** that should be used as `input_info` in a subsequent skill function call if relevant to the next step.
-    - **CRITICAL**: For all skill functions, ensure that the request parameters (e.g., `lookup_request`, `creation_request`, `strategize_request`) effectively incorporate relevant information from the `Previous Conversation` and, when available, the `input_info` to accurately address the `Last User Request`.
+- All **skill functions** return `tuple[bool, str]`: (success, output). Use output as `input_info` for the next step when relevant.
+- Keep request parameters to one sentence; incorporate **Previous Conversation** and `input_info` where needed to address **Last User Request**. Return exactly `(success, output)` from the plan — no extra text.
 
 ### List of all Skill Functions
 
 - `lookup_user_accounts_transactions_income_and_spending_patterns(lookup_request: str, input_info: str = None) -> tuple[bool, str]`
-  - `lookup_request` is the detailed information requested, written in natural language to lookup about the user's accounts, transactions including income and spending, subscriptions and compare them. It also excels at collecting user data, and performing any summaries through calculations or assessments including forecasted income and spending, and any computations necessary on this. **When `input_info` is available, it is highly recommended to incorporate that information concisely into the `lookup_request` to refine the search and ensure accuracy.**
-  - Lookup request can also be about expected and future weekly/monthly income or spending.  Lookup request must phrase the best natural language output needed towards the plan to answer the user.
-- `create_budget_or_goal(creation_request: str, input_info: str = None) -> tuple[bool, str]`
-  - `creation_request` is what needs to be created factoring in the information coming in from `input_info`.  The request must be descriptive and capture the original user request.  **When `input_info` is available, it is highly recommended to incorporate it to make the creation request precise and context-aware.**
-  - Function output `str` is the detail of what was created.
-  - If more information is needed from the user, `success` will be `False` and the information needed will be in the `output_info` string.
+  - `lookup_request`: One clear sentence for what to lookup (accounts, transactions, income/spending, subscriptions, forecasts). When `input_info` is available, incorporate it concisely. Use only when baseline or feasibility is needed; if the user already gave amount, scope, and period, skip to `create_budget_or_goal`.
+- `create_budget_or_goal (creation_request: str, input_info: str = None) -> tuple[bool, str]`
+  - `creation_request`: One sentence with amount, scope (budget category or savings goal), and period (e.g. weekly, monthly, or by date). When `input_info` is available, use it for context but keep the sentence concise. Only for budgets or savings goals; NOT for categorization.
+  - Returns (success, output). Output is the created detail or, if more info needed from user, the question to ask. **Multiple goals**: One call per goal; collect (success, create_result) for each; no early return. If none succeeded return (False, chr(10).join(outputs)); else return (True, f"{n} of {y} goals successfully created.").
 - `research_and_strategize_financial_outcomes(strategize_request: str, input_info: str = None) -> tuple[bool, str]`
-  - `strategize_request` is what needs to be thought out, planned or strategized. It can contain research information (e.g., "average dining out for a couple in Chicago, Illinois", "estimated cost of a flight from Manila to Greece") and factor in information from `input_info`. **When `input_info` is available, it is highly recommended to incorporate that information concisely into the `strategize_request` to refine the strategy and make it as precise as possible.**
-  - This skill can financially plan for the future, lookup feasibility and overall provide assessment of different simulated outcomes with finances.
-
+  - `strategize_request`: One sentence for research or strategy using external data (e.g. "Average dining out for a couple in Chicago.", "Strategy to pay off $5000 credit card debt with timeline."). Do not use for the user's own data — use lookup for that.
 </AVAILABLE_SKILL_FUNCTIONS>
 
 <EXAMPLES>
+
+input: **Last User Request**: I need to set a budget for my groceries, let's say $150 per week.
+**Previous Conversation**:
+User: My food spending is out of control.
+Assistant: I can help with that. Looking at your recent transactions, you are spending about $210 per week on groceries.
+output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    success, create_result = create_budget_or_goal(
+        creation_request="Create a weekly grocery budget of $150.",
+        input_info="User is currently spending $210/week on groceries."
+    )
+    return success, create_result
+```
 
 input: **Last User Request**: set a $500 monthly limit on shopping
 **Previous Conversation**:
@@ -105,44 +81,59 @@ def execute_plan() -> tuple[bool, str]:
     if not success:
         return False, lookup_result
 
-    success, creation_result = create_budget_or_goal(
+    success, create_result = create_budget_or_goal(
         creation_request="Set a monthly shopping budget limit of $500, incorporating current spending patterns.",
         input_info=lookup_result
     )
-    if not success:
-        return False, creation_result
-    
-    return True, creation_result
+    return success, create_result
 ```
 
-input: **Last User Request**: set a target of 3 years
+input: **Last User Request**: I want to pay off my credit card debt of $5000.
 **Previous Conversation**:
-User: I'll need to save $5000 for a car payment.
-Assistant: Without any cuts, it will take you 2 years to get there. How long are you planning to save?
+None
 output:
 ```python
 def execute_plan() -> tuple[bool, str]:
     success, lookup_result = lookup_user_accounts_transactions_income_and_spending_patterns(
-        lookup_request="Analyze current income and spending patterns to assess feasibility of saving $5000 for a car payment over 3 years."
+        lookup_request="Analyze current income, spending, and credit card debt to assess the feasibility of paying off $5000."
     )
     if not success:
         return False, lookup_result
 
     success, strategy_result = research_and_strategize_financial_outcomes(
-        strategize_request="Develop a savings plan to accumulate $5000 for a car payment over 3 years. Calculate required monthly savings amount and timeline.",
+        strategize_request="Develop a strategy to pay off the $5000 credit card debt, including a timeline and monthly payment plan.",
         input_info=lookup_result
     )
     if not success:
         return False, strategy_result
     
-    success, goal_result = create_budget_or_goal(
-        creation_request="Create a savings goal for a car payment targeting $5000 over 3 years, incorporating the savings plan timeline and monthly contribution amount.",
+    success, create_result = create_budget_or_goal(
+        creation_request="Create a goal to pay off the $5000 credit card debt based on the developed strategy.",
         input_info=strategy_result
     )
-    if not success:
-        return False, f"Strategy: {strategy_result}. Unable to create goal: {goal_result}"
-    
-    return True, f"Savings strategy: {strategy_result}. Goal created: {goal_result}"
+    return success, create_result
+```
+
+input: **Last User Request**: I want a $400 monthly food budget and to save $200 every month for my emergency fund.
+**Previous Conversation**: None
+output:
+```python
+def execute_plan() -> tuple[bool, str]:
+    outputs = []
+    success1, create_result1 = create_budget_or_goal(
+        creation_request="Create a monthly food budget of $400.",
+        input_info=None
+    )
+    outputs.append(create_result1)
+    success2, create_result2 = create_budget_or_goal(
+        creation_request="Create a savings goal of $200 every month for emergency fund.",
+        input_info=None
+    )
+    outputs.append(create_result2)
+    if not (success1 or success2):
+        return (False, chr(10).join(outputs))
+    n = (1 if success1 else 0) + (1 if success2 else 0)
+    return (True, f"{n} of 2 goals successfully created.")
 ```
 
 </EXAMPLES>
@@ -151,22 +142,19 @@ def execute_plan() -> tuple[bool, str]:
 class GoalAgentOptimizer:
   """Handles all Gemini API interactions for financial goal creation and optimization"""
   
-  def __init__(self, model_name="gemini-flash-lite-latest"):
-    """Initialize the Gemini agent with API configuration for financial goal creation"""
-    # API Configuration
+  def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=4096):
+    """Initialize the Gemini agent with API configuration for financial goal creation."""
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
       raise ValueError("GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment.")
     self.client = genai.Client(api_key=api_key)
-    
-    # Model Configuration
-    self.thinking_budget = 4096
     self.model_name = model_name
+    self.thinking_budget = thinking_budget
     
     # Generation Configuration Constants
     self.temperature = 0.6
     self.top_p = 0.95
-    self.max_output_tokens = 2048
+    self.max_output_tokens = 4096
     
     # Safety Settings
     self.safety_settings = [
@@ -209,19 +197,42 @@ output:""")
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
     )
 
-    # Generate response
     output_text = ""
-    for chunk in self.client.models.generate_content_stream(
-      model=self.model_name,
-      contents=contents,
-      config=generate_content_config,
-    ):
-      if chunk.text is not None:
-        output_text += chunk.text
-    
+    thought_summary = ""
+    try:
+      for chunk in self.client.models.generate_content_stream(
+        model=self.model_name,
+        contents=contents,
+        config=generate_content_config,
+      ):
+        if chunk.text is not None:
+          output_text += chunk.text
+        if hasattr(chunk, "candidates") and chunk.candidates:
+          for candidate in chunk.candidates:
+            if hasattr(candidate, "content") and candidate.content:
+              if hasattr(candidate.content, "parts") and candidate.content.parts:
+                for part in candidate.content.parts:
+                  if getattr(part, "thought", False) and getattr(part, "text", None):
+                    thought_summary = (thought_summary + part.text) if thought_summary else part.text
+    except ClientError as e:
+      if self.thinking_budget == 0 and "only works in thinking mode" in (str(e) or ""):
+        print("\n[NOTE] This model requires thinking mode; API rejected thinking_budget=0. Use default (no --no-thinking) or a different model for non-thinking.", flush=True)
+        sys.exit(1)
+      raise
+
+    if thought_summary:
+      print("\n" + "-" * 80)
+      print("THOUGHT SUMMARY:")
+      print("-" * 80)
+      print(thought_summary.strip())
+      print("-" * 80 + "\n")
+
     return output_text
   
   
@@ -377,30 +388,40 @@ output:"""
   return result
 
 
-# Test cases list - add new tests here instead of creating new functions
+# Test cases: distinct scopes, not identical to prompt examples.
 TEST_CASES = [
   {
-    "name": "set_food_budget_500_next_month",
-    "last_user_request": "set a food budget of $500 for next month.",
-    "previous_conversation": ""
+    "name": "single_budget_no_conversation",
+    "last_user_request": "Set a $500 food budget for next month.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: direct create_budget_or_goal(creation_request with $500 food budget for next month, input_info=None). No lookup. Return (success, create_result)."
   },
   {
-    "name": "save_10000_to_end_of_year",
-    "last_user_request": "save $10000 up to end of year.",
-    "previous_conversation": ""
+    "name": "single_savings_by_date",
+    "last_user_request": "I want to save $10,000 by the end of the year.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: lookup (savings rate / cash flow for $10k by year-end) → research (required monthly amount to reach $10k by EOY) → create_budget_or_goal(creation_request for $10k by end of year, input_info=strategy_result). Return (success, create_result). Goal end_date = end of current year."
   },
   {
-    "name": "save_5000_for_house_down_payment",
+    "name": "complex_goal_with_conversation",
     "last_user_request": "I want to save $5,000 for a down payment on a house. What's the best plan to get there?",
     "previous_conversation": """User: How much am I spending on dining out?
 Assistant: Over the last 3 months, you've spent an average of $450 per month on dining out.
 User: What about my overall spending?
-Assistant: Your total monthly spending averages around $3,200, and your monthly income is about $4,500."""
+Assistant: Your total monthly spending averages around $3,200, and your monthly income is about $4,500.""",
+    "ideal_response": "Expected: lookup (confirm income ~$4,500 and spending ~$3,200 / surplus) → research (savings strategy for $5k down payment) → create_budget_or_goal(creation_request for $5k house down payment with plan/timeline, input_info=strategy_result). Return (success, create_result). Goal should have end_date and clear timeline."
   },
   {
-    "name": "budget_gas_60_weekly_6_months",
-    "last_user_request": "budget $60 for gas every week for the next 6 months",
-    "previous_conversation": ""
+    "name": "single_budget_bounded_period",
+    "last_user_request": "Budget $60 for gas every week for the next 6 months.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: direct create_budget_or_goal(creation_request for weekly $60 gas budget for the next 6 months, input_info=None). No lookup. Return (success, create_result)."
+  },
+  {
+    "name": "multiple_asks_dining_cap_and_vacation",
+    "last_user_request": "Cap my dining-out spending at $200 per month and save $3,000 for a vacation by next summer.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: two create_budget_or_goal calls (1: monthly dining cap $200; 2: savings $3,000 for vacation by next summer). Collect success1, create_result1, success2, create_result2, outputs; no early return. Return (True, '2 of 2 goals successfully created.') when both succeed. 'Next summer' = summer of current/next calendar year (e.g. July 2026)."
   },
 ]
 
@@ -448,12 +469,14 @@ def run_test(test_name_or_index_or_dict, optimizer: GoalAgentOptimizer = None):
       print(f"\n{'='*80}")
       print(f"Running test: {test_name}")
       print(f"{'='*80}\n")
-      
-      return _run_test_with_logging(
+      result = _run_test_with_logging(
         test_name_or_index_or_dict["last_user_request"],
         test_name_or_index_or_dict.get("previous_conversation", ""),
         optimizer
       )
+      if test_name_or_index_or_dict.get("ideal_response"):
+        print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + test_name_or_index_or_dict["ideal_response"] + "\n" + "=" * 80 + "\n")
+      return result
     else:
       print(f"Invalid test dict: must contain 'last_user_request' key.")
       return None
@@ -467,12 +490,14 @@ def run_test(test_name_or_index_or_dict, optimizer: GoalAgentOptimizer = None):
   print(f"\n{'='*80}")
   print(f"Running test: {test_case['name']}")
   print(f"{'='*80}\n")
-  
-  return _run_test_with_logging(
+  result = _run_test_with_logging(
     test_case["last_user_request"],
     test_case["previous_conversation"],
     optimizer
   )
+  if test_case.get("ideal_response"):
+    print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + test_case["ideal_response"] + "\n" + "=" * 80 + "\n")
+  return result
 
 
 def run_tests(test_names_or_indices_or_dicts, optimizer: GoalAgentOptimizer = None):
@@ -516,31 +541,44 @@ def test_with_inputs(last_user_request: str, previous_conversation: str, optimiz
   return _run_test_with_logging(last_user_request, previous_conversation, optimizer)
 
 
-def main():
-  """Main function to test the goal agent optimizer"""
-  # Option 1: Run a single test by name
-  # run_test("save_10000_to_end_of_year")
-  
-  # Option 2: Run a single test by index
-  # run_test(0)  # set_food_budget_500_next_month
-  
-  # Option 3: Run a single test by passing test data directly
-  run_test({
-    "name": "custom_test",
-    "last_user_request": "save $5000 for a vacation by next summer",
-    "previous_conversation": ""
-  })
-  
-  # Option 4: Run multiple tests by names
-  # run_tests(["save_10000_to_end_of_year", "set_food_budget_500_next_month"])
-  
-  # Option 5: Run multiple tests by indices
-  # run_tests([0, 1])  # set_food_budget_500_next_month, save_10000_to_end_of_year
-  
-  # Option 6: Run all tests
-  # run_tests(None)
+def main(test: str = None, no_thinking: bool = False):
+  """Main: run single test (name or index), all tests, or show usage. no_thinking=True sets thinking_budget=0."""
+  optimizer = GoalAgentOptimizer(thinking_budget=0 if no_thinking else 4096)
+
+  if test is not None:
+    if test.strip().lower() == "all":
+      print(f"\n{'='*80}")
+      print("Running ALL test cases")
+      print(f"{'='*80}\n")
+      for i in range(len(TEST_CASES)):
+        run_test(i, optimizer)
+        if i < len(TEST_CASES) - 1:
+          print("\n" + "-" * 80 + "\n")
+      return
+    test_val = int(test) if test.isdigit() else test
+    result = run_test(test_val, optimizer)
+    if result is None:
+      print("\nAvailable test cases:")
+      for i, tc in enumerate(TEST_CASES):
+        print(f"  {i}: {tc['name']}")
+      print("  all: run all test cases")
+    return
+
+  print("Usage:")
+  print("  Run a single test: --test <name_or_index>")
+  print("  Run all tests: --test all")
+  print("  Disable thinking: --no-thinking (thinking_budget=0)")
+  print("\nAvailable test cases:")
+  for i, tc in enumerate(TEST_CASES):
+    print(f"  {i}: {tc['name']}")
+  print("  all: run all test cases")
 
 
 if __name__ == "__main__":
-  main()
+  import argparse
+  parser = argparse.ArgumentParser(description="Run goal agent optimizer tests")
+  parser.add_argument("--test", type=str, help='Test name or index (e.g. "set_food_budget_500_next_month" or "0")')
+  parser.add_argument("--no-thinking", action="store_true", help="Set thinking_budget=0 (Thinking OFF) for comparison")
+  args = parser.parse_args()
+  main(test=args.test, no_thinking=args.no_thinking)
 

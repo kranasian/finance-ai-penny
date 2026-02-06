@@ -340,8 +340,8 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def create_category_spending_limit_wrapper(category: str, granularity: str, start_date: str, end_date: str, amount: float, title: str):
     return create_category_spending_limit(category, granularity, start_date, end_date, amount, title)
 
-  def create_savings_goal_wrapper(amount: float, end_date: str, title: str, granularity: Optional[str] = None, start_date: str = ""):
-    return create_savings_goal(amount, end_date, title, granularity=granularity, start_date=start_date)
+  def create_savings_goal_wrapper(amount: float, end_date: str, title: str, goal_type: str = "save_X_amount", granularity: Optional[str] = None, start_date: str = ""):
+    return create_savings_goal(amount, end_date, title, goal_type=goal_type, granularity=granularity, start_date=start_date)
 
   # validate_budget_or_goal function (used by generated code from P:Func:CreateBudgetOrGoal)
   def validate_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
