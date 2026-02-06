@@ -2,10 +2,16 @@ from google import genai
 from google.genai import types
 import os
 import json
+import argparse
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+# Prompt axes: greeting rule = acceptable only when (1) no Human before then Human then
+# ai_review_response, or (2) no Human before ai_review_response; unacceptable when
+# multiple turns (e.g. AI-Human-AI-ai_review_response or Human-AI-Human-ai_review_response).
+# Also: rationale matches actual issues; advice requires recommendation early; no IDs.
 
 SYSTEM_PROMPT = """You are a checker verifying VerbalizedResponseReviewer outputs against rules.
 
@@ -17,7 +23,7 @@ SYSTEM_PROMPT = """You are a checker verifying VerbalizedResponseReviewer output
 ## Output:
 JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
 - `good_copy`: True if REVIEW_NEEDED is valid JSON with required `rating` and `rationale` keys, and rating is one of the valid keys
-- `info_correct`: True if REVIEW_NEEDED follows all rules from the VerbalizedResponseReviewer template
+- `info_correct`: True if REVIEW_NEEDED follows all rules below (including content-quality axes)
 - `eval_text`: Required if either boolean is False; be specific and concise
 
 ## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
@@ -30,47 +36,36 @@ JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
 
 ### Output Format Requirements
 1. **JSON Structure**: Must be valid JSON with exactly two keys: `rating` and `rationale`
-2. **Rating Key**: Must be one of the following valid rating keys:
-   - `good_response`: Straightforwardly answers the Human's last inquiry; good conversational response
-   - `non_sense`: Information in response is misaligned with information in previous messages; response is not appropriate for the Human's last message; irrelevant, illogical, or has inconsistent computations
-   - `repetitive_information`: Repeats information within its own response without value/context change
-   - `incoherent_flow`: Conversation opener (e.g., Hello, Hi, Good morning, etc.) in the middle of an ongoing conversation; leads to dead end or breaks conversation flow
-   - `verbose`: Response is too extensive for the Human's message/question; response is too long for it to be digestible for the Human; too many unnecessary details that prevent straightforwardly answering the Human's inquiry
-   - `incomplete`: Does not answer all questions from the Human; too brief or lacks necessary information
-3. **Rationale**: Must be present and provide a brief explanation for the rating
+2. **Rating Key**: Must be one of: `good_response`, `non_sense`, `repetitive_information`, `incoherent_flow`, `verbose`, `incomplete`
+3. **Rationale**: Must be present and brief
+
+### Content-Quality Axes for REVIEW_NEEDED (rationale and rating)
+Apply these when deciding `info_correct`. REVIEW_NEEDED = the reviewer's JSON output (rating + rationale).
+- **Verbose rationale**: Flag `info_correct: False` if the rationale (1) breaks the evaluation into unnecessary sub-points (e.g. "First... Second... Third...", or separated ideas even if short), or (2) is excessively long for the inquiry. The rationale must be brief and direct, not a long or stepwise breakdown, including no bullet points, numbered lists, or similar structural separations.
+- **Length**: Flag `info_correct: False` if the rationale is too long to be digestible; it should support the rating concisely.
+- **Direct + conversational**: The evaluation should reflect that a good ai_review_response both answers the Human's last turn directly and maintains conversational flow with smooth transitions. Flag only if the rating or rationale clearly contradicts this.
+- **No internal system details**: Transaction IDs, request IDs, internal reference IDs, and any system-only identifiers must never appear in the rationale. If present → `info_correct: False`.
+- **Consistency with previous AI messages**: If earlier AI turns in EVAL_INPUT contained errors (wrong numbers, misalignment), REVIEW_NEEDED should acknowledge or reflect that where relevant (e.g. rating `non_sense` or rationale noting inconsistency). When there is no prior error, do not require acknowledgement.
+- **Greeting in ai_review_response — acceptable vs unacceptable flows**: Greetings (Hi, Hello, Hey, Good morning, etc.) in `ai_review_response` are **acceptable** only in these exact patterns:
+  - **(1) [No Human messages at all before this]** Human: ... → ai_review_response: ... (the only turn before ai_review_response is a single Human message, and there is no AI turn before that Human — i.e. the conversation so far is strictly one Human then ai_review_response).
+  - **(2) [No Human messages at all before this]** ai_review_response: ... (zero Human messages before ai_review_response; conversation_turns may be empty or only AI turns).
+  Greetings are **unacceptable** when the flow is like:
+  - **(1)** AI: ... Human: ... AI: ... ai_review_response: ... (there was an AI turn after the first Human before ai_review_response — greeting mid-conversation).
+  - **(2)** Human: ... AI: ... Human: ... ai_review_response: ... (two or more Human messages before ai_review_response).
+  So: if any AI turn appears **before** the Human turn that immediately precedes ai_review_response (e.g. AI then Human then ai_review_response), a greeting is **unacceptable** → rating `incoherent_flow`. **This rule takes precedence:** if an unacceptable greeting is present, the rating MUST be `incoherent_flow`, even if other factual errors might suggest a `non_sense` rating.
+- **Rationale must match actual issues in ai_review_response**: Verify that the rationale in REVIEW_NEEDED describes issues that are actually present in the text of `ai_review_response`. If the rationale cites problems that do not exist in the response, or ignores issues that are present, mark `info_correct: False` and state the mismatch in eval_text.
+- **Rationale terminology alignment**: The language used in the rationale must align precisely with the terminology and context established in the `EVAL_INPUT` conversation. For instance, if the conversation is about "grocery spending," the rationale should use "grocery spending" instead of a broader term like "savings." If there's a misalignment, mark `info_correct: False`.
+- **Advice requests require a recommendation, stated early**: When the Human asks for advice (e.g. what to do, what they should do), `ai_review_response` should provide a clear recommendation. If the response also gives alternatives, the recommendation must be mentioned early so the message is straight to the point. If the response only lists options without a direct recommendation, or buries the recommendation after long alternatives, rate `incomplete` or `verbose` as appropriate; REVIEW_NEEDED that correctly reflects this is info_correct.
 
 ### Evaluation Rules (from VerbalizedResponseReviewer)
-1. **Prioritize Relevance**: Must prioritize relevance to the preceding Human turn (the last Human message in conversation_turns)
-2. **Use Latest Values**: Must ignore contradicting values from previous conversations; use latest values from `ai_review_response`
-3. **Evaluate as Whole**: Must evaluate the response as a whole, considering full conversation context
-4. **Appropriate Rating**: The rating must accurately reflect the quality issues (or lack thereof) in the `ai_review_response` based on the conversation history
-
-### Content Quality Requirements
-- **Rationale Quality**: The rationale must be brief, clear, and directly support the chosen rating
-- **Context Awareness**: The evaluation must consider the full conversation context, not just the last turn in isolation
-- **Accuracy**: The rating must accurately categorize the response based on the defined rating keys
+- Prioritize relevance to the last Human turn; use latest values from `ai_review_response`; evaluate as a whole with full context.
+- Rating must accurately reflect quality of `ai_review_response`. Accept `good_response` when the response directly answers the Human's question and any extra detail is modest and relevant (e.g. one comparable prior period); do not require `verbose` for that. Reserve `verbose` for when the response is excessively long, breaks into unnecessary sub-points, or harms digestibility. When the Human asks for a recommendation (e.g. "what should I do") and the response only lists options without giving a direct recommendation, or gives alternatives without stating the recommendation early, `incomplete` or `verbose` is appropriate. Other ratings: `non_sense` = misaligned or inappropriate; `incoherent_flow` = opener in middle of conversation or dead end.
 
 ## Verification Steps
-
-1. **Check PAST_REVIEW_OUTCOMES first**: Extract all flagged issues. If REVIEW_NEEDED repeats them → mark False
-2. **Verify good_copy**: 
-   - Is REVIEW_NEEDED valid JSON?
-   - Does it have both `rating` and `rationale` keys?
-   - Is `rating` one of the valid rating keys?
-   - Missing elements or invalid format = False
-3. **Verify info_correct**: Apply all rules:
-   - Does the rating accurately reflect the `ai_review_response` quality based on conversation context?
-   - Does the evaluation prioritize relevance to the Human's last turn?
-   - Does the rationale clearly explain the rating choice?
-   - Is the evaluation based on the full conversation context, not just isolated turns?
-   - Does it use the latest values from `ai_review_response` rather than contradicting previous conversations?
-   - Is the rating appropriate for the identified issues (or lack thereof)?
-   - **Specific error checks**:
-     - If `incoherent_flow`: Does the response contain conversation openers (Hello, Hi, Good morning, etc.) in the middle of an ongoing conversation?
-     - If `incomplete`: Does the response fail to answer all questions from the Human?
-     - If `verbose`: Is the response too extensive/long for the Human's message/question, making it hard to digest?
-     - If `non_sense`: Is the information in the response misaligned with previous messages, or is the response not appropriate for the Human's last message?
-4. **Write eval_text**: If False, list specific issues. Reference unfixed PAST_REVIEW_OUTCOMES issues.
+1. **PAST_REVIEW_OUTCOMES**: If REVIEW_NEEDED repeats flagged issues → `info_correct: False`.
+2. **good_copy**: Valid JSON, both `rating` and `rationale`, `rating` in valid set.
+3. **info_correct**: Apply all rules and content-quality axes (rationale brief, no stepwise breakdown, not too long; no transaction/internal IDs in rationale; greeting rule: acceptable only when (1) single Human then ai_review_response with no AI before that Human, or (2) zero Human messages before ai_review_response — if any AI turn appears before the Human that precedes ai_review_response, greeting is unacceptable; rationale describes actual issues; rationale terminology alignment; advice requires recommendation early; consistency with prior AI errors; rating matches ai_review_response quality).
+4. **eval_text**: If either boolean is False, list specific issues in one or two short sentences; reference unfixed PAST_REVIEW_OUTCOMES when relevant.
 """
 
 class CheckVerbalizedResponseReviewer:
@@ -85,7 +80,7 @@ class CheckVerbalizedResponseReviewer:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 4096
+    self.thinking_budget = 1024
     self.model_name = model_name
     
     # Generation Configuration Constants
@@ -242,14 +237,6 @@ def run_correct_response(checker: CheckVerbalizedResponseReviewer = None):
     "conversation_turns": [
       {
         "speaker": "Human",
-        "message": "How much cash do I have?"
-      },
-      {
-        "speaker": "AI",
-        "message": "Let me check your accounts for you."
-      },
-      {
-        "speaker": "Human",
         "message": "What's my total cash balance?"
       }
     ],
@@ -302,13 +289,303 @@ def run_greeting_response(checker: CheckVerbalizedResponseReviewer = None):
   return run_test_case("greeting_response", eval_input, review_needed, [], checker)
 
 
+def run_unnecessary_details(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  Exchange: Human asks dining out last month; ai_review_response gives last month
+  and previous month. REVIEW_NEEDED good_response (direct answer, acceptable).
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "What did I spend dining out last month?"}
+    ],
+    "ai_review_response": "You spent $500 last month, and $400 the previous month."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "good_response",
+    "rationale": "The response directly answers the Human's question about dining spend last month with a clear amount ($500)."
+  }, indent=2)
+  return run_test_case("verbose_breakdown_response", eval_input, review_needed, [], checker)
+
+
+def run_transaction_id_in_rationale(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  Run the test case for REVIEW_NEEDED that contains internal system details
+  (e.g. transaction IDs) in the rationale — should be flagged info_correct False.
+  Exchange: Human asks biggest expense; ai_review_response includes ID 2352.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "What was my biggest expense last month?"}
+    ],
+    "ai_review_response": "Your biggest expense last month was on McDonald's (ID 2352) for $780."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "good_response",
+    "rationale": "The response answers the Human's question. ID 2352 confirms the expense at McDonald's."
+  }, indent=2)
+  return run_test_case("transaction_id_in_rationale", eval_input, review_needed, [], checker)
+
+
+def run_first_message_greeting_ok(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  Run the test case where ai_review_response is the first AI reply to the Human's
+  first message; a greeting here is appropriate — should NOT be flagged incoherent_flow.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "I'd like to know my spending this month."}
+    ],
+    "ai_review_response": "Hello! Your spending this month is $1,240 across all categories."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "good_response",
+    "rationale": "This is the first exchange; a greeting is appropriate. The response then directly answers the Human's inquiry with a clear dollar amount."
+  }, indent=2)
+  return run_test_case("first_message_greeting_ok", eval_input, review_needed, [], checker)
+
+
+def run_does_not_directly_answer(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  ai_review_response does not directly answer the Human's message/question.
+  Human asks what they should do; response lists options without a direct recommendation.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "What should I do with my Amazon stock?"}
+    ],
+    "ai_review_response": "You have three main options to consider with your Amazon stock. First, you could buy more shares if you believe the stock will appreciate and want to increase your position. Second, you could sell some or all of your holdings if you need liquidity, want to lock in gains, or have concerns about the company's outlook. Third, you could keep the amount you have right now—maintaining your current position without adding or reducing—which may be appropriate if you're uncertain or waiting for more information. Each choice depends on your goals, time horizon, and risk tolerance. I can help you explore any of these in more detail."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "incomplete",
+    "rationale": "The Human asked what they should do; the response only lists options (buy, sell, hold) without giving a direct recommendation or actionable answer."
+  }, indent=2)
+  return run_test_case("does_not_directly_answer", eval_input, review_needed, [], checker)
+
+
+def run_misaligned_with_previous_ai(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  Information in ai_review_response is misaligned with information previously
+  shared by the AI in the conversation. Expected: rating non_sense.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "How much was my grocery spending last month??"},
+      {"speaker": "AI", "message": "Last month, you spent $180 on groceries."},
+      {"speaker": "Human", "message": "How does that compare with the current month?"}
+    ],
+    "ai_review_response": "Since your grocery spending this month is at $100 and last month was $200, you are at half of last month's spending so far."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "non_sense",
+    "rationale": "The response states savings is $200 but the AI previously said savings is $180; the information is misaligned with the conversation."
+  }, indent=2)
+  return run_test_case("misaligned_with_previous_ai", eval_input, review_needed, [], checker)
+
+
+def run_hello_after_exchanges(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  ai_review_response starts with 'Hello', and there have already been exchanges
+  between Human and AI before ai_review_response. Expected: incoherent_flow.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "What did I spend on dining last week?"},
+      {"speaker": "AI", "message": "Last week you spent $180 on dining."},
+      {"speaker": "Human", "message": "Break it down by day."}
+    ],
+    "ai_review_response": "Hello! Monday $45, Tuesday $32, Wednesday $0, Thursday $58, Friday $25, Saturday $20."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "incoherent_flow",
+    "rationale": "The response opens with 'Hello' in the middle of an ongoing conversation after multiple exchanges, which breaks the flow."
+  }, indent=2)
+  return run_test_case("hello_after_exchanges", eval_input, review_needed, [], checker)
+
+
+def run_hi_first_message_from_human(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  ai_review_response starts with 'Hi', and the only message before this was from
+  the Human (first exchange). Greeting is appropriate → good_response.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "What's my account balance?"}
+    ],
+    "ai_review_response": "Hi! Your account balance is $4,750."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "good_response",
+    "rationale": "A greeting is appropriate as this is the first exchange. The response directly answers with the balance."
+  }, indent=2)
+  return run_test_case("hi_first_message_from_human", eval_input, review_needed, [], checker)
+
+
+def run_hey_after_ai_message_only(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  Flow: AI says shopping spending is high; Human asks for breakdown.
+  ai_review_response starts with 'Hi!' mid-conversation → incoherent_flow.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "AI", "message": "Your shopping spending is high this month at $500."},
+      {"speaker": "Human", "message": "Can I have a breakdown?"}
+    ],
+    "ai_review_response": "Hi! You spent on Nordstrom, H&M, Old Navy, and Zara."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "incoherent_flow",
+    "rationale": "The response opens with 'Hi!' in the middle of an ongoing conversation after the Human asked for a breakdown; conversation openers are not appropriate here."
+  }, indent=2)
+  return run_test_case("hey_after_ai_message_only", eval_input, review_needed, [], checker)
+
+
+def run_contradicts_previous_ai_categories(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  AI said pet spending is higher than expected; Human asks which categories are higher.
+  ai_review_response says no categories are higher — contradicts previous AI → non_sense.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "AI", "message": "Your pet spending is higher than expected this week at $500!"},
+      {"speaker": "Human", "message": "Thanks for letting me know. What are all of the categories that are higher than expected this week?"}
+    ],
+    "ai_review_response": "You're doing great this week! There are no categories at all this week that you are spending more than expected on."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "incoherent_flow",
+    "rationale": "The ai_review_response contains an unacceptable greeting (\"You're doing great this week!\") given the conversation flow, which mandates an 'incoherent_flow' rating. This takes precedence over other potential issues like factual contradictions."
+  }, indent=2)
+  return run_test_case("contradicts_previous_ai_categories", eval_input, review_needed, [], checker)
+
+
+def run_good_morning_first_reply(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  ai_review_response starts with 'Good morning' and is the AI's reply to the
+  first Human message (acceptable flow). Expected: good_response.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "Can you show my budget summary for this month?"}
+    ],
+    "ai_review_response": "Good morning! Your budget summary for this month: you've used 72% of your dining budget and 45% of your groceries budget. You're on track overall."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "good_response",
+    "rationale": "A greeting is appropriate as this is the first exchange. The response directly answers with a clear budget summary."
+  }, indent=2)
+  return run_test_case("good_morning_first_reply", eval_input, review_needed, [], checker)
+
+
+def run_rationale_stepwise_breakdown(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  REVIEW_NEEDED has a rationale that breaks down into unnecessary sub-points
+  (First... Second... Third...). Checker should flag info_correct False.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "What's my balance?"}
+    ],
+    "ai_review_response": "Your balance is $3,200."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "good_response",
+    "rationale": "First, the response answers the Human's question. Second, it provides a specific dollar amount. Third, it is concise. Therefore it is a good response."
+  }, indent=2)
+  return run_test_case("rationale_stepwise_breakdown", eval_input, review_needed, [], checker)
+
+
+def run_rationale_too_long(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  REVIEW_NEEDED has an excessively long rationale for a simple inquiry.
+  Checker should flag info_correct False.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "How much did I spend on coffee?"}
+    ],
+    "ai_review_response": "You spent $42 on coffee this month."
+  }, indent=2)
+  long_rationale = (
+    "The response is appropriate because it directly addresses the user's question about coffee spending. "
+    "It provides a specific numerical value which is what the user was seeking. The tone is professional and "
+    "concise. Additionally, the response does not include unnecessary details or digressions. It matches "
+    "the context of a financial assistant providing spending information. The brevity is also a positive "
+    "factor in terms of user experience and clarity of communication."
+  )
+  review_needed = json.dumps({
+    "rating": "good_response",
+    "rationale": long_rationale
+  }, indent=2)
+  return run_test_case("rationale_too_long", eval_input, review_needed, [], checker)
+
+
+def run_repetitive_information(checker: CheckVerbalizedResponseReviewer = None):
+  """
+  ai_review_response repeats the same point without value. REVIEW_NEEDED
+  correctly rates repetitive_information with a brief rationale.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "Is my spending on track?"},
+      {"speaker": "AI", "message": "Checking your budget now."}
+    ],
+    "ai_review_response": "Your spending is on track. You're doing well—your spending is on track this month. Overall, spending is on track."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "repetitive_information",
+    "rationale": "The response repeats the same idea (spending is on track) multiple times without adding new information or context."
+  }, indent=2)
+  return run_test_case("repetitive_information", eval_input, review_needed, [], checker)
+
+
+def run_unfulfilled_request_explained(checker: 'CheckVerbalizedResponseReviewer' = None):
+  """
+  AI cannot fulfill a request but clearly communicates the reason why.
+  Expected: unfulfilled_request, info_correct: true.
+  """
+  eval_input = json.dumps({
+    "conversation_turns": [
+      {"speaker": "Human", "message": "Can you tell me how my Tesla stock performed last year?"}
+    ],
+    "ai_review_response": "I cannot provide real-time stock performance data as my capabilities are limited to analyzing your personal financial transactions. To get Tesla stock performance, please consult a financial news website or your brokerage account."
+  }, indent=2)
+  review_needed = json.dumps({
+    "rating": "unfulfilled_request",
+    "rationale": "The AI clearly states its inability to fulfill the request and provides a helpful reason and alternative, which is appropriate for an unfulfilled request."
+  }, indent=2)
+  return run_test_case("unfulfilled_request_explained", eval_input, review_needed, [], checker)
+
+
+BATCHES = {
+  1: [run_correct_response, run_unnecessary_details, run_good_morning_first_reply, run_unfulfilled_request_explained],
+  2: [run_greeting_response, run_hello_after_exchanges, run_hey_after_ai_message_only],
+  3: [run_transaction_id_in_rationale, run_rationale_stepwise_breakdown, run_rationale_too_long],
+  4: [run_first_message_greeting_ok, run_hi_first_message_from_human, run_repetitive_information],
+  5: [run_does_not_directly_answer, run_misaligned_with_previous_ai, run_contradicts_previous_ai_categories],
+}
+
+
 def main():
-  """Main function to test the VerbalizedResponseReviewer checker"""
+  """Main function to test the VerbalizedResponseReviewer checker. 5 batches of 3 tests each (15 total). Supports --batch 1|2|3|4|5 and --runs N."""
+  parser = argparse.ArgumentParser(description="Run VerbalizedResponseReviewer checker tests by batch (5 batches of 3).")
+  parser.add_argument("--batch", type=int, choices=[1, 2, 3, 4, 5], default=None, help="Run only this batch (1-5). If omitted, run all 5 batches once.")
+  parser.add_argument("--runs", type=int, default=3, help="Number of runs per batch when --batch is set (default: 3).")
+  args = parser.parse_args()
+
   checker = CheckVerbalizedResponseReviewer()
-  
-  # Run all tests
-  run_correct_response(checker)
-  run_greeting_response(checker)
+  if args.batch is not None:
+    runs = [args.batch]
+    per_batch = args.runs
+  else:
+    runs = [1, 2, 3, 4, 5]
+    per_batch = 1
+
+  for batch_id in runs:
+    for run_num in range(per_batch):
+      if per_batch > 1:
+        print(f"\n>>> BATCH {batch_id} — RUN {run_num + 1}/{per_batch}")
+      for fn in BATCHES[batch_id]:
+        fn(checker)
 
 
 if __name__ == "__main__":
