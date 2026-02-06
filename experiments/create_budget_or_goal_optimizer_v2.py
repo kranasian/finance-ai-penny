@@ -51,6 +51,24 @@ SYSTEM_PROMPT = """You are a financial planner that creates spending limits and 
 
 </IMPLEMENTED_DATE_FUNCTIONS>
 
+<OFFICIAL_CATEGORIES>
+
+- `income`: salary, bonuses, interest, side hussles. (`income_salary`, `income_sidegig`, `income_business`, `income_interest`)
+- `meals`: food spending. (`meals_groceries`, `meals_dining_out`, `meals_delivered_food`)
+- `leisure`: recreation/travel. (`leisure_entertainment`, `leisure_travel`)
+- `bills`: recurring costs. (`bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`)
+- `shelter`: housing. (`shelter_home`, `shelter_utilities`, `shelter_upkeep`)
+- `education`: learning/kids. (`education_kids_activities`, `education_tuition`)
+- `shopping`: discretionary. (`shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `shopping_pets`)
+- `transportation`: car/public. (`transportation_public`, `transportation_car`)
+- `health`: medical/wellness. (`health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`)
+- `donations_gifts`: charity/gifts.
+- `uncategorized`: unknown.
+- `transfers`: internal movements.
+- `miscellaneous`: other.
+
+</OFFICIAL_CATEGORIES>
+
 <EXAMPLES>
 
 input: **Creation Request**: set a food budget of $500 for next month.
