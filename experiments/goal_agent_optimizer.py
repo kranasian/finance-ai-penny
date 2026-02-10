@@ -25,7 +25,7 @@ SYSTEM_PROMPT = """You are a financial planner agent that is very good at unders
 1.  **Always Assume Financial Goal Context**: Interpret Last User Request and Previous Conversation as exchanges that followed the prompt "What are your financial goals?".
 2.  **Analyze User Intent**: Analyze the **Last User Request** in the context of the other previous messages in **Previous Conversation**. Determine if the user is stating an explicit/implicit financial goal, or asking a question. Return clarification if **Last User Request** is unintelligible.
 3.  **Goal-Oriented Flow**: If the user states a financial goal, follow this flow:
-    *   **Step 1: Gather Data (If Necessary).** Call lookup only when you need a baseline (e.g. current spending), feasibility check, or data the user did not provide. If the user already gave amount, scope (category or goal type), and period/timeline, call `create_budget_or_goal` directly with that and optional `input_info` from Previous Conversation. Use `research_and_strategize_financial_outcomes` only for data outside the user's finances (e.g. market estimates, travel costs).
+    *   **Step 1: Gather Data (If Necessary).** Call lookup only when you need a baseline (e.g. current spending), feasibility check, or data the user did not provide. If the user already gave amount, scope (category or goal type), and period/timeline, call `create_budget_or_goal` directly with that and optional `input_info` from Previous Conversation. **Exception for savings goals**: When the user does **not** specify which depository account to use, call `lookup_user_accounts_transactions_income_and_spending_patterns` first (e.g. "Retrieve all depository accounts and balances.") and pass the `lookup_result` as `input_info` to `create_budget_or_goal`. Use `research_and_strategize_financial_outcomes` only for data outside the user's finances (e.g. market estimates, travel costs).
     *   **Step 2: Strategize.** If the goal is complex (e.g. retirement, college savings, debt paydown), use `research_and_strategize_financial_outcomes` once. Simple budgets or savings goals (e.g. "$X per week for groceries", "save $Y monthly for emergency fund") do not require this step.
     *   **Step 3: Create Goal.** Final step: one precise `create_budget_or_goal` call per goal. `creation_request` must be one sentence: amount + scope + period (e.g. "Create a weekly grocery budget of $150."). `create_budget_or_goal` will ask for any missing information; do not preempt with extra lookup.
 4.  **Information-Seeking Flow**: If the user asks a question, the plan should consist of the necessary `lookup` or `research` skills to acquire the information. The plan's final output should be the information itself.
@@ -47,6 +47,8 @@ These are the **available skills** that can be stacked and sequenced using `inpu
   - `lookup_request`: One clear sentence for what to lookup (accounts, transactions, income/spending, subscriptions, forecasts). When `input_info` is available, incorporate it concisely. Use only when baseline or feasibility is needed; if the user already gave amount, scope, and period, skip to `create_budget_or_goal`.
 - `create_budget_or_goal (creation_request: str, input_info: str = None) -> tuple[bool, str]`
   - `creation_request`: One sentence with amount, scope (budget category or savings goal), and period (e.g. weekly, monthly, or by date). When `input_info` is available, use it for context but keep the sentence concise. Only for budgets or savings goals; NOT for categorization.
+  - **Single-period budgets**: When the user intends a budget for one period only (e.g. "for this week", "this week only", "for this month", "this month only", "for this year"), the `creation_request` must explicitly say so—e.g. "Create a weekly gas budget of $50 for this week only." or "Create a monthly dining budget of $200 for this month only." Do not omit "for this week only" / "for this month only" / "for this year only"; the downstream function uses this to set the correct date range.
+  - **Savings goals**: When the user does not specify a depository account, call `lookup_user_accounts_transactions_income_and_spending_patterns` first, then pass the lookup result as `input_info` to `create_budget_or_goal`.
   - Returns (success, output). Output is the created detail or, if more info needed from user, the question to ask. **Multiple goals**: One call per goal; collect (success, create_result) for each; no early return. If none succeeded return (False, chr(10).join(outputs)); else return (True, f"{n} of {y} goals successfully created.").
 - `research_and_strategize_financial_outcomes(strategize_request: str, input_info: str = None) -> tuple[bool, str]`
   - `strategize_request`: One sentence for research or strategy using external data (e.g. "Average dining out for a couple in Chicago.", "Strategy to pay off $5000 credit card debt with timeline."). Do not use for the user's own data — use lookup for that.
@@ -119,6 +121,13 @@ input: **Last User Request**: I want a $400 monthly food budget and to save $200
 output:
 ```python
 def execute_plan() -> tuple[bool, str]:
+    success, lookup_result = lookup_user_accounts_transactions_income_and_spending_patterns(
+        lookup_request="Retrieve depository accounts and balances for the user.",
+        input_info=None
+    )
+    if not success:
+        return False, lookup_result
+
     outputs = []
     success1, create_result1 = create_budget_or_goal(
         creation_request="Create a monthly food budget of $400.",
@@ -127,7 +136,7 @@ def execute_plan() -> tuple[bool, str]:
     outputs.append(create_result1)
     success2, create_result2 = create_budget_or_goal(
         creation_request="Create a savings goal of $200 every month for emergency fund.",
-        input_info=None
+        input_info=lookup_result
     )
     outputs.append(create_result2)
     if not (success1 or success2):
@@ -391,10 +400,22 @@ output:"""
 # Test cases: distinct scopes, not identical to prompt examples.
 TEST_CASES = [
   {
+    "name": "single_budget_this_week_only",
+    "last_user_request": "set a $50 budget on gas for this week.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: direct create_budget_or_goal(creation_request='Create a weekly gas budget of $50 for this week only.', input_info=None). No lookup. Return (success, create_result). creation_request must specify 'for this week only'; downstream sets start_date and end_date to current week."
+  },
+  {
     "name": "single_budget_no_conversation",
     "last_user_request": "Set a $500 food budget for next month.",
     "previous_conversation": "",
     "ideal_response": "Expected: direct create_budget_or_goal(creation_request with $500 food budget for next month, input_info=None). No lookup. Return (success, create_result)."
+  },
+  {
+    "name": "dining_out_budget_next_month",
+    "last_user_request": "set $200 dining out budget for next month",
+    "previous_conversation": "",
+    "ideal_response": "Expected: direct create_budget_or_goal(creation_request with $200 dining out budget for next month, input_info=None). No lookup. Return (success, create_result). Category = meals_dining_out or similar; granularity = monthly; start/end = first and last day of next month."
   },
   {
     "name": "single_savings_by_date",

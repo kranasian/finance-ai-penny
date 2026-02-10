@@ -7,7 +7,7 @@ Goal types (see UserGoals.md):
 - save_0: Save a fixed amount per period (e.g. $200/month). amount = per-period amount; granularity required.
 """
 from datetime import datetime
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 from penny.tool_funcs.create_budget_or_goal import validate_goal, normalize_dates
 
@@ -21,6 +21,7 @@ def create_savings_goal(
     goal_type: str = "save_X_amount",
     granularity: Optional[str] = None,
     start_date: str = "",
+    account_ids: Optional[List[int]] = None,
 ) -> Tuple[bool, str]:
     """
     Set a savings goal. Use when the user wants to save money (e.g. save $X per month, or save $X total by a date).
@@ -32,14 +33,16 @@ def create_savings_goal(
         goal_type: "save_X_amount" (total by date) or "save_0" (amount per period). See UserGoals.md.
         granularity: "weekly", "monthly", or "yearly". Required for save_X_amount; for save_0 defaults to "monthly".
         start_date: Optional start date. Default empty → today's date.
+        account_ids: Optional list of depository account_id integers (e.g. from Input Info "account_id: N").
 
     Returns:
         Tuple[bool, str]: (success, output_info)
     """
+    account_ids = account_ids or []
     print("\n" + "=" * 80, flush=True)
     print("[CREATE_SAVINGS_GOAL] Calling create_savings_goal", flush=True)
     print(f"  amount: {amount}, end_date: {end_date}, title: {title!r}, goal_type: {goal_type!r}", flush=True)
-    print(f"  granularity: {granularity!r}, start_date: {start_date!r}", flush=True)
+    print(f"  granularity: {granularity!r}, start_date: {start_date!r}, account_ids: {account_ids!r}", flush=True)
     print("=" * 80 + "\n", flush=True)
 
     goal_type = (goal_type or "").strip()
@@ -67,6 +70,7 @@ def create_savings_goal(
         "end_date": end_date,
         "amount": amount,
         "title": title,
+        "account_ids": account_ids,
     }
     user_asks = validate_goal(goal)
     if user_asks:
