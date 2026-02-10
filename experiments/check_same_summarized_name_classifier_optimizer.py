@@ -15,57 +15,48 @@ SYSTEM_PROMPT = """You are a checker verifying the output of a transaction name 
 - **REVIEW_NEEDED**: The JSON output from the classifier that needs to be reviewed.
 
 ## Output:
-JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
+Return valid JSON only. Put each top-level key on its own line (line break after each of good_copy, info_correct, eval_text). Example format:
+```
+{"good_copy": true,
+"info_correct": true,
+"eval_text": ""}
+```
+
 - `good_copy`: True if REVIEW_NEEDED is a valid JSON array with all required fields (`match_id`, `reasoning`, `result`, `confidence`).
-- `info_correct`: True if the `result` for each item is correct. This is the **only** measure of correctness. The `reasoning` field should be ignored entirely when `result` is correct. If a `result` is wrong, then the `reasoning` may be checked for faulty logic.
-- `eval_text`: Required if either boolean is False. For each `match_id` with an error, provide one concise phrase that is 25 words long at most. If there are multiple errors, separate each with a newline character (`\n`)**. The evaluation must only address errors in REVIEW_NEEDED, without referencing PAST_REVIEW_OUTCOMES.
+- `info_correct`: True if the **`result`** for each item is correct. **Ignore `reasoning` and `confidence` entirely**—only `result` matters. When the only difference between left and right is location or branch, the correct result is **"same"**; if REVIEW_NEEDED has "same", mark it correct. When the only difference is ".com" for an **online-only** establishment, correct result is **"same"**.
+- `eval_text`: **Empty string when good_copy and info_correct are both True.** eval_text must **explain why REVIEW_NEEDED is incorrect** (e.g. wrong result for a pair). If you agree with REVIEW_NEEDED's result, do not write eval_text—leave it empty. When there are errors: one short phrase per erroneous match_id (max 25 words), separate with newline (`\n`). Do not reference PAST_REVIEW_OUTCOMES.
 
 ## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
-**MANDATORY**: Use PAST_REVIEW_OUTCOMES as a knowledge base. If REVIEW_NEEDED repeats mistakes flagged in past outcomes, it is incorrect. However, do not mention past outcomes in your `eval_text`.
-- Extract all issues from past `eval_text` fields.
-- Check if REVIEW_NEEDED repeats the same mistakes. Your final output must not reference this check.
+Use PAST_REVIEW_OUTCOMES as a knowledge base. If REVIEW_NEEDED repeats mistakes flagged in past outcomes, mark incorrect. Do not mention past outcomes in `eval_text`.
 
 ## Verification Steps
-1. **Check PAST_REVIEW_OUTCOMES first**: If REVIEW_NEEDED repeats past mistakes -> mark False. This is for your internal logic only.
-2. **Verify good_copy**: Check for valid JSON and all required fields.
-3. **Verify info_correct**: Check that `match_id`s align with EVAL_INPUT. For each item, verify the `result`. Remember, establishments at different locations are always "same". When evaluating, consider if a `short_name` is a processing error by consulting the `raw_names` and the misprocessing guidelines. Apply the comparison hierarchy and mandatory rules.
-4. **Write eval_text**: If False, generate one concise phrase for each `match_id` with an error and combine them into a single response string, keeping the total length under 100 words. Do not explain that an error is a repeat from the past. Use `reasoning` to identify logic errors.
+1. Check PAST_REVIEW_OUTCOMES: if REVIEW_NEEDED repeats past mistakes → mark False.
+2. Verify good_copy: valid JSON and all required fields.
+3. Verify info_correct: align `match_id`s with EVAL_INPUT. For each item, check **only** the `result` field; ignore `reasoning` and `confidence`. Use `raw_names` to correct misprocessed `short_name`s before comparing. **If the only difference between left and right is location or branch, the correct result is "same".** Do not mark "same" wrong for (a) location/branch only, or (b) online-only ".com" vs no ".com".
+4. eval_text: **Only when REVIEW_NEEDED is incorrect.** Explain why the result is wrong (e.g. "Only difference is location; should be same."). If REVIEW_NEEDED is correct, eval_text must be empty.
 
-## Classifier Rules for Verification
-You must verify the classifier's output against these rules. They are ordered by importance.
+## Correcting and Comparing Names
+**Before comparing**, mentally correct `short_name`s using `raw_names` and these guidelines:
+- **Location/branch**: Ignore branch number and physical location (e.g. "Jollibee New York" vs "Jollibee San Francisco" → same establishment).
+- **Payment/card noise**: For merchants, ignore bank/card details; for transfers/payments, keep bank/account type and partial numbers (e.g. ***3232).
+- **Unnecessary**: Ignore device types, payment gateways, and **payment processors only** (e.g. TST, Vesta, SUMUP). **Do not** treat BNPL platforms (e.g. Affirm) or transfer types (e.g. ACH) as payment processors—they are not.
+- **Legal/format**: Ignore LLC, Inc., Corp., Ltd, etc., unless part of a compound name (e.g. "X and Y").
 
-**First, consider if a `short_name` is incorrectly processed.** Before applying the rules below, you must mentally correct any `short_name`s based on the following guidelines. The interchangeability check should be performed on the *corrected* names.
+**Abbreviations**: If one side is an abbreviation or shortened name for the other (e.g. "FedEx" vs "Federal Express"), result is **same**.
 
-### Guidelines for Handling Misprocessed `short_name`s
+## Result Rules (apply after correcting names)
+1. **Online vs physical**: If a brand has **both** online and physical (e.g. Nike, Apple): one side with ".com" = online, one without (e.g. "Nike Store") = physical → correct result is **"different"**. If REVIEW_NEEDED says "different" for such a pair, that is correct—do not flag it. If a brand is **online-only** (e.g. Netflix, Facebook): ".com" vs no ".com" → correct result is **"same"**. Only the `result` field matters; if it is correct, do not write eval_text.
+2. **Interchangeability**: Corrected left name must describe all right transactions and vice versa; otherwise **"different"**.
+3. **Location/branch only**: If the **only** difference is physical location, city, or branch (e.g. MGM Grand Las Vegas vs MGM Grand Detroit, Jollibee New York vs Jollibee San Francisco) → the correct result is **"same"**. Different locations or branches do **not** make establishments different. If REVIEW_NEEDED has result "same" for such a pair, info_correct is True for that item—do not flag it.
+4. **Sub-brands and specificity**: Sub-brands and departments (e.g. Old Navy Kids vs Old Navy) → **"different"**. A more specific **product or service tier** (e.g. Spotify Silver vs Platinum) → **"different"**. Same brand with only a **store format** or **location** in the name (e.g. Walmart Supercenter vs Walmart, Cleveland Marriott vs Marriott) → **"same"**.
+5. **Marketplaces**: Marketplace transaction ≠ direct → **"different"**.
+6. **Payment processors**: Ignore payment processor names when comparing merchant identity.
+7. **Transfers**: ACH transactions are **"different"** from non-ACH. More specific transfers (e.g. with memo) are **"different"** from general.
+8. **Pending**: Pending transactions are **"different"** from non-pending (posted/settled).
 
-**`address_in_name`**
-- Exclude branch of establishment where transaction was done. Branch is typically indicated through numbers or locations.
-- Exclude location of establishment.
-
-**`payment_card_included`**
-- Exclude any bank or card details in transactions with establishments.
-- For interbank transfers and credit card payments, however, bank, account type, and partial account numbers (eg. ***3232) should be specified.
-
-**`unnecessary_content`**
-- Exclude device types, payment gateways, or payment processors (eg. TST, Vesta, BBMSL, SUMUP, SSP, PAI).
-- Exclude legal structure (eg. LLC, Inc., Co., Corp., Ltd, Corporation, Incorporated), unless followed by "and"/"&" or between two words.
-
----
-After applying the corrections, verify the result using the rules below:
-
-1.  **Online vs. Physical Retail**: An online store is **always "different"** from a physical store. For example, "Facebook.com" is different from "Facebook" because one is explicitly an online service. There are no exceptions.
-2.  **Interchangeability**: The correct `short_name` from `left` must accurately describe all transactions in `right`, and vice-versa. If they are not interchangeable, the result is "different".
-3.  **Ignore Geographic Locations**: Transactions at different physical locations are **"same"**.
-4.  **Sub-brands and Departments**: Treat sub-brands and departments as **"different"** entities. A general `short_name` and a more specific `short_name` should be considered as **"different"**.
-5.  **Marketplaces**: A marketplace transaction is **"different"** from a direct one.
-6.  **Payment Processors**: The use of a payment processor should be **ignored**.
-7.  **Product/Service Distinction**: If indicated in `short_name`, different products or service tiers are **"different"**.
-8.  **Payment & Transfer Specificity**: More specific transfers (e.g., with a memo) are **"different"** from general transfers.
-
-### Output Field Rules
-- `reasoning`: Must be concise and straight to the point.
-- `result`: Must be either "same" or "different".
-- `confidence`: Must be "high", "medium", or "low".
+### What you verify in REVIEW_NEEDED
+- **Only the `result` field** is used to decide correctness. Ignore `reasoning` and `confidence` when judging each item.
+- `result` must be "same" or "different" per the rules above.
 """
 
 class CheckSameSummarizedNameClassifier:
@@ -80,13 +71,14 @@ class CheckSameSummarizedNameClassifier:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 4096
     self.model_name = model_name
     
     # Generation Configuration Constants
-    self.temperature = 0.6
+    self.top_k = 40
     self.top_p = 0.95
-    self.max_output_tokens = 6000
+    self.temperature = 0.5
+    self.thinking_budget = 0
+    self.max_output_tokens = 4096
     
     # Safety Settings
     self.safety_settings = [
@@ -142,8 +134,9 @@ Output:"""
     contents = [types.Content(role="user", parts=[request_text])]
     
     generate_content_config = types.GenerateContentConfig(
-      temperature=self.temperature,
+      top_k=self.top_k,
       top_p=self.top_p,
+      temperature=self.temperature,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
@@ -365,116 +358,158 @@ def run_edge_cases(checker: CheckSameSummarizedNameClassifier = None):
 
 def run_test_group_1(checker: CheckSameSummarizedNameClassifier = None):
   """
-  Test Group 1: Name Variations
+  Test Group 1: Name variations (abbreviations, punctuation, online .com)
   """
   eval_input = [
     {
-        "match_id": "FB-01",
-        "left": { "short_name": "Facebook.com", "raw_names": ["FACEBOOK.COM"], "description": "Social media platform.", "amounts": [10.00] },
-        "right": { "short_name": "Facebook", "raw_names": ["Facebook"], "description": "Online social networking service.", "amounts": [15.50] }
+      "match_id": "NETFLIX-01",
+      "left": { "short_name": "Netflix.com", "raw_names": ["NETFLIX.COM"], "description": "Streaming subscription.", "amounts": [15.99, 18.50] },
+      "right": { "short_name": "Netflix", "raw_names": ["Netflix"], "description": "Online video streaming service.", "amounts": [15.99] }
     },
     {
-        "match_id": "PP-01",
-        "left": { "short_name": "Paypal Retry Payment", "raw_names": ["PAYPAL *RETRY PYMT"], "description": "A second attempt for a PayPal transaction.", "amounts": [45.00] },
-        "right": { "short_name": "Paypal Payment", "raw_names": ["PayPal Payment"], "description": "A standard payment via PayPal.", "amounts": [45.00] }
+      "match_id": "FEDEX-01",
+      "left": { "short_name": "Federal Express", "raw_names": ["FEDERAL EXPRESS"], "description": "Shipping and logistics.", "amounts": [42.00] },
+      "right": { "short_name": "FedEx", "raw_names": ["FEDEX GROUND"], "description": "Package delivery company.", "amounts": [28.75] }
     },
     {
-      "match_id": "MARCO-01",
-      "left": { "short_name": "Marco's Pizza", "raw_names": ["Marco's Pizza"], "description": "Pizza restaurant", "amounts": [70.92] },
-      "right": { "short_name": "Marcos Pizza", "raw_names": ["MARCOS PIZZA"], "description": "A payment for food at a pizza restaurant", "amounts": [16.23] }
+      "match_id": "CHIPOTLE-01",
+      "left": { "short_name": "Chipotle Mexican Grill", "raw_names": ["CHIPOTLE MEXICAN GRILL"], "description": "Fast-casual Mexican restaurant.", "amounts": [12.45, 14.20] },
+      "right": { "short_name": "Chipotle", "raw_names": ["CHIPOTLE"], "description": "Mexican grill chain.", "amounts": [11.80] }
     }
   ]
   review_needed = [
-    { "match_id": "FB-01", "reasoning": "Facebook.com and Facebook are different variations of the same entity.", "result": "same", "confidence": "high" },
-    { "match_id": "PP-01", "reasoning": "A 'Retry Payment' is a different type of transaction than a standard 'Payment'.", "result": "different", "confidence": "medium" },
-    { "match_id": "MARCO-01", "reasoning": "These are the same restaurant, just with a punctuation difference.", "result": "same", "confidence": "high" }
+    { "match_id": "NETFLIX-01", "reasoning": "Both are online-only; .com suffix does not make them different.", "result": "same", "confidence": "high" },
+    { "match_id": "FEDEX-01", "reasoning": "Federal Express and FedEx are the same company; one is an abbreviation.", "result": "same", "confidence": "high" },
+    { "match_id": "CHIPOTLE-01", "reasoning": "Full name vs shortened name refer to the same restaurant chain.", "result": "same", "confidence": "high" }
   ]
   return run_test_case("test_group_1_name_variations", eval_input, review_needed, [], checker)
 
 
 def run_test_group_2(checker: CheckSameSummarizedNameClassifier = None):
   """
-  Test Group 2: Sub-brands and Locations
+  Test Group 2: Sub-brands, store formats, and locations
   """
   eval_input = [
     {
-      "match_id": "OLDNAVY-01",
-      "left": { "short_name": "Old Navy Kids", "raw_names": ["Old Navy Kids"], "description": "Sells clothing for children.", "amounts": [39.09] },
-      "right": { "short_name": "Old Navy", "raw_names": ["Old Navy"], "description": "Sells clothing for all ages.", "amounts": [145.54] }
+      "match_id": "TARGET-01",
+      "left": { "short_name": "Target Optical", "raw_names": ["TARGET OPTICAL"], "description": "Eyewear and eye exams within Target.", "amounts": [89.00, 120.50] },
+      "right": { "short_name": "Target", "raw_names": ["TARGET"], "description": "General merchandise retailer.", "amounts": [45.00, 78.30] }
     },
     {
-      "match_id": "MARRIOTT-01",
-      "left": { "short_name": "Cleveland Marriott", "raw_names": ["CLEVELAND MARRIOT"], "description": "Hotel in Cleveland.", "amounts": [250.00] },
-      "right": { "short_name": "Marriott", "raw_names": ["Marriott"], "description": "Hotel chain.", "amounts": [189.00] }
+      "match_id": "HILTON-01",
+      "left": { "short_name": "Hilton Chicago", "raw_names": ["HILTON CHICAGO"], "description": "Hotel in Chicago.", "amounts": [320.00] },
+      "right": { "short_name": "Hilton", "raw_names": ["HILTON AUSTIN"], "description": "Hotel chain.", "amounts": [285.00] }
     },
     {
-      "match_id": "WALMART-01",
-      "left": { "short_name": "Walmart Supercenter", "raw_names": ["WALMART SUPERCENTER"], "description": "Large format Walmart store.", "amounts": [120.00] },
-      "right": { "short_name": "Walmart", "raw_names": ["Walmart"], "description": "General retailer.", "amounts": [80.00] }
+      "match_id": "CVS-01",
+      "left": { "short_name": "CVS Pharmacy", "raw_names": ["CVS/PHARMACY"], "description": "Pharmacy and retail store.", "amounts": [22.40, 15.99] },
+      "right": { "short_name": "CVS", "raw_names": ["CVS"], "description": "Pharmacy and convenience retailer.", "amounts": [8.50] }
     }
   ]
   review_needed = [
-    { "match_id": "OLDNAVY-01", "reasoning": "'Old Navy Kids' is a specific sub-brand; it cannot accurately describe all transactions from the general 'Old Navy', making them different.", "result": "different", "confidence": "high" },
-    { "match_id": "MARRIOTT-01", "reasoning": "These are the same hotel brand, just one specifies a location.", "result": "same", "confidence": "high" },
-    { "match_id": "WALMART-01", "reasoning": "A Supercenter is a type of Walmart store, they are the same entity.", "result": "same", "confidence": "high" }
+    { "match_id": "TARGET-01", "reasoning": "Target Optical is a distinct department/service within Target; not interchangeable with general Target.", "result": "different", "confidence": "high" },
+    { "match_id": "HILTON-01", "reasoning": "Same hotel brand at different cities; location alone does not make them different.", "result": "same", "confidence": "high" },
+    { "match_id": "CVS-01", "reasoning": "CVS Pharmacy and CVS are the same chain; 'Pharmacy' is store format wording.", "result": "same", "confidence": "high" }
   ]
   return run_test_case("test_group_2_sub_brands_and_locations", eval_input, review_needed, [], checker)
 
 
 def run_test_group_3(checker: CheckSameSummarizedNameClassifier = None):
   """
-  Test Group 3: Edge Cases and Ambiguity
+  Test Group 3: Transfers with memos, marketplaces, and payment wording
   """
   eval_input = [
     {
-      "match_id": "ZELLE-01",
-      "left": { "short_name": "Zelle to Gabby", "raw_names": ["Zelle Transfer to Gabby"], "description": "P2P transfer.", "amounts": [50.00] },
-      "right": { "short_name": "Zelle to Gabby: Jollibee", "raw_names": ["Zelle to Gabby: Jollibee"], "description": "P2P transfer with memo.", "amounts": [25.30] }
+      "match_id": "VENMO-01",
+      "left": { "short_name": "Venmo to Alex", "raw_names": ["Venmo payment to Alex"], "description": "P2P payment.", "amounts": [35.00] },
+      "right": { "short_name": "Venmo to Alex: Rent", "raw_names": ["Venmo to Alex Rent December"], "description": "P2P payment with memo.", "amounts": [850.00] }
     },
     {
-      "match_id": "SALES-01",
-      "left": { "short_name": "Sales", "raw_names": ["Sales"], "description": "Undetermined.", "amounts": [1581.33] },
-      "right": { "short_name": "Seamless", "raw_names": ["Seamless"], "description": "Food delivery service.", "amounts": [84.29] }
+      "match_id": "UBER-01",
+      "left": { "short_name": "Uber Eats: McDonald's", "raw_names": ["UBER EATS MCDONALDS"], "description": "Food delivery via Uber Eats from McDonald's.", "amounts": [18.40] },
+      "right": { "short_name": "McDonald's", "raw_names": ["MCDONALDS"], "description": "Fast food restaurant.", "amounts": [9.99] }
     },
     {
-      "match_id": "DOLLAR-01",
-      "left": { "short_name": "Dollar Tree", "raw_names": ["Dollartree"], "description": "Discount store.", "amounts": [4.06] },
-      "right": { "short_name": "Dollar Tree Payment", "raw_names": ["DOLLARTREE REF# 5023"], "description": "Payment to Dollar Tree.", "amounts": [4.06] }
+      "match_id": "SHELL-01",
+      "left": { "short_name": "Shell Gas", "raw_names": ["SHELL OIL"], "description": "Gas station fuel purchase.", "amounts": [52.00] },
+      "right": { "short_name": "Shell Fuel Purchase", "raw_names": ["SHELL FUEL PURCHASE"], "description": "Fuel purchase at Shell.", "amounts": [48.30] }
     }
   ]
   review_needed = [
-    { "match_id": "ZELLE-01", "reasoning": "A Zelle transfer with a specific memo is different from a general transfer.", "result": "different", "confidence": "high" },
-    { "match_id": "SALES-01", "reasoning": "The name 'Sales' is too generic to be matched with a specific service like 'Seamless'.", "result": "different", "confidence": "high" },
-    { "match_id": "DOLLAR-01", "reasoning": "The word 'Payment' is extraneous information; both refer to the same merchant.", "result": "same", "confidence": "high" }
+    { "match_id": "VENMO-01", "reasoning": "Transfer with a specific memo (Rent) is different from a general transfer to the same person.", "result": "different", "confidence": "high" },
+    { "match_id": "UBER-01", "reasoning": "Uber Eats delivery from McDonald's is a marketplace transaction; direct McDonald's is not.", "result": "different", "confidence": "high" },
+    { "match_id": "SHELL-01", "reasoning": "'Gas' and 'Fuel Purchase' are redundant; both refer to the same merchant.", "result": "same", "confidence": "high" }
   ]
   return run_test_case("test_group_3_edge_cases", eval_input, review_needed, [], checker)
 
 
 def run_test_group_4(checker: CheckSameSummarizedNameClassifier = None):
   """
-  Test Group 4: Misprocessed short_names with geo-locations
+  Test Group 4: Location-only differences and legal/format noise
   """
   eval_input = [
     {
-        "match_id": "JOLLIBEE-01",
-        "left": {
-            "short_name": "Jollibee New York",
-            "raw_names": ["Jollibee New York"],
-            "description": "Fast food restaurant in New York.",
-            "amounts": [25.50]
-        },
-        "right": {
-            "short_name": "Jollibee San Francisco",
-            "raw_names": ["Jollibee San Francisco"],
-            "description": "Fast food restaurant in San Francisco.",
-            "amounts": [30.00]
-        }
+      "match_id": "STARBUCKS-01",
+      "left": {
+        "short_name": "Starbucks Seattle",
+        "raw_names": ["STARBUCKS SEATTLE WA"],
+        "description": "Coffee shop in Seattle.",
+        "amounts": [6.50, 8.20]
+      },
+      "right": {
+        "short_name": "Starbucks Portland",
+        "raw_names": ["STARBUCKS PORTLAND OR"],
+        "description": "Coffee shop in Portland.",
+        "amounts": [5.75]
+      }
+    },
+    {
+      "match_id": "BANK-01",
+      "left": {
+        "short_name": "Chase Bank",
+        "raw_names": ["CHASE BANK"],
+        "description": "Bank branch transaction.",
+        "amounts": [0.0]
+      },
+      "right": {
+        "short_name": "Chase",
+        "raw_names": ["CHASE"],
+        "description": "Banking and financial services.",
+        "amounts": [0.0]
+      }
+    },
+    {
+      "match_id": "DOMINOS-01",
+      "left": {
+        "short_name": "Domino's Pizza LLC",
+        "raw_names": ["DOMINOS PIZZA LLC"],
+        "description": "Pizza delivery.",
+        "amounts": [24.99]
+      },
+      "right": {
+        "short_name": "Domino's Pizza",
+        "raw_names": ["DOMINOS PIZZA"],
+        "description": "Pizza chain.",
+        "amounts": [18.50]
+      }
     }
   ]
   review_needed = [
     {
-      "match_id": "JOLLIBEE-01",
-      "reasoning": "These are the same establishment at different locations. The location names are considered misprocessing and should be ignored.",
+      "match_id": "STARBUCKS-01",
+      "reasoning": "Same chain at different cities; location in the name should be ignored for same/different.",
+      "result": "same",
+      "confidence": "high"
+    },
+    {
+      "match_id": "BANK-01",
+      "reasoning": "Chase Bank and Chase are the same institution; branch wording does not make them different.",
+      "result": "same",
+      "confidence": "high"
+    },
+    {
+      "match_id": "DOMINOS-01",
+      "reasoning": "LLC is legal structure and should be ignored; both refer to the same pizza chain.",
       "result": "same",
       "confidence": "high"
     }
@@ -581,6 +616,78 @@ def run_ambiguous_physical_store_test(checker: CheckSameSummarizedNameClassifier
   return run_test_case("ambiguous_physical_store_test", eval_input, review_needed, [], checker)
 
 
+def run_custom_user_test(checker: CheckSameSummarizedNameClassifier = None):
+  """One-off test with user-provided EVAL_INPUT and REVIEW_NEEDED."""
+  eval_input = [
+    {
+      "match_id": "319",
+      "left": {
+        "short_name": "DraftKings Instant Payments Credit",
+        "raw_names": [
+          "REAL TIME PAYMENT CREDIT RECD FROM ABA/CONTR BNK-071923909 FROM: DraftKings Instant Payments via Trustly REF: BALSJ3rM1dabe1B4 INFO: TEXT-RmtInf-89DZQ3 IID: 20251216042000314P1BOPFX01076745914 RECD: 21:36:26 TRN: 2145482350GC",
+          "REAL TIME PAYMENT CREDIT RECD FROM ABA/CONTR BNK-071923909 FROM: DraftKings Instant Payments via Trustly REF: rYypBMbGT6EUK18q INFO: TEXT-RmtInf-89C30L IID: 20251216042000314P1BOPFX01076710148 RECD: 18:57:58 TRN: 1844742350GA"
+        ],
+        "description": "Income from an online sports betting and daily fantasy sports platform.\n",
+        "amounts": [-107.3, -192.0, -286.36]
+      },
+      "right": {
+        "short_name": "DraftKings",
+        "raw_names": [
+          "DK*DRAFTKINGSG3R7 6179866744 MA 11/24",
+          "DK*DRAFTKINGSMW5K 6179866744 MA 01/17"
+        ],
+        "description": "This establishment is an online sports betting and daily fantasy sports platform.\n",
+        "amounts": [72.63, 217.55, 15.0]
+      }
+    },
+    {
+      "match_id": "131",
+      "left": {
+        "short_name": "Green Valley Golf Range",
+        "raw_names": [
+          "GREEN VALLEY GOLF RANGE",
+          "GREEN VALLEY GOLF RAN HANOVER PARK IL 05/28"
+        ],
+        "description": "offers a driving range for golf practice, lessons, and equipment",
+        "amounts": [21.63, 10.3, 19.57]
+      },
+      "right": {
+        "short_name": "Green Valley Golf",
+        "raw_names": ["GREEN VALLEY GOLF RAHANOVER PARK"],
+        "description": "Payment for golf-related services or products, such as green fees or pro shop purchases.\n",
+        "amounts": [10.3]
+      }
+    },
+    {
+      "match_id": "855",
+      "left": {
+        "short_name": "Goldboys.\ncom",
+        "raw_names": [
+          "GOLDBOYS GOLDBOYS.\nCOM WY 08/20",
+          "GOLDBOYS GOLDBOYS.\nCOM WY 05/31"
+        ],
+        "description": "online retailer that sells gold coins, bullion, and other precious metals",
+        "amounts": [50.0]
+      },
+      "right": {
+        "short_name": "Goldboys",
+        "raw_names": [
+          "GOLDBOYS GOLDBOYS.\nCOM WY 07/21",
+          "GOLDBOYS GOLDBOYS.\nCOM WY 01/19"
+        ],
+        "description": "Online retailer for men's fashion and accessories.\n",
+        "amounts": [45.0, 42.5, 40.0]
+      }
+    }
+  ]
+  review_needed = [
+    {"match_id": "319", "reasoning": "One name specifies a payment mechanism for the service, the other is the general service name", "result": "different", "confidence": "medium"},
+    {"match_id": "131", "reasoning": "The names are highly similar, differing only by the omission of 'Range'", "result": "same", "confidence": "high"},
+    {"match_id": "855", "reasoning": "The descriptions indicate different businesses despite similar names", "result": "different", "confidence": "high"}
+  ]
+  return run_test_case("custom_user_test", eval_input, review_needed, [], checker)
+
+
 def main(batch: int = 0):
   """Main function to test the SameSummarizedNameClassifier checker"""
   checker = CheckSameSummarizedNameClassifier()
@@ -613,14 +720,16 @@ def main(batch: int = 0):
     run_bad_reasoning_test(checker)
   elif batch == 8:
     run_ambiguous_physical_store_test(checker)
+  elif batch == 9:
+    run_custom_user_test(checker)
   else:
-    print("Invalid batch number. Please choose from 0 to 8.")
+    print("Invalid batch number. Please choose from 0 to 9.")
 
 
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run checker tests in batches')
-  parser.add_argument('--batch', type=int, default=0, choices=range(9),
-                      help='Batch number to run (1-8). 0 runs all.')
+  parser.add_argument('--batch', type=int, default=0, choices=range(10),
+                      help='Batch number to run (1-9). 0 runs all.')
   args = parser.parse_args()
   main(batch=args.batch)
