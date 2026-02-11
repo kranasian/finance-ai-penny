@@ -168,6 +168,8 @@ def process_input() -> tuple[bool, str]:
 ```
 
 </EXAMPLES>
+
+Today's date is |TODAY_DATE|.
 """
 
 
@@ -197,8 +199,23 @@ class CreateBudgetOrGoalOptimizerV2:
     ]
     self.system_prompt = SYSTEM_PROMPT
 
-  def generate_response(self, creation_request: str, input_info: str = None) -> str:
-    """Generate code using the Creation Request and optional Input Info."""
+  def generate_response(self, creation_request: str, input_info: str = None, replacements: dict = None) -> str:
+    """Generate code using the Creation Request and optional Input Info.
+
+    Args:
+      creation_request: The creation request as a string.
+      input_info: Optional input from previous skill.
+      replacements: Optional dict of placeholder replacements (e.g. {"TODAY_DATE": "2026-02-10"}). Merged with default TODAY_DATE.
+    """
+    import datetime as dt
+    today = dt.datetime.now()
+    default_replacements = {"TODAY_DATE": today.strftime("%Y-%m-%d")}
+    if replacements:
+      default_replacements.update(replacements)
+    system_prompt = self.system_prompt
+    for key, value in default_replacements.items():
+      system_prompt = system_prompt.replace(f"|{key}|", str(value))
+
     input_info_text = f"\n\n**Input Info from previous skill**:\n{input_info}" if input_info else ""
     request_text = types.Part.from_text(text=f"""**Creation Request**: {creation_request}{input_info_text}
 
@@ -210,7 +227,7 @@ output:""")
       top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
-      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      system_instruction=[types.Part.from_text(text=system_prompt)],
       thinking_config=types.ThinkingConfig(
         thinking_budget=self.thinking_budget,
         include_thoughts=True,
@@ -352,6 +369,12 @@ TEST_CASES = [
     "last_user_request": "Cap my dining-out spending at $200 per month and save $3,000 for a vacation by next summer.",
     "previous_conversation": "",
     "ideal_response": "Expected: (1) create_category_spending_limit(category=meals_dining_out, granularity=monthly, amount=200, ...); (2) create_savings_goal(amount=3000, end_date=next summer, title with emoticon e.g. 🏖️, goal_type=save_X_amount, ...). Return combined success and message.",
+  },
+  {
+    "name": "savings_iphone_by_november",
+    "last_user_request": "Create a savings goal of $1200 for an iPhone by November 1st.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_savings_goal(amount=1200, end_date=November 1st of current year (e.g. get_date_string(get_date(today.year, 11, 1))), title with iPhone/emoji e.g. 📱, goal_type=save_X_amount, granularity=monthly, start_date=today).",
   },
 ]
 
