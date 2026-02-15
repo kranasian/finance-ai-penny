@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_2_5_FLASH_MODEL = "gemini-2.5-flash"
+GEMINI_2_5_FLASH_MODEL = "gemini-flash-lite-latest"
 
 OUTPUT_SCHEMA = types.Schema(
     type=types.Type.ARRAY,
@@ -45,7 +45,7 @@ List of insights (and their matching keys) that are each independent of each oth
 ### General Guidelines
 1. Exclude greeting.
 2. Use emojis conversationally.
-3. Use the appropriate tone depending on the insight.
+3. Use the appropriate tone depending on the insight. If the insight is positive (e.g., spending less than forecast, higher income), use an encouraging and happy tone. If negative (e.g., overspending, lower income), use a concerned but helpful tone.
 4. Strictly keep to 100 characters only, including spaces and emojis. Remove pieces of information if necessary to follow the character limit.
 5. Be mindful when using directional prepositions. Inflows are from an establishment, while outflows are to an establishment.
 6. For monetary amounts, use commas, include currency, and exclude decimals.
@@ -54,30 +54,47 @@ List of insights (and their matching keys) that are each independent of each oth
    - Text can be made green and linked by specifying the category and timeframe (ex: g{[food spending](/food/monthly)})
    - Text can be made red by enclosing it in r{} (ex: r{$1,234})
    - Text can be made red and linked by specifying the category and timeframe (ex: r{[food spending](/food/monthly)})
+8. **Categories must always be linked and colored**, except for `uncat_txn` insights where they should be plain text.
+9. **Amounts must always be colored** (red for negative/warning, green for positive/good).
+10. **Timeframes (weekly/monthly)** must be included in links (e.g., `/food/weekly` or `/food/monthly`). **Link paths must strictly use the words "weekly" or "monthly"**; do not use "this_week" or "this_month" in the URL path.
+11. **Tone**: Word messages casually but professionally. **Always spell out words in full** (e.g., use "your" instead of "ur", "transaction" instead of "transaction", "and" instead of "&"). Avoid overly casual interjections like "Whoa" or "Yay"; prefer "Fantastic news" or "Heads up". **Never use symbols like "&" or "+" in the message body.**
+12. **Contextual Timeframes**: Insights are snapshots of current performance. **Always use specific time references** like "this week", "last week", "this month", or "last month" in the message body based on the input text. **Do not use generic terms like "weekly" or "monthly" in the message body.** Match the specific timeframe mentioned in the input insight exactly.
+13. **Independence of Insights**: Treat each insight in the input list as belonging to a different person. Do not carry over context, facts, or assumptions from one insight to the next. Each output must be self-contained.
+14. **Fact-Checking**: Strictly stick to the facts provided in the input. Do not invent details, establishment names, or reasons for spending/income if they are not explicitly mentioned. **Use the establishment name exactly as provided in the input** (e.g., "CITY GENERAL HOSPITAL").
+15. **Color Consistency**: The category link and the amount must have the SAME color (both g{} or both r{}). If spending is lower than forecast (good), both are green. If income is lower than forecast (bad), both are red.
+16. **No Averages**: Do not describe amounts as "averages" or "usually". Describe them as the actual amount for the specific timeframe mentioned in the input. If the input says "larger than usual", you can mention it is "larger than usual" for this specific instance, but do not imply the current amount is an average.
+17. **Inflows in Outflow Categories**: If an insight explicitly mentions an "inflow" for a category that is typically an outflow (e.g., "Dining Out inflow"), treat it as an inflow category (e.g., increasing is good/green, decreasing is bad/red). By default, if no direction is specified, treat outflow categories as outflows.
 
 ### `...large_txn` Guidelines
 - **Messaging**: Include transaction name and monetary amount, and that it is smaller/larger than usual.
 - **Format**
-   - Inflow is smaller than usual: monetary amount in red
-   - Outflow is larger than usual: monetary amount in red
-   - Outflow is smaller than usual: monetary amount in green
-   - Inflow is larger than usual: monetary amount in green
+   - Inflow is smaller than usual: monetary amount in red r{$1,234}
+   - Outflow is larger than usual: monetary amount in red r{$1,234}
+   - Outflow is smaller than usual: monetary amount in green g{$1,234}
+   - Inflow is larger than usual: monetary amount in green g{$1,234}
+- **Categories in `large_txn`**: Do NOT link or color categories here, focus only on the amount color.
 
 ### `...spend_vs_forecast` and `...spent_vs_forecast` Guidelines
 - **Messaging**: Include monetary amounts, timeframe (ie. weekly or monthly), and severity of divergence (or synonyms).
    - When referring to category totals, avoid using "higher by X", "up X", "X higher", and anything similar. Instead, use "higher at X", "up at X", "increased to X", and similar phrases. Note that "increased this week to $264" means that the total for the week is $264.
    - Specify if the insight is on an inflow/income or outflow/spending.
+   - **Focus on the main category** mentioned in the key (e.g., if key is `...:Food`, focus on "Food" or "Meals") rather than listing every sub-item, to keep it concise.
 - **Format**
-   - Outflow category is higher than forecasted: category and monetary amount in red, with category linked
-   - Inflow category is lower than forecasted: category and monetary amount in red, with category linked
-   - Inflow category is higher than forecasted: category and monetary amount in green, with category linked
-   - Outflow category is lower than forecasted: category and monetary amount in green, with category linked
+   - Outflow category is higher than forecasted: category and monetary amount in red, with category linked (ex: r{[Meals](/meals/weekly)} at r{$1,234})
+   - Inflow category is lower than forecasted: category and monetary amount in red, with category linked (ex: r{[Income](/income/monthly)} at r{$1,234})
+   - Inflow category is higher than forecasted: category and monetary amount in green, with category linked (ex: g{[Income](/income/monthly)} at g{$1,234})
+   - Outflow category is lower than forecasted: category and monetary amount in green, with category linked (ex: g{[Meals](/meals/weekly)} at g{$1,234})
+- **Linking**: Use the slug in parentheses from the Official Category List for the link path (e.g., `meals_dining_out` becomes `/meals_dining_out/weekly`). Use the display name for the link text. If the category in the key is a general one like "Food", use the closest official slug (e.g., `meals`).
+- **Timeframe**: Always include the timeframe in the link (e.g., `/monthly` or `/weekly`) based on the insight text.
+- **Color Consistency**: The category link and the amount must have the SAME color (both g{} or both r{}). If spending is lower than forecast (good), both are green. If income is lower than forecast (bad), both are red.
 
 ### `...uncat_txn` Guidelines
 - **Messaging**: Include transaction name and monetary amount, then ask for confirmation on the suggested category, if any. Ask for how it should be categorized as if there is no suggested category.
 - **Format**
-   - Transaction is an outflow: monetary amount in red, category in plain text without color
-   - Transaction is an inflow: monetary amount in green, category in plain text without color
+   - Transaction is an outflow: monetary amount in red r{$1,234}, category in plain text without color
+   - Transaction is an inflow: monetary amount in green g{$1,234}, category in plain text without color
+   - **Category names in `uncat_txn` must NOT be linked or colored.**
+   - **Avoid using generic phrases** like "that outflow" or "that inflow" if the establishment name is provided. Use the establishment name directly.
 
 ### Official Category List
 
@@ -133,7 +150,7 @@ class PennyInsightsVerbalizerOptimizer:
     def __init__(
         self,
         model_name: str = GEMINI_2_5_FLASH_MODEL,
-        thinking_budget: int = 8196,
+        thinking_budget: int = 1024,
     ):
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
@@ -184,6 +201,7 @@ class PennyInsightsVerbalizerOptimizer:
                 thinking_budget=self.thinking_budget,
                 include_thoughts=True,
             ),
+            response_mime_type="application/json",
             response_schema=self.output_schema,
         )
 
@@ -225,6 +243,8 @@ class PennyInsightsVerbalizerOptimizer:
             raise ValueError("Empty response from model. Check API key and model availability.")
 
         out_clean = output_text.strip()
+        print(f"DEBUG: Raw output text: '{output_text}'")
+        print(f"DEBUG: Cleaned output text: '{out_clean}'")
         if out_clean.startswith("```"):
             lines = out_clean.split("\n")
             out_clean = "\n".join(lines[1:-1]) if len(lines) > 2 else out_clean
@@ -267,152 +287,152 @@ BATCH_TYPES = ("large_txn", "uncat_txn", "spend_vs_forecast", "mixed")
 # Test cases covering all different scopes: large_txn, spend_vs_forecast, uncat_txn; grouped by batch type
 TEST_CASES = [
     {
-        "name": "large_txn_outflow_larger_than_usual",
+        "name": "large_txn_outflow_larger_than_usual_medical",
         "batch": "large_txn",
         "insight_input": [
             {
-                "key": "2025-02-10:25:large_txn",
-                "insight": "Outflow to AMAZON MARKETPLACE of $847 is larger than usual.",
+                "key": "200:large_txn",
+                "insight": "Outflow to CITY GENERAL HOSPITAL of $1,250 is larger than usual.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: actionable message, no greeting; include transaction name (e.g. AMAZON MARKETPLACE) and amount; amount in red r{$847}; mention larger than usual; ≤100 chars; commas for amounts ≥1000; no decimals.",
+        "ideal_response": "One item. key unchanged. insight: actionable message; amount in red r{$1,250}; mention larger than usual; ≤100 chars.",
     },
     {
-        "name": "large_txn_outflow_smaller_than_usual",
+        "name": "large_txn_outflow_smaller_than_usual_utilities",
         "batch": "large_txn",
         "insight_input": [
             {
-                "key": "2025-02-09:12:large_txn",
-                "insight": "Outflow to WHOLE FOODS of $62 is smaller than usual.",
+                "key": "200:large_txn",
+                "insight": "Outflow to PACIFIC GAS & ELECTRIC of $45 is smaller than usual.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: amount in green g{$62}; smaller than usual; transaction name; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: amount in green g{$45}; smaller than usual; ≤100 chars.",
     },
     {
-        "name": "large_txn_inflow_larger_than_usual",
+        "name": "large_txn_inflow_larger_than_usual_bonus",
         "batch": "large_txn",
         "insight_input": [
             {
-                "key": "2025-02-08:7:large_txn",
-                "insight": "Inflow from EMPLOYER PAYROLL of $4,200 is larger than usual.",
+                "key": "200:large_txn",
+                "insight": "Inflow from ANNUAL PERFORMANCE BONUS of $5,000 is larger than usual.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: amount in green g{$4,200}; inflow from establishment; larger than usual; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: amount in green g{$5,000}; larger than usual; ≤100 chars.",
     },
     {
-        "name": "large_txn_inflow_smaller_than_usual",
+        "name": "large_txn_inflow_smaller_than_usual_dividend",
         "batch": "large_txn",
         "insight_input": [
             {
-                "key": "2025-02-07:3:large_txn",
-                "insight": "Inflow from FREELANCE CLIENT of $150 is smaller than usual.",
+                "key": "200:large_txn",
+                "insight": "Inflow from STOCK DIVIDEND of $12 is smaller than usual.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: amount in red r{$150}; inflow from establishment; smaller than usual; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: amount in red r{$12}; smaller than usual; ≤100 chars.",
     },
     {
-        "name": "spend_vs_forecast_2026_02_food",
+        "name": "spend_vs_forecast_2026_02_transport",
         "batch": "spend_vs_forecast",
         "insight_input": [
             {
-                "key": "spend_vs_forecast:2026-02:Food",
-                "insight": "Dining Out is significantly down this week at $73.  Groceries is significantly down this week at $67.  Food is thus significantly down this week to $326.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Public Transit is significantly up this month at $120. Car and Fuel is slightly up this month at $350. Transport is thus significantly up this month to $470.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: outflow category lower → green category + amount, linked (e.g. g{[Food spending](/food/weekly)}); down this week to $326 or similar; timeframe weekly; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: outflow higher → red category + amount, linked (e.g. r{[Transport](/transportation/monthly)}); up this month to $470; ≤100 chars.",
     },
     {
-        "name": "spend_vs_forecast_2026_02_income",
+        "name": "spend_vs_forecast_2026_02_health",
         "batch": "spend_vs_forecast",
         "insight_input": [
             {
-                "key": "spend_vs_forecast:2026-02:Income",
-                "insight": "Interest is significantly down this month at $0.  Salary is significantly down this month at $0.  Income is thus down this month to $0.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Gym and Wellness is significantly down this week at $0. Health is thus significantly down this week to $15.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: inflow category lower than forecasted → red category + amount, linked (e.g. r{[Income](/income/monthly)}); down this month to $0; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: outflow lower → green category + amount, linked (e.g. g{[Health](/health/weekly)}); down this week to $15; ≤100 chars.",
     },
     {
-        "name": "spend_vs_forecast_2026_02_leisure",
+        "name": "spend_vs_forecast_2026_02_sidegig",
         "batch": "spend_vs_forecast",
         "insight_input": [
             {
-                "key": "spend_vs_forecast:2026-02:Leisure",
-                "insight": "Entertainment is significantly down this month at $21.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Sidegig income is significantly up this month at $1,200.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: outflow category lower → green category + amount, linked (e.g. g{[Entertainment spending](/leisure_entertainment/monthly)}); down this month at $21; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: inflow higher → green category + amount, linked (e.g. g{[Sidegig](/income_sidegig/monthly)}); up this month to $1,200; ≤100 chars.",
     },
     {
-        "name": "spend_vs_forecast_2026_02_bills",
+        "name": "spend_vs_forecast_2026_02_shopping",
         "batch": "spend_vs_forecast",
         "insight_input": [
             {
-                "key": "spend_vs_forecast:2026-02:Bills",
-                "insight": "Insurance is significantly down this month at $0.  Connectivity is significantly down this month at $0.  Bills is thus significantly down this month to $12.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Clothing is significantly up this month at $450. Gadgets is significantly up this month at $800. Shopping is thus significantly up this month to $1,250.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: outflow category lower → green category + amount, linked (e.g. g{[Bills](/bills/monthly)}); down this month to $12; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: outflow higher → red category + amount, linked (e.g. r{[Shopping](/shopping/monthly)}); up this month to $1,250; ≤100 chars.",
     },
     {
-        "name": "spend_vs_forecast_2026_02_batch_food_income_leisure_bills",
+        "name": "spend_vs_forecast_batch_transport_health_sidegig_shopping",
         "batch": "spend_vs_forecast",
         "insight_input": [
             {
-                "key": "spend_vs_forecast:2026-02:Food",
-                "insight": "Dining Out is significantly down this week at $73.  Groceries is significantly down this week at $67.  Food is thus significantly down this week to $326.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Public Transit is significantly up this month at $120. Car and Fuel is slightly up this month at $350. Transport is thus significantly up this month to $470.",
             },
             {
-                "key": "spend_vs_forecast:2026-02:Income",
-                "insight": "Interest is significantly down this month at $0.  Salary is significantly down this month at $0.  Income is thus down this month to $0.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Gym and Wellness is significantly down this week at $0. Health is thus significantly down this week to $15.",
             },
             {
-                "key": "spend_vs_forecast:2026-02:Leisure",
-                "insight": "Entertainment is significantly down this month at $21.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Sidegig income is significantly up this month at $1,200.",
             },
             {
-                "key": "spend_vs_forecast:2026-02:Bills",
-                "insight": "Insurance is significantly down this month at $0.  Connectivity is significantly down this month at $0.  Bills is thus significantly down this month to $12.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Clothing is significantly up this month at $450. Gadgets is significantly up this month at $800. Shopping is thus significantly up this month to $1,250.",
             },
         ],
-        "ideal_response": "Four items. Keys unchanged. 1) Food: green linked category + amount, down this week to $326. 2) Income: red linked (inflow lower). 3) Leisure: green linked, down at $21. 4) Bills: green linked, down to $12. Each ≤100 chars.",
+        "ideal_response": "Four items. 1) Transport: red linked. 2) Health: green linked. 3) Sidegig: green linked. 4) Shopping: red linked. Each ≤100 chars.",
     },
     {
-        "name": "uncat_txn_outflow",
+        "name": "uncat_txn_outflow_coffee",
         "batch": "uncat_txn",
         "insight_input": [
             {
-                "key": "2025-02-11:42:uncat_txn",
-                "insight": "Uncategorized outflow of $89 to VENMO JOHN DOE. Suggested category: Transfers.",
+                "key": "-100:uncat_txn",
+                "insight": "Uncategorized outflow of $6 to BLUE BOTTLE COFFEE. Suggested category: Dining Out.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: amount in red r{$89}; transaction name; ask for confirmation on suggested category (Transfers) or how to categorize; category in plain text, no color; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: amount in red r{$6}; transaction name; ask for confirmation on suggested category (Dining Out); category in plain text, no color; ≤100 chars.",
     },
     {
-        "name": "uncat_txn_inflow",
+        "name": "uncat_txn_inflow_gift",
         "batch": "uncat_txn",
         "insight_input": [
             {
-                "key": "2025-02-10:18:uncat_txn",
-                "insight": "Uncategorized inflow of $500 from ZELLE REFUND. No suggested category.",
+                "key": "-100:uncat_txn",
+                "insight": "Uncategorized inflow of $100 from BIRTHDAY GIFT. No suggested category.",
             }
         ],
-        "ideal_response": "One item. key unchanged. insight: amount in green g{$500}; transaction name; ask how it should be categorized; ≤100 chars.",
+        "ideal_response": "One item. key unchanged. insight: amount in green g{$100}; transaction name; ask how it should be categorized; ≤100 chars.",
     },
     {
-        "name": "mixed_scopes_large_txn_and_spend_vs_forecast",
+        "name": "mixed_scopes_medical_and_transport",
         "batch": "mixed",
         "insight_input": [
             {
-                "key": "2025-02-10:25:large_txn",
-                "insight": "Outflow to AMAZON MARKETPLACE of $847 is larger than usual.",
+                "key": "200:large_txn",
+                "insight": "Outflow to CITY GENERAL HOSPITAL of $1,250 is larger than usual.",
             },
             {
-                "key": "25:spend_vs_forecast:Transport",
-                "insight": "Transport spending was slightly reduced this month, now at $203.",
+                "key": "14:spend_vs_forecast",
+                "insight": "Public Transit is significantly up this month at $120. Transport is thus significantly up this month to $470.",
             },
         ],
-        "ideal_response": "Two items. First: large_txn format (amount red, name, larger than usual). Second: spend_vs_forecast format (green category+amount, linked, lower at $203). Keys preserved; each insight ≤100 chars.",
+        "ideal_response": "Two items. First: large_txn format (amount red). Second: spend_vs_forecast format (red category+amount, linked). Keys preserved; each insight ≤100 chars.",
     },
 ]
 
@@ -490,7 +510,7 @@ def test_with_inputs(insight_input: list, optimizer: PennyInsightsVerbalizerOpti
 
 
 def main(test: str = None, batch: str = None, no_thinking: bool = False):
-    thinking_budget = 0 if no_thinking else 8196
+    thinking_budget = 0 if no_thinking else 1024
     optimizer = PennyInsightsVerbalizerOptimizer(thinking_budget=thinking_budget)
 
     if batch is not None:
