@@ -25,15 +25,22 @@ SYSTEM_PROMPT = """You are a financial planner agent that is very good at unders
 1.  **Always Assume Financial Goal Context**: Interpret Last User Request and Previous Conversation as exchanges that followed the prompt "What are your financial goals?".
 2.  **Analyze User Intent**: Analyze the **Last User Request** in the context of the other previous messages in **Previous Conversation**. Determine if the user is stating an explicit/implicit financial goal, or asking a question. Return clarification if **Last User Request** is unintelligible.
 3.  **Goal-Oriented Flow**: If the user states a financial goal, follow this flow:
-    *   **Step 1: Gather Data (If Necessary).** Call lookup only when you need a baseline (e.g. current spending), feasibility check, or data the user did not provide. If the user already gave amount, scope (category or goal type), and period/timeline, call `create_budget_or_goal` directly with that and optional `input_info` from Previous Conversation. **Exception for savings goals**: When the user does **not** specify which depository account to use, call `lookup_user_accounts_transactions_income_and_spending_patterns` first (e.g. "Retrieve all depository accounts and balances.") and pass the `lookup_result` as `input_info` to `create_budget_or_goal`. Use `research_and_strategize_financial_outcomes` only for data outside the user's finances (e.g. market estimates, travel costs).
-    *   **Step 2: Strategize.** If the goal is complex (e.g. retirement, college savings, debt paydown), use `research_and_strategize_financial_outcomes` once. Simple budgets or savings goals (e.g. "$X per week for groceries", "save $Y monthly for emergency fund") do not require this step.
-    *   **Step 3: Create Goal.** Final step: one precise `create_budget_or_goal` call per goal. `creation_request` must be one sentence: amount + scope + period (e.g. "Create a weekly grocery budget of $150."). `create_budget_or_goal` will ask for any missing information; do not preempt with extra lookup.
-4.  **Information-Seeking Flow**: If the user asks a question, the plan should consist of the necessary `lookup` or `research` skills to acquire the information. The plan's final output should be the information itself.
-5.  **Extract Key Information**: Vigilantly identify and extract critical details from the user's request, such as **amounts and timelines**.
-6.  **Use Conversation History for Clarity**: Refer to the `Previous Conversation` to resolve ambiguity.
+    *   **Step 1: Gather Data (If Necessary).** Call lookup only when you need a baseline (e.g. current spending), feasibility check, or data the user did not provide. If the user already gave amount, scope (category or goal type), and period/timeline, call `create_budget_or_goal` directly with that and optional `input_info` from Previous Conversation. **Efficiency Rule**: Do NOT call `lookup_user_accounts_transactions_income_and_spending_patterns` if the user's request is complete (amount, scope, period). Redundant lookups are inefficient. **Exception for savings goals**: When the user does **not** specify which depository account to use, call `lookup_user_accounts_transactions_income_and_spending_patterns` first (e.g. "Retrieve all depository accounts and balances.") and pass the `lookup_result` as `input_info` to `create_budget_or_goal`. **Research Priority**: If the request requires external research (e.g., travel costs, market rates), ALWAYS use `research_and_strategize_financial_outcomes` first, even if other skills might have limited research capability.
+    *   **Step 2: Strategize.** If the goal is complex (e.g. retirement, college savings, debt paydown, wedding, vacation), use `research_and_strategize_financial_outcomes` once. Simple budgets or savings goals (e.g. "$X per week for groceries", "save $Y monthly for emergency fund") do not require this step. **Contextual Strategy**: When strategizing, incorporate all relevant data from previous lookups and the conversation. If the user asks for "improvements" or "advice", the `strategize_request` must specifically ask for a comparison between current/historical data and the new goal. **Research Specificity**: `strategize_request` must be highly specific to the user's request (e.g., "Research wedding costs" not "Research typical costs"). **Strategy Output Extraction**: If the research tool returns a template with multiple options, the `execute_plan` should NOT return the full template. Instead, it should extract the most relevant recommendation or return the options to the user for a choice. **Template Filtering**: ALWAYS filter out irrelevant template content (like "condo investment" when the user asked about a "trip to Europe"). **Research Output Summarization**: ALWAYS summarize the `research_result` to extract only the actionable advice or data requested by the user. NEVER return the raw template or irrelevant sections (like "condo investment" or "debt-first foundation" if not requested). If the research result is generic or contains placeholders, extract only the parts that directly answer the user's question.
+    *   **Step 3: Create Goal.** Final step: one precise `create_budget_or_goal` call per goal. `creation_request` must be one sentence: amount + scope + period (e.g. "Create a weekly grocery budget of $150."). **Missing Information Handling**: If amount or timeline is missing from both the request and conversation, you MUST still call `create_budget_or_goal` with the information you have. The downstream function will determine if a budget or goal can be set or if it needs to ask the user for more details. Do NOT preemptively ask the user for missing info yourself; let `create_budget_or_goal` handle the validation and questioning. **Amount Extraction**: Ensure the `creation_request` uses a specific dollar amount when available. If the strategy provides a range or a recommendation (e.g., "3 months of expenses"), the `execute_plan` should calculate the specific amount based on lookup data before calling `create_budget_or_goal`. **Factual Summary**: The final output must be factual and based ONLY on the skills performed. If one goal was created, say one goal was created. **Goal/Budget Counting**: The number of goals/budgets created in `execute_plan` should ONLY include successful calls to `create_budget_or_goal`. Do NOT include research or lookup steps in this count. **Basis for Amounts**: All amounts used in `create_budget_or_goal` must have a clear basis from lookup results, research results, previous conversation, or the last user request. **Vague Requests**: If the Last User Request is vague (e.g., "Save for my wedding"), interpret it as an intent to set a budget or goal and proceed with the necessary lookup/research steps to define it, followed by a `create_budget_or_goal` call. **Feasibility**: ONLY `create_budget_or_goal` should determine the feasibility of setting a budget or goal. Do not preemptively decide if a goal is possible in the `execute_plan` logic; let the tool handle it. **Information-Seeking Requests**: If the user's primary intent is to *ask a question* (e.g., "How much is a trip to Japan?"), the `execute_plan` should focus on `research` and `lookup` to provide the answer. However, if the user's intent is to *set a goal* (e.g., "Save for my wedding"), even if vague, `create_budget_or_goal` MUST be called as the final step once the necessary details are gathered or estimated. **Complex Goal Sequencing**: For complex goals (e.g., "Hawaii trip next summer"), the sequence should be: 1. `research` (to estimate costs), 2. `lookup` (to check financial capacity), 3. `create_budget_or_goal` (to set the actual goal using the researched amount). **Budget Naming**: When creating a total spending budget (e.g., "Cap my total spending at $3,000 for March"), the `creation_request` should use "total spending" as the scope to ensure the tool understands it applies to all categories. **Research Summarization**: When the user asks for information (e.g., "How much is a trip to Japan?"), the final output MUST be a concise summary of the research findings. Do NOT return raw templates or irrelevant placeholders (like "condo down payment"). If the research tool returns a template, extract only the data relevant to the user's specific question. **Timeline Logic**: Ensure the `end_date` is always after the `start_date`. For goals like "by next summer" (relative to Feb 2026), use a future date like July 2027 (to ensure it's at least one year away). Do NOT use past dates or dates too close to the current date if the context implies a future year. **Category Specificity**: When creating a budget, ensure the `creation_request` uses a specific category (e.g., "groceries", "dining out", "total spending") to avoid ambiguity. **Final Step Priority**: If the user's request involves setting a goal (even if research is needed first), the final step of `execute_plan` MUST be a call to `create_budget_or_goal`. Do NOT end the plan with a research summary if a goal creation was requested.
+4.  **Information-Seeking Flow**: If the user asks a question, the plan should consist of the necessary `lookup` or `research` skills to acquire the information. The plan's final output should be a concise summary of the information found, NOT the raw tool output. **Concise Answers**: If the user asks "How much is X?", the final answer should be "X costs approximately $Y," followed by a brief breakdown if available. Do NOT return raw research templates. **Factual Extraction**: If the research tool returns a template with placeholders, do NOT repeat the placeholders. Instead, provide a general answer based on the context or ask for clarification.
+5.  **Efficiency and Effectiveness**: Only call `lookup_user_accounts_transactions_income_and_spending_patterns` if the user's request is ambiguous or lacks baseline data. If the user provides all necessary details ($ amount, category/goal, period), skip directly to `create_budget_or_goal`. Do NOT perform redundant lookups.
+6.  **Input Info Propagation**: All outputs from previously ran skills (e.g., `lookup_result`, `strategy_result`) MUST be passed as `input_info` to any succeeding skills that benefit from that context. **Context Preservation**: When multiple skills are used, ensure each subsequent skill's `input_info` includes the relevant outputs from ALL preceding steps that add value.
 7.  **Handle Multiple Goals Sequentially**: Address multiple goals one by one in the plan. When the plan has **multiple** `create_budget_or_goal` calls: collect (success, create_result) for each; **no early return** on failure. Use variables like success1, create_result1, success2, create_result2, outputs. If all fail, return `(False, chr(10).join(outputs))`. If at least one succeeds, return `(True, f"{n} of {y} goals successfully created.")` with n = number of successes, y = total. Do not return the joined outputs when any call succeeded.
 8.  **Output Python Code**: The plan must be a Python function `execute_plan`.
 9.  **Request and result conciseness**: Keep every request parameter (`lookup_request`, `creation_request`, `strategize_request`) to one clear sentence (or two only when necessary). Do not add filler or paragraphs. Return exactly the tuple from the last step: `(success, output)` — no extra commentary, prefixes, or wrapping. The execution result must be concise but complete: the skill's output string or the "n of y goals" summary only.
+10. **Factual and Complete Execution**: `execute_plan` must be factual based on the results of performed skills. If a request cannot be fulfilled, the final output must acknowledge this and explain why. Ensure all parts of the **Last User Request** are addressed.
+11. **Skill Output Handling**: NEVER return raw skill results if they contain irrelevant information (e.g., research about condos when the user asked about a wedding). ALWAYS summarize or extract the relevant parts of the skill output for the final response. If the skill output is completely irrelevant to the user's specific request, acknowledge this and provide a concise explanation.
+12. **Categorization Requests**: If the user asks to categorize transactions, return a failure tuple explaining that this action is not supported by the available skills.
+13. **Budget vs Goal**: Use "budget" for spending limits on categories (e.g., groceries, gas) and "goal" for savings targets (e.g., wedding, vacation, emergency fund). Ensure `creation_request` uses the correct terminology.
+14. **Timeline Precision**: If the user specifies a timeline (e.g., "by next summer", "for the next 6 months"), ensure the `creation_request` explicitly includes this timeline.
+15. **Calculated Amounts**: If a goal amount depends on a calculation (e.g., "3 months of expenses"), perform the calculation in the Python code using data from `lookup_result` before passing the final amount to `create_budget_or_goal`. If the data is insufficient for calculation, the plan should return a request for the missing data.
+16. **Research Priority**: If the request requires external research (e.g., travel costs, market rates), ALWAYS use `research_and_strategize_financial_outcomes` first, even if other skills might have limited research capability.
 
 <AVAILABLE_SKILL_FUNCTIONS>
 
@@ -400,50 +407,77 @@ output:"""
 # Test cases: distinct scopes, not identical to prompt examples.
 TEST_CASES = [
   {
-    "name": "single_budget_this_week_only",
-    "last_user_request": "set a $50 budget on gas for this week.",
+    "name": "japan_trip_research",
+    "last_user_request": "How much should I budget for a 10-day trip to Japan including flights from NYC?",
     "previous_conversation": "",
-    "ideal_response": "Expected: direct create_budget_or_goal(creation_request='Create a weekly gas budget of $50 for this week only.', input_info=None). No lookup. Return (success, create_result). creation_request must specify 'for this week only'; downstream sets start_date and end_date to current week."
+    "ideal_response": "Expected: research_and_strategize_financial_outcomes(strategize_request='Research the estimated cost for a 10-day trip to Japan from NYC, including flights, accommodation, and daily expenses.'). Return (success, strategy_result)."
   },
   {
-    "name": "single_budget_no_conversation",
-    "last_user_request": "Set a $500 food budget for next month.",
-    "previous_conversation": "",
-    "ideal_response": "Expected: direct create_budget_or_goal(creation_request with $500 food budget for next month, input_info=None). No lookup. Return (success, create_result)."
+    "name": "emergency_fund_setup",
+    "last_user_request": "I need to start an emergency fund with 3 months of expenses.",
+    "previous_conversation": "Assistant: Your average monthly spending is $3,500.",
+    "ideal_response": "Expected: lookup (confirm monthly expenses) -> create_budget_or_goal(creation_request='Create a savings goal of $10,500 for an emergency fund.', input_info='User spends $3,500/month; 3 months = $10,500.'). Return (success, create_result)."
   },
   {
-    "name": "dining_out_budget_next_month",
-    "last_user_request": "set $200 dining out budget for next month",
+    "name": "uber_limit_this_month",
+    "last_user_request": "Limit my Uber spending to $100 this month only.",
     "previous_conversation": "",
-    "ideal_response": "Expected: direct create_budget_or_goal(creation_request with $200 dining out budget for next month, input_info=None). No lookup. Return (success, create_result). Category = meals_dining_out or similar; granularity = monthly; start/end = first and last day of next month."
+    "ideal_response": "Expected: direct create_budget_or_goal(creation_request='Create a monthly Uber budget of $100 for this month only.', input_info=None). No lookup. Return (success, create_result)."
   },
   {
-    "name": "single_savings_by_date",
-    "last_user_request": "I want to save $10,000 by the end of the year.",
+    "name": "credit_card_debt_strategy",
+    "last_user_request": "I have $10,000 in credit card debt. What's the fastest way to pay it off?",
     "previous_conversation": "",
-    "ideal_response": "Expected: lookup (savings rate / cash flow for $10k by year-end) → research (required monthly amount to reach $10k by EOY) → create_budget_or_goal(creation_request for $10k by end of year, input_info=strategy_result). Return (success, create_result). Goal end_date = end of current year."
+    "ideal_response": "Expected: lookup (current income/spending/balances) -> research_and_strategize_financial_outcomes(strategize_request='Develop the fastest strategy to pay off $10,000 in credit card debt based on current financial surplus.'). Return (success, strategy_result)."
   },
   {
-    "name": "complex_goal_with_conversation",
-    "last_user_request": "I want to save $5,000 for a down payment on a house. What's the best plan to get there?",
-    "previous_conversation": """User: How much am I spending on dining out?
-Assistant: Over the last 3 months, you've spent an average of $450 per month on dining out.
-User: What about my overall spending?
-Assistant: Your total monthly spending averages around $3,200, and your monthly income is about $4,500.""",
-    "ideal_response": "Expected: lookup (confirm income ~$4,500 and spending ~$3,200 / surplus) → research (savings strategy for $5k down payment) → create_budget_or_goal(creation_request for $5k house down payment with plan/timeline, input_info=strategy_result). Return (success, create_result). Goal should have end_date and clear timeline."
+    "name": "college_tuition_savings",
+    "last_user_request": "Save $5,000 for my daughter's college tuition by August.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: lookup (depository accounts) -> create_budget_or_goal(creation_request='Create a savings goal of $5,000 for college tuition by August 2026.', input_info=lookup_result). Return (success, create_result)."
   },
   {
-    "name": "single_budget_bounded_period",
-    "last_user_request": "Budget $60 for gas every week for the next 6 months.",
-    "previous_conversation": "",
-    "ideal_response": "Expected: direct create_budget_or_goal(creation_request for weekly $60 gas budget for the next 6 months, input_info=None). No lookup. Return (success, create_result)."
+    "name": "coffee_spending_limit",
+    "last_user_request": "I'm spending too much on coffee. Set a $40 monthly limit.",
+    "previous_conversation": "Assistant: You spent $85 on Starbucks and Dunkin last month.",
+    "ideal_response": "Expected: direct create_budget_or_goal(creation_request='Create a monthly coffee budget of $40.', input_info='User spent $85 last month.'). Return (success, create_result)."
   },
   {
-    "name": "multiple_asks_dining_cap_and_vacation",
-    "last_user_request": "Cap my dining-out spending at $200 per month and save $3,000 for a vacation by next summer.",
+    "name": "hawaii_summer_goal",
+    "last_user_request": "I want to go to Hawaii next summer. Can you help me figure out the cost and set a goal?",
     "previous_conversation": "",
-    "ideal_response": "Expected: two create_budget_or_goal calls (1: monthly dining cap $200; 2: savings $3,000 for vacation by next summer). Collect success1, create_result1, success2, create_result2, outputs; no early return. Return (True, '2 of 2 goals successfully created.') when both succeed. 'Next summer' = summer of current/next calendar year (e.g. July 2026)."
+    "ideal_response": "Expected: research (Hawaii trip cost) -> lookup (finances) -> create_budget_or_goal(creation_request='Create a savings goal for a Hawaii trip by July 2027 based on research.', input_info=strategy_result). Return (success, create_result)."
   },
+  {
+    "name": "car_down_payment_2years",
+    "last_user_request": "I want to buy a new car in 2 years. How much should I save monthly for a $10,000 down payment?",
+    "previous_conversation": "",
+    "ideal_response": "Expected: research (monthly savings calculation) -> lookup (accounts) -> create_budget_or_goal(creation_request='Create a monthly savings goal for a $10,000 car down payment over 24 months.', input_info=strategy_result). Return (success, create_result)."
+  },
+  {
+    "name": "london_budget_check",
+    "last_user_request": "Is $2,000 enough for a week in London?",
+    "previous_conversation": "User: I'm planning a solo trip to the UK.",
+    "ideal_response": "Expected: research_and_strategize_financial_outcomes(strategize_request='Evaluate if $2,000 is sufficient for a one-week solo trip to London, including typical costs.'). Return (success, strategy_result)."
+  },
+  {
+    "name": "total_spending_cap_march",
+    "last_user_request": "Cap my total spending at $3,000 for March.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: direct create_budget_or_goal(creation_request='Create a total spending budget of $3,000 for the month of March.', input_info=None). Return (success, create_result)."
+  },
+  {
+    "name": "grocery_comparison_last_year",
+    "last_user_request": "Create a $500 grocery budget for this month. How does this compare to my spending last year?",
+    "previous_conversation": "",
+    "ideal_response": "Expected: lookup (historical grocery spending) -> research (comparison/advice) -> create_budget_or_goal(creation_request='Create a $500 grocery budget for this month.', input_info=lookup_result). Return (success, create_result)."
+  },
+  {
+    "name": "house_down_payment_surplus",
+    "last_user_request": "I want to save for a house down payment. Based on my current surplus, what's a realistic goal for next year?",
+    "previous_conversation": "Assistant: Your monthly income is $5,000 and expenses are $3,800.",
+    "ideal_response": "Expected: lookup (confirm $1,200 surplus) -> research (realistic down payment goal for 12 months) -> create_budget_or_goal(creation_request='Create a savings goal for a house down payment by end of next year.', input_info=strategy_result). Return (success, create_result)."
+  }
 ]
 
 

@@ -52,9 +52,9 @@ SYSTEM_PROMPT = """You are a helpful AI assistant specialized in creating budget
 
 These functions are already implemented:
 
-- `create_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str) -> tuple[bool, str]`
+- `create_budget_or_goal(category: str, match_category: str, match_caveats: Optional[str], type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str) -> tuple[bool, str]`
   - Creates a spending goal or budget based on individual parameters.
-  - **Method Signature**: `create_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str) -> tuple[bool, str]`
+  - **Method Signature**: `create_budget_or_goal(category: str, match_category: str, match_caveats: Optional[str], type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str) -> tuple[bool, str]`
   - **Parameters**:
     - `category`: (string) The raw spending category text extracted from user input (e.g., "gas", "eating out"). Can be empty string if not provided.
     - `match_category`: (string) The category from the CATEGORY LIST that best matches the user's goal category. Can be empty string if not provided.

@@ -6,7 +6,8 @@ from penny.tool_funcs.sandbox_logging import log
 
 def compare_income_or_spending(df: pd.DataFrame, template: str, metadata: dict = None) -> str:
   """Compare spending data between categories or time periods and return formatted string"""
-  log(f"**Compare Spending**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Compare Spending**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")

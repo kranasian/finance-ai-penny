@@ -188,10 +188,12 @@ def process_input():
 Today's date is |TODAY_DATE|."""
 
 
+from typing import Optional
+
 def validate_budget_or_goal(
     category: str,
     match_category: str,
-    match_caveats: str | None,
+    match_caveats: Optional[str],
     type: str,
     granularity: str,
     start_date: str,

@@ -18,7 +18,8 @@ def retrieve_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   if 'date' in df.columns and len(df) > 0:
     df['date'] = pd.to_datetime(df['date'])
   
-  log(f"**Retrieved All Transactions** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Retrieved All Transactions** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return df
 
 
@@ -37,7 +38,8 @@ def retrieve_income_transactions_function_code_gen(user_id: int = 1) -> pd.DataF
   # Flip amount for income transactions
   income_df['amount'] = income_df['amount'] * -1
   
-  log(f"**Retrieved Income Transactions** of `U-{user_id}`: `df: {income_df.shape}` w/ **cols**:\n  - `{'`, `'.join(income_df.columns)}`")
+  cols_str = "`, `".join(income_df.columns)
+  log(f"**Retrieved Income Transactions** of `U-{user_id}`: `df: {income_df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return income_df
 
 
@@ -53,7 +55,8 @@ def retrieve_spending_transactions_function_code_gen(user_id: int = 1) -> pd.Dat
   income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
   spending_df = df[~df['category'].isin(income_categories)]
   
-  log(f"**Retrieved Spending Transactions** of `U-{user_id}`: `df: {spending_df.shape}` w/ **cols**:\n  - `{'`, `'.join(spending_df.columns)}`")
+  cols_str = "`, `".join(spending_df.columns)
+  log(f"**Retrieved Spending Transactions** of `U-{user_id}`: `df: {spending_df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return spending_df
 
 def transaction_category_grouped(df: pd.DataFrame, template: str) -> str:
@@ -68,7 +71,8 @@ def transaction_category_grouped(df: pd.DataFrame, template: str) -> str:
       If there are more categories, appends a message like "n more transactions."
   """
   
-  log(f"**Transaction Category Grouped**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Transaction Category Grouped**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")
@@ -170,7 +174,8 @@ def transaction_category_grouped(df: pd.DataFrame, template: str) -> str:
     utterance_text += f"\n{remaining_count} more transaction{'s' if remaining_count != 1 else ''}."
   
   log(f"**Returning** {len(utterances)} category groups. Has more: {has_more}")
-  log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
+  utterances_str = "`\n  - `".join(utterances)
+  log(f"**Utterances**:\n  - `{utterances_str}`")
   return utterance_text
 
 
@@ -182,7 +187,8 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> str:
       If there are more transactions, appends a message like "n more transactions."
   """
   
-  log(f"**Transaction Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Transaction Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")
@@ -379,7 +385,8 @@ def transaction_names_and_amounts(df: pd.DataFrame, template: str) -> str:
     utterance_text += f"\n{remaining_count} more transaction{'s' if remaining_count != 1 else ''}."
   
   log(f"**Returning** {len(utterances)} utterances. Has more: {has_more}")
-  log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
+  utterances_str = "`\n  - `".join(utterances)
+  log(f"**Utterances**:\n  - `{utterances_str}`")
   return utterance_text
 
 
@@ -401,7 +408,8 @@ def utter_transaction_total(df: pd.DataFrame, template: str) -> str:
     Formatted string with verb and total amount inserted.
   """
   
-  log(f"**Transaction Total**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Transaction Total**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")

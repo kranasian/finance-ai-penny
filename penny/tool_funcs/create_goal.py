@@ -184,7 +184,8 @@ def create_goal_function_code_gen(goals: list[dict], user_id: int = 1) -> tuple[
     
     log(f"**Returning** {len(created_goals)} goal(s) created")
     if descriptions:
-      log(f"**Goal Descriptions**:\n  - `{'`\n  - `'.join(descriptions)}`")
+      descriptions_str = "`\n  - `".join(descriptions)
+      log(f"**Goal Descriptions**:\n  - `{descriptions_str}`")
     log(f"**Goals**:\n```json\n{json.dumps(created_goals, indent=2)}\n```")
     
     return response_message, created_goals

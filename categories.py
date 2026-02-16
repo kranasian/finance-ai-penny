@@ -58,7 +58,9 @@ _CATEGORY_ID_TO_NAME = {
 }
 _CATEGORY_NAME_TO_ID = { value.lower(): key for key, value in _CATEGORY_ID_TO_NAME.items() }
 
-def get_category_id(category_name: str) -> int|None:
+from typing import Optional
+
+def get_category_id(category_name: str) -> Optional[int]:
   return _CATEGORY_NAME_TO_ID.get(category_name.lower(), None)
 
 _CATEGORY_ID_TO_LARAVEL_NAME = {
@@ -109,7 +111,7 @@ _CATEGORY_ID_TO_LARAVEL_NAME = {
     33: "Miscellaneous",
 }
 
-def get_laravel_name(category_id: int) -> str|None:
+def get_laravel_name(category_id: int) -> Optional[str]:
   return _CATEGORY_ID_TO_LARAVEL_NAME.get(category_id, None)
 
 _TOP_LEVEL_CATEGORIES = [
@@ -174,10 +176,12 @@ def get_leaves_ids() -> list[int]:
       leaves.extend(leaves_list[1:])
   return leaves
 
-def get_name(category_id: int) -> str|None:
+def get_name(category_id: int) -> Optional[str]:
   return _CATEGORY_ID_TO_NAME.get(category_id, None)
 
-def get_category_id(category_name: str) -> int|None:
+from typing import Optional
+
+def get_category_id(category_name: str) -> Optional[int]:
   return _CATEGORY_NAME_TO_ID.get(category_name.lower(), None)
 
 def get_all_leaf_as_dict_categories() -> dict[str, list[int]]:

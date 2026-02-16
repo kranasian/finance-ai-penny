@@ -344,7 +344,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     return create_savings_goal(amount, end_date, title, goal_type=goal_type, granularity=granularity, start_date=start_date, account_ids=account_ids)
 
   # validate_budget_or_goal function (used by generated code from P:Func:CreateBudgetOrGoal)
-  def validate_budget_or_goal(category: str, match_category: str, match_caveats: str | None, type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
+  def validate_budget_or_goal(category: str, match_category: str, match_caveats: Optional[str], type: str, granularity: str, start_date: str, end_date: str, amount: float, title: str, budget_or_goal: str):
     """Validate a budget or goal with individual parameters.
     
     This function validates the goal parameters and returns success/error message.
