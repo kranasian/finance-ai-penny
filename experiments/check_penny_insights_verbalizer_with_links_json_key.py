@@ -8,50 +8,64 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a checker verifying verbalizer outputs against rules.
+SYSTEM_PROMPT = """You are a checker verifying the output of a personal finance verbalizer (PennyInsightsVerbalizer).
 
 ## Input:
-- **EVAL_INPUT**: Notable activity in personal finance (string). This is the **source of truth** for all factual checks.
-- **PAST_REVIEW_OUTCOMES**: Array of past reviews, each with `output`, `good_copy`, `info_correct`, `eval_text`
-- **REVIEW_NEEDED**: Highlights from EVAL_INPUT rewritten as actionable messages (string)
+- **EVAL_INPUT**: A JSON array of raw insights (factual source of truth).
+- **PAST_REVIEW_OUTCOMES**: An array of past review outcomes.
+- **REVIEW_NEEDED**: The JSON output from the verbalizer (array of verbalized messages). 
+
+## Correspondence Rule:
+The insights in EVAL_INPUT correspond to the messages in REVIEW_NEEDED based on **order** (i.e., the first EVAL_INPUT insight is for the first REVIEW_NEEDED message, etc.). The `key` field signifies the topic and is not unique.
 
 ## Output:
-JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: **(FORMATTING ONLY)** True if REVIEW_NEEDED perfectly follows all formatting rules from the "Rules" section.
-- `info_correct`: **(ACCURACY ONLY)** True if all information in REVIEW_NEEDED is factually accurate when compared to EVAL_INPUT. EVAL_INPUT is the sole source of truth.
-- `eval_text`: Required ONLY if either boolean is False. For each issue: state the issue and **indicate why** (e.g. what is wrong and what it should be, or which rule). Use short phrases. Refer to insights by number (e.g., "Insight 1: ..."). **If text color is wrong**, state whether the error is in the **category** or **amount** color and why (e.g., "Insight 1: Wrong color on category (should be green for lower spending)", "Insight 2: Wrong color on amount (should be red for uncat outflow)"). No long paragraphs.
+**Return valid JSON ONLY.** Do not include markdown formatting, code blocks, or any text outside the JSON object.
+Example format:
+{"good_copy": true, "info_correct": true, "eval_text": ""}
 
-## Critical Priority: Strict Compliance
-- **Evaluate only REVIEW_NEEDED**: Match each item in REVIEW_NEEDED to EVAL_INPUT by `key`; do not require or judge insights that are not in REVIEW_NEEDED.
-- **Recall over Precision**: Flag ANY potential violation. False positives preferred over false negatives.
-- **Learn from PAST_REVIEW_OUTCOMES**: If issues from past `eval_text` persist, mark as incorrect.
-- **Conciseness**: Keep `eval_text` short. For each issue include a brief reason: e.g. "Wrong color on category (should be green for lower spending)", "Missing link (spend_vs_forecast category must be linked)", "Timeframe mismatch (text says 'last week' but link has '/monthly')", "Decimals in amount (use whole dollars)", "Comma in amount under 1000 (no comma for $999)", "Missing comma in amount 1000 or more ($1,000 required)".
+- `good_copy`: True if REVIEW_NEEDED follows all **Formatting rules** (Part 2 & 3). This includes font colors, linking syntax, monetary formatting, and character limits. Phrasing should be appropriate (friendly openers and emojis are encouraged but not strictly required).
+- `info_correct`: True if the **factual information** actually present in each message in REVIEW_NEEDED matches its corresponding insight in EVAL_INPUT (based on order). **STRICT RULE: NEVER mark info_correct: false for omitted information.** If EVAL_INPUT has details (like sub-categories, extra context, or aggregate totals) that are not in REVIEW_NEEDED, you MUST ignore the omission. Only mark `false` if the information that *is* present is factually wrong (e.g., wrong amount, wrong category name, wrong direction).
+- `eval_text`: **MUST be an empty string "" if both good_copy and info_correct are True.** Otherwise, list each error. **Each line must start with "Insight <number>: "** (e.g., "Insight 1: ...", "Insight 2: ...") based on the order of the items. Use quick, concise phrases (max 15 words per error). Do not refer to rule numbers, labels like "Rule 1", or internal section names. Explain the error clearly so it is understandable independently. One line per erroneous item, separate with newline (`\\n`). Do not reference PAST_REVIEW_OUTCOMES. **STRICTLY FORBIDDEN: Do not include any internal reasoning, "Verification Steps", or "Re-evaluating" text in the output. The output must be valid JSON ONLY.**
 
-## Rules
+## Strict Negative Constraints (DO NOT FLAG THESE AS ERRORS)
+1. **Omitted Information**: Do NOT flag missing sub-categories, missing totals, or missing details from EVAL_INPUT as errors.
+2. **Character Count**: Do NOT flag character count errors unless the visible text (excluding markup like `g{`, `r{`, `}`, `[]`, `()`) is strictly over 100 characters.
+3. **Commas**: Do NOT flag comma errors if the amount already has a comma (e.g., `$1,000`).
+4. **Friendly Openers**: Do NOT flag missing openers or emojis as errors; they are optional.
 
-### Part 1: Content Rules
-1.  **Factual Accuracy**: All information in REVIEW_NEEDED must match EVAL_INPUT. EVAL_INPUT is the source of truth.
-2.  **Openers**: Conversational openers (e.g. "Great news!", "Heads up!", "Awesome!", "Hey!", "Note:") are **optional**. ONLY formal greetings like "Hi", "Hello", "Good morning", and "Good evening" are forbidden.
-3.  **Required Info**: ONLY category, amount, and direction (high/low) are required. Magnitude (e.g., "slightly", "significantly") and other details (e.g. parent categories, breakdown of sub-categories) are NOT required. If the insight mentions a sub-category (e.g. "Medical & Pharmacy") but the parent category (e.g. "Health") is not mentioned in the output, this is ACCEPTABLE.
-4.  **Prepositions**: Inflows *from* establishment, outflows *to* establishment.
-5.  **Amounts**: Treat **$0** as a valid amount; it must appear correctly if present in EVAL_INPUT.
-6.  **Insight-Specific**:
-    *   `...large_txn`: Include name, amount, and larger/smaller.
-    *   `...spend_vs_forecast`: Include category, amount, and higher/lower. Category MUST be linked.
-    *   `...uncat_txn`: Include name, amount, and ask for category.
+## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
+Use PAST_REVIEW_OUTCOMES as a knowledge base. If REVIEW_NEEDED repeats mistakes flagged in past outcomes, mark incorrect. Do not mention past outcomes in `eval_text`.
 
-### Part 2: Formatting Rules (`good_copy` ONLY)
-1.  **Colors**: Based on performance (EVAL_INPUT is source of truth):
-    *   **GREEN `g{...}`** = good: spending lower/expected, income higher/expected, uncategorized **inflow**; for `...large_txn`: outflow **smaller** than usual, inflow **larger** than usual.
-    *   **RED `r{...}`** = bad: spending higher than expected, income lower than expected, uncategorized **outflow**; for `...large_txn`: outflow **larger** than usual, inflow **smaller** than usual.
-    *   For `...spend_vs_forecast`: category and amount share the same color per insight. For `...uncat_txn`: outflow amount RED, inflow amount GREEN. For `...large_txn`: only the amount is colored (no category link).
-2.  **Links**: `...spend_vs_forecast` category MUST be linked and colored.
-3.  **Amounts**: Use `$`, no decimals. **Commas only when the absolute value of the amount is 1,000 or more** (e.g., `$999` no comma; `$1,000` with comma; `$0` is valid, no comma).
-4.  **Emojis**: Allowed.
-5.  **Syntax**: Balanced `[]`, `{}`, `()`.
+## Verification Steps (Internal Only - Do Not Output)
+1. Check PAST_REVIEW_OUTCOMES: if REVIEW_NEEDED repeats past mistakes → mark False.
+2. Verify good_copy: valid JSON array; each item follows formatting rules (Part 2 & 3); link timeframe matches text timeframe. **For `spend_vs_forecast`, ensure both category and amount are colored.**
+3. Verify info_correct: For each item, check **only** that the factual information in REVIEW_NEEDED matches its corresponding insight in EVAL_INPUT (based on order). **Ignore any omitted information from EVAL_INPUT.** Ensure amounts are absolute values (e.g., "at $X", "to $X") and NOT relative (e.g., "$X higher").
+4. eval_text: **Only when REVIEW_NEEDED is incorrect.** Every line must start with "Insight " then the item number (1, 2, 3...), then ": ". If REVIEW_NEEDED is correct, eval_text must be empty. **Be extremely careful not to flag correct items as incorrect.** Descriptions must be concise (max 15 words).
 
-### Part 3: Character Count Rule (`good_copy` ONLY)
-1.  **Strict Limit**: 100 characters maximum per insight. Count only **visible text and spaces**; exclude all markup (`g{`, `r{`, `}`, `[]`, `()`, link syntax, and URL). Flag only when the visible character count clearly exceeds 100.
+## Rules (apply to judge good_copy and info_correct)
+
+### Part 1: Content Rules (info_correct)
+1. **Factual Accuracy**: All information in REVIEW_NEEDED must match EVAL_INPUT.
+2. **Required Info**:
+    * `...large_txn`: Include name, amount, and larger/smaller.
+    * `...spend_vs_forecast`: Include category, amount, higher/lower, and timeframe (weekly/monthly).
+    * `...uncat_txn`: Include name, amount, and **must ask the user** for the category. IF a suggested category exists in EVAL_INPUT, ask for confirmation; otherwise, ask for the category.
+3. **Category Asking**: ONLY ask the user for a transaction's category if the `key` includes "uncat_txn".
+4. **Absolute Amounts**: Amounts must be communicated as absolute values and not relative (e.g., "higher at $100" or "increased to $100" is CORRECT; "$100 higher" or "up by $100" is WRONG).
+5. **Prepositions**: Inflows *from* establishment, outflows *to* establishment.
+
+            ### Part 2: Formatting Rules (good_copy)
+            1. **Colors**:
+                * **GREEN `g{...}`**: spending lower/expected, income higher/expected, uncategorized **inflow**; for `...large_txn`: **outflow smaller** than usual, **inflow larger** than usual.
+                * **RED `r{...}`**: spending higher/expected, income lower/expected, uncategorized **outflow**; for `...large_txn`: **outflow larger** than usual, **inflow smaller** than usual.
+                * **Forecast Insights**: For `...spend_vs_forecast`, **both the category and the amount** must be colored (same color per insight).
+2. **Links**: `...spend_vs_forecast` category MUST be linked and colored (e.g., `g{[Food](/food/weekly)}`). The timeframe in the link (e.g., `/monthly`) MUST match the timeframe in the text.
+3. **Amounts**: Use `$`, no decimals. **Commas only when absolute value is 1,000 or more** (e.g., `$999` no comma; `$1,000` with comma).
+4. **Syntax**: Balanced `[]`, `{}`, `()`.
+5. **Persona**: Friendly openers (e.g., "Note:", "Heads up!", "Great news!", "Awesome!", "Nice!", "Good job!") and emojis are encouraged.
+
+### Part 3: Character Count Rule (good_copy)
+1. **Strict Limit**: 100 characters maximum per insight. Count only **visible text and spaces**; exclude markup (`g{`, `r{`, `}`, `[]`, `()`, link syntax, and URL).
 """
 
 class CheckJsonOptimizer:
@@ -164,7 +178,7 @@ Output:""")
       # Return the response as-is (could be dict, list, etc.)
       return parsed
     except json.JSONDecodeError as e:
-      raise ValueError(f"Failed to parse JSON response: {e}\nResponse length: {len(output_text)}\nResponse preview: {output_text[:500]}")
+      raise ValueError(f"Failed to parse JSON response: {e}\\nResponse length: {len(output_text)}\\nResponse preview: {output_text[:500]}")
 
 
 def test_with_inputs(eval_input: list, past_review_outcomes: list, review_needed: list, checker: CheckJsonOptimizer = None):
@@ -189,470 +203,107 @@ def test_with_inputs(eval_input: list, past_review_outcomes: list, review_needed
 # Test cases covering different scenarios
 TEST_CASES = [
   {
-    "name": "spend_vs_forecast_incorrect_colors",
+    "name": "spend_vs_forecast_no_color_no_link",
     "eval_input": [
       {
-        "key": "25:spend_vs_forecast",
-        "insight": "Transport spending was slightly reduced this month, now at $203. Car & Fuel and Public Transit both saw slight increases, contributing to the overall change for this time. These are all compared to the forecasts based on average spending for this time."
+        "key": "spend_vs_forecast:2026-02:Dining",
+        "insight": "Dining Out spending increased this week to $150."
+      }
+    ],
+    "review_needed": [
+      {
+        "key": "spend_vs_forecast:2026-02:Dining",
+        "insight": "Heads up! Your Dining Out spending was higher at $150 this week. 🍔"
+      }
+    ],
+    "past_review_outcomes": []
+  },
+  {
+    "name": "spend_vs_forecast_missing_info_and_formatting",
+    "eval_input": [
+      {
+        "key": "44:spend_vs_forecast",
+        "insight": "Shopping spending slightly decreased this month to $219, with Gadgets increasing to $131 and Pets decreasing to $62."
+      }
+    ],
+    "review_needed": [
+      {
+        "key": "44:spend_vs_forecast",
+        "insight": "Your Shopping spending is lower at $219 this month. Gadgets is up at $131."
+      }
+    ],
+    "past_review_outcomes": []
+  },
+  {
+    "name": "provided_example_1_mixed",
+    "eval_input": [
+      {
+        "key": "44:spend_vs_forecast",
+        "insight": "Shopping spending significantly decreased this month, now at $49.\nThese are all compared to the forecasts based on average spending for this time.\n"
       },
       {
-        "key": "9:spent_vs_forecast",
-        "insight": "Service Fees spending significantly decreased last week, now at $3000. These are all compared to forecasts based on average spending."
+        "key": "44:spend_vs_forecast",
+        "insight": "Shopping spending slightly decreased this month to $219, with Gadgets increasing to $131 and Pets decreasing to $62.\nThese are all compared to the forecasts based on average spending for this time.\n"
       }
     ],
-    "review_needed": [{
-      "key": "25:spend_vs_forecast",
-      "insight": "Great news! 🎉 Your r{[Transport spending](/transportation/monthly)} was lower this month at g{$203}!"
-    }, {
-      "key": "9:spent_vs_forecast",
-      "insight": "Awesome! Your r{[Service Fees spending](/bills_service_fees/weekly)} was lower last week at g{$3,000}! 🥳"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "spend_vs_forecast_incorrect_colors_second_item",
-    "eval_input": [
+    "review_needed": [
       {
-        "key": "25:spend_vs_forecast",
-        "insight": "Transport spending was slightly reduced this month, now at $203. Car & Fuel and Public Transit both saw slight increases, contributing to the overall change for this time. These are all compared to the forecasts based on average spending for this time."
+        "key": "44:spend_vs_forecast",
+        "insight": "Great news! Your g{[Shopping spending](/shopping/monthly)} is lower at g{$49} this month! 🥳"
       },
       {
-        "key": "9:spent_vs_forecast",
-        "insight": "Service Fees spending significantly decreased last week, now at $3000. These are all compared to forecasts based on average spending."
+        "key": "44:spend_vs_forecast",
+        "insight": "Your Shopping spending is lower at $219 this month. Gadgets is up at $131."
       }
     ],
-    "review_needed": [{
-      "key": "25:spend_vs_forecast",
-      "insight": "Great news! 🎉 Your r{[Transport spending](/transportation/monthly)} was lower this month at g{$203}!"
-    }, {
-      "key": "9:spent_vs_forecast",
-      "insight": "Awesome! Your r{[Service Fees spending](/bills_service_fees/weekly)} was lower last week at g{$3,000}! 🥳"
-    }],
     "past_review_outcomes": []
   },
   {
-    "name": "spend_vs_forecast_correct_lower_outflow",
+    "name": "provided_example_2_factual_mismatch",
     "eval_input": [
       {
-        "key": "25:spend_vs_forecast",
-        "insight": "Transport spending was slightly reduced this month, now at $203."
+        "key": "spend_vs_forecast:2026-02:Food",
+        "insight": "Dining Out is significantly down this week at $73.\n Groceries is significantly down this week at $67.\n Food is thus significantly down this week to $326.\n"
       }
     ],
-    "review_needed": [{
-      "key": "25:spend_vs_forecast",
-      "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203}!"
-    }],
+    "review_needed": [
+      {
+        "key": "spend_vs_forecast:2026-02:Food",
+        "insight": "Your g{[Dining Out](/meals_dining_out/weekly)} is lower at g{$85}! Your g{[Groceries](/meals_groceries/weekly)} is lower at g{$90}!"
+      }
+    ],
     "past_review_outcomes": []
   },
   {
-    "name": "spend_vs_forecast_correct_higher_outflow",
+    "name": "large_txn_correct",
     "eval_input": [
       {
-        "key": "15:spend_vs_forecast",
-        "insight": "Dining Out spending increased this month, now at $450."
+        "key": "2025-02-14:2001:large_txn",
+        "insight": "Outflow to APPLE STORE of $1,299 is larger than usual."
       }
     ],
-    "review_needed": [{
-      "key": "15:spend_vs_forecast",
-      "insight": "Heads up! Your r{[Dining Out spending](/meals_dining_out/monthly)} was higher this month at r{$450}."
-    }],
-    "past_review_outcomes": [
+    "review_needed": [
       {
-        "output": {
-          "key": "15:spend_vs_forecast",
-          "insight": "Your Dining Out spending was higher this month at $450."
-        },
-        "good_copy": False,
-        "info_correct": False,
-        "eval_text": "good_copy is False: Missing category link. info_correct is False: Category must be linked for spend_vs_forecast insights."
-      }
-    ]
-  },
-  {
-    "name": "spend_vs_forecast_correct_higher_inflow",
-    "eval_input": [
-      {
-        "key": "30:spend_vs_forecast",
-        "insight": "Salary income increased this month, now at $5,500."
+        "key": "2025-02-14:2001:large_txn",
+        "insight": "Heads up! r{$1,299} to APPLE STORE is larger than usual. 👀"
       }
     ],
-    "review_needed": [{
-      "key": "30:spend_vs_forecast",
-      "insight": "Awesome! Your g{[Salary income](/income_salary/monthly)} was higher this month at g{$5,500}! 🎉"
-    }],
     "past_review_outcomes": []
   },
   {
-    "name": "spend_vs_forecast_correct_lower_inflow",
+    "name": "uncat_txn_missing_ask",
     "eval_input": [
       {
-        "key": "31:spend_vs_forecast",
-        "insight": "Sidegig income decreased this month, now at $800."
+        "key": "2025-02-14:3001:uncat_txn",
+        "insight": "Uncategorized outflow of $85 to STEAMGAMES. Suggested category: Entertainment."
       }
     ],
-    "review_needed": [{
-      "key": "31:spend_vs_forecast",
-      "insight": "Note: Your r{[Sidegig income](/income_sidegig/monthly)} was lower this month at r{$800}."
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "large_txn_outflow_larger_red",
-    "eval_input": [
+    "review_needed": [
       {
-        "key": "-50:large_txn",
-        "insight": "Outflow transaction to Amazon for $2,500 is larger than usual."
+        "key": "2025-02-14:3001:uncat_txn",
+        "insight": "You spent r{$85} at STEAMGAMES. 🕹️"
       }
     ],
-    "review_needed": [{
-      "key": "-50:large_txn",
-      "insight": "Heads up! r{$2,500} to Amazon is larger than usual. 👀"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "large_txn_outflow_smaller_green",
-    "eval_input": [
-      {
-        "key": "-51:large_txn",
-        "insight": "Outflow transaction to Target for $150 is smaller than usual."
-      }
-    ],
-    "review_needed": [{
-      "key": "-51:large_txn",
-      "insight": "Nice! g{$150} to Target is smaller than usual. 👍"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "large_txn_inflow_larger_green",
-    "eval_input": [
-      {
-        "key": "50:large_txn",
-        "insight": "Inflow transaction from Employer for $6,000 is larger than usual."
-      }
-    ],
-    "review_needed": [{
-      "key": "50:large_txn",
-      "insight": "Awesome! g{$6,000} from Employer is larger than usual! 🎉"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "large_txn_inflow_smaller_red",
-    "eval_input": [
-      {
-        "key": "51:large_txn",
-        "insight": "Inflow transaction from Freelance Client for $1,200 is smaller than usual."
-      }
-    ],
-    "review_needed": [{
-      "key": "51:large_txn",
-      "insight": "Note: r{$1,200} from Freelance Client is smaller than usual."
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "uncat_txn_outflow_red",
-    "eval_input": [
-      {
-        "key": "-100:uncat_txn",
-        "insight": "Uncategorized outflow transaction for Chime for $1,000 with a likely category of Gadgets."
-      }
-    ],
-    "review_needed": [{
-      "key": "-100:uncat_txn",
-      "insight": "Heads up! 🧐 r{$1,000} outflow to Chime. Is this for Gadgets? Let me know! 👇"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "uncat_txn_inflow_green",
-    "eval_input": [
-      {
-        "key": "100:uncat_txn",
-        "insight": "Uncategorized inflow transaction from PayPal for $500 with a likely category of Sidegig."
-      }
-    ],
-    "review_needed": [{
-      "key": "100:uncat_txn",
-      "insight": "Hey! g{$500} inflow from PayPal. Is this for Sidegig? 👇"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "uncat_txn_no_category_suggestion",
-    "eval_input": [
-      {
-        "key": "-101:uncat_txn",
-        "insight": "Uncategorized outflow transaction for Unknown Merchant for $250."
-      }
-    ],
-    "review_needed": [{
-      "key": "-101:uncat_txn",
-      "insight": "r{$250} to Unknown Merchant. How should I categorize this? 👇"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "multiple_categories_mixed_groceries",
-    "eval_input": [
-      {
-        "key": "20:spend_vs_forecast",
-        "insight": "Groceries spending increased this week, now at $180."
-      },
-      {
-        "key": "-60:large_txn",
-        "insight": "Outflow transaction to Best Buy for $800 is larger than usual."
-      },
-      {
-        "key": "-102:uncat_txn",
-        "insight": "Uncategorized outflow transaction for Venmo for $75."
-      }
-    ],
-    "review_needed": [{
-      "key": "20:spend_vs_forecast",
-      "insight": "Your r{[Groceries spending](/meals_groceries/weekly)} was higher this week at r{$180}."
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "multiple_categories_mixed_large_txn",
-    "eval_input": [
-      {
-        "key": "20:spend_vs_forecast",
-        "insight": "Groceries spending increased this week, now at $180."
-      },
-      {
-        "key": "-60:large_txn",
-        "insight": "Outflow transaction to Best Buy for $800 is larger than usual."
-      },
-      {
-        "key": "-102:uncat_txn",
-        "insight": "Uncategorized outflow transaction for Venmo for $75."
-      }
-    ],
-    "review_needed": [{
-      "key": "-60:large_txn",
-      "insight": "r{$800} to Best Buy is larger than usual. 👀"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "multiple_categories_mixed_uncat_txn",
-    "eval_input": [
-      {
-        "key": "20:spend_vs_forecast",
-        "insight": "Groceries spending increased this week, now at $180."
-      },
-      {
-        "key": "-60:large_txn",
-        "insight": "Outflow transaction to Best Buy for $800 is larger than usual."
-      },
-      {
-        "key": "-102:uncat_txn",
-        "insight": "Uncategorized outflow transaction for Venmo for $75."
-      }
-    ],
-    "review_needed": [{
-      "key": "-102:uncat_txn",
-      "insight": "r{$75} to Venmo. How should I categorize this? 👇"
-    }],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "character_limit_exceeded",
-    "eval_input": [
-      {
-        "key": "25:spend_vs_forecast",
-        "insight": "Transport spending was slightly reduced this month, now at $203."
-      }
-    ],
-    "review_needed": [{
-      "key": "25:spend_vs_forecast",
-      "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203}! This is excellent progress and shows you're managing your transportation costs well!"
-    }],
-    "past_review_outcomes": [
-      {
-        "output": {
-          "key": "25:spend_vs_forecast",
-          "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203}! This is excellent progress and shows you're managing your transportation costs well!"
-        },
-        "good_copy": True,
-        "info_correct": False,
-        "eval_text": "info_correct is False: Exceeds 100 character limit. Current length: 145 characters."
-      }
-    ]
-  },
-  {
-    "name": "missing_category_link",
-    "eval_input": [
-      {
-        "key": "25:spend_vs_forecast",
-        "insight": "Transport spending was slightly reduced this month, now at $203."
-      }
-    ],
-    "review_needed": [{
-      "key": "25:spend_vs_forecast",
-      "insight": "Great news! 🎉 Your Transport spending was lower this month at g{$203}!"
-    }],
-    "past_review_outcomes": [
-      {
-        "output": {
-          "key": "25:spend_vs_forecast",
-          "insight": "Great news! 🎉 Your Transport spending was lower this month at g{$203}!"
-        },
-        "good_copy": True,
-        "info_correct": False,
-        "eval_text": "info_correct is False: Missing required category link for spend_vs_forecast. Category 'Transport spending' must be linked with format: g{[display text](/category/timeframe)} or r{[display text](/category/timeframe)}."
-      }
-    ]
-  },
-  {
-    "name": "wrong_timeframe",
-    "eval_input": [
-      {
-        "key": "9:spent_vs_forecast",
-        "insight": "Service Fees spending significantly decreased last week, now at $3000."
-      }
-    ],
-    "review_needed": [{
-      "key": "9:spent_vs_forecast",
-      "insight": "Awesome! Your g{[Service Fees spending](/bills_service_fees/monthly)} was lower last week at g{$3,000}! 🥳"
-    }],
-    "past_review_outcomes": [
-      {
-        "output": {
-          "key": "9:spent_vs_forecast",
-          "insight": "Awesome! Your g{[Service Fees spending](/bills_service_fees/monthly)} was lower last week at g{$3,000}! 🥳"
-        },
-        "good_copy": True,
-        "info_correct": False,
-        "eval_text": "info_correct is False: Timeframe mismatch. Insight mentions 'last week' but link uses '/monthly'. The timeframe in the link must match the timeframe mentioned in the insight text."
-      }
-    ]
-  },
-  {
-    "name": "monetary_format_incorrect",
-    "eval_input": [
-      {
-        "key": "25:spend_vs_forecast",
-        "insight": "Transport spending was slightly reduced this month, now at $203."
-      }
-    ],
-    "review_needed": [{
-      "key": "25:spend_vs_forecast",
-      "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203.00}!"
-    }],
-    "past_review_outcomes": [
-      {
-        "output": {
-          "key": "25:spend_vs_forecast",
-          "insight": "Great news! 🎉 Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$203.00}!"
-        },
-        "good_copy": True,
-        "info_correct": False,
-        "eval_text": "info_correct is False: Incorrect monetary format. Should be '$203' (no decimals), not '$203.00'. Monetary format must be: $X,XXX (commas, currency, no decimals)."
-      }
-    ]
-  },
-  {
-    "name": "past_review_outcomes_wrong_color_persists",
-    "eval_input": [
-      {
-        "key": "spent_vs_forecast:2025-12:Health",
-        "insight": "Medical & Pharmacy is significantly down last month at now $107.  Health is thus down last month to $169."
-      }
-    ],
-    "review_needed": [{
-      "key": "spent_vs_forecast:2025-12:Health",
-      "insight": "Your r{[Medical & Pharmacy](/health_medical_pharmacy/monthly)} spending was lower last month at g{$107}! 🎉"
-    }],
-    "past_review_outcomes": [
-      {
-        "output": {
-          "key": "spent_vs_forecast:2025-12:Health",
-          "insight": "Your r{[Medical & Pharmacy spending](/health_medical_pharmacy/monthly)} was lower than expected at g{$107} last month! 🥳"
-        },
-        "good_copy": False,
-        "info_correct": False,
-        "eval_text": "good_copy is False: Insight omits core information (Health spending of $169). info_correct is False: Exceeds 100 characters. Category 'Medical & Pharmacy' is red, but should be green for an outflow lower than forecast."
-      },
-      {
-        "output": {
-          "key": "spent_vs_forecast:2025-12:Health",
-          "insight": "Your r{[Medical & Pharmacy](/health_medical_pharmacy/monthly)} spending was lower last month at g{$107}! 🎉"
-        },
-        "good_copy": False,
-        "info_correct": False,
-        "eval_text": "Medical & Pharmacy category should be green."
-      }
-    ]
-  },
-  {
-    "name": "past_review_outcomes_issue_fixed",
-    "eval_input": [
-      {
-        "key": "spent_vs_forecast:2025-12:Health",
-        "insight": "Medical & Pharmacy is significantly down last month at now $107.  Health is thus down last month to $169."
-      }
-    ],
-    "review_needed": [{
-      "key": "spent_vs_forecast:2025-12:Health",
-      "insight": "Your g{[Medical & Pharmacy](/health_medical_pharmacy/monthly)} spending was lower last month at g{$107}! 🎉"
-    }],
-    "past_review_outcomes": [
-      {
-        "output": {
-          "key": "spent_vs_forecast:2025-12:Health",
-          "insight": "Your r{[Medical & Pharmacy](/health_medical_pharmacy/monthly)} spending was lower last month at g{$107}! 🎉"
-        },
-        "good_copy": False,
-        "info_correct": False,
-        "eval_text": "Medical & Pharmacy category should be green."
-      }
-    ]
-  },
-  {
-    "name": "past_review_outcomes_missing_info_persists",
-    "eval_input": [
-      {
-        "key": "spent_vs_forecast:2025-12:Health",
-        "insight": "Medical & Pharmacy is significantly down last month at now $107.  Health is thus down last month to $169."
-      }
-    ],
-    "review_needed": [{
-      "key": "spent_vs_forecast:2025-12:Health",
-      "insight": "Your g{[Medical & Pharmacy](/health_medical_pharmacy/monthly)} spending was lower last month at g{$107}! 🎉"
-    }],
-    "past_review_outcomes": [
-      {
-        "output": {
-          "key": "spent_vs_forecast:2025-12:Health",
-          "insight": "Your r{[Medical & Pharmacy spending](/health_medical_pharmacy/monthly)} was lower than expected at g{$107} last month! 🥳"
-        },
-        "good_copy": False,
-        "info_correct": False,
-        "eval_text": "good_copy is False: Insight omits core information (Health spending of $169). info_correct is False: Exceeds 100 characters. Category 'Medical & Pharmacy' is red, but should be green for an outflow lower than forecast."
-      }
-    ]
-  },
-  {
-    "name": "zero_amount_valid",
-    "eval_input": [{"key": "25:spend_vs_forecast", "insight": "Transport spending was zero this month, now at $0."}],
-    "review_needed": [{"key": "25:spend_vs_forecast", "insight": "Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$0}!"}],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "comma_only_when_1000_or_more",
-    "eval_input": [{"key": "25:spend_vs_forecast", "insight": "Transport spending was slightly reduced this month, now at $999."}],
-    "review_needed": [{"key": "25:spend_vs_forecast", "insight": "Great news! Your g{[Transport spending](/transportation/monthly)} was lower this month at g{$999}!"}],
-    "past_review_outcomes": []
-  },
-  {
-    "name": "comma_required_when_1000_or_more",
-    "eval_input": [{"key": "9:spent_vs_forecast", "insight": "Service Fees spending decreased last week, now at $1000."}],
-    "review_needed": [{"key": "9:spent_vs_forecast", "insight": "Awesome! Your g{[Service Fees spending](/bills_service_fees/weekly)} was lower last week at g{$1000}!"}],
     "past_review_outcomes": []
   }
 ]
@@ -672,7 +323,7 @@ def run_test(test_case: dict, checker: CheckJsonOptimizer = None):
   if checker is None:
     checker = CheckJsonOptimizer()
   
-  print(f"\n{'='*80}")
+  print(f"\\n{'='*80}")
   print(f"Running test: {test_case['name']}")
   print(f"{'='*80}")
   
@@ -716,7 +367,7 @@ def run_test(test_case: dict, checker: CheckJsonOptimizer = None):
 Output:"""
     print(f"Input passed to LLM:")
     print(request_text)
-    print(f"\n{'='*80}")
+    print(f"\\n{'='*80}")
     
     result = checker.generate_response(eval_input, past_review_outcomes, review_needed)
     print(f"Result:")
@@ -760,17 +411,28 @@ def run_tests(test_names: list = None, checker: CheckJsonOptimizer = None):
     else:
       passed += 1
   
-  print(f"\n{'='*80}")
+  print(f"\\n{'='*80}")
   print(f"Test Summary: {passed} passed, {failed} failed out of {len(tests_to_run)} tests")
   print(f"{'='*80}")
   
   return results
 
 
+# Batches for testing
+BATCHES = [
+  ["spend_vs_forecast_no_color_no_link", "spend_vs_forecast_missing_info_and_formatting"],
+  ["provided_example_1_mixed", "provided_example_2_factual_mismatch"],
+  ["large_txn_correct", "uncat_txn_missing_ask"],
+  ["spend_vs_forecast_no_color_no_link", "provided_example_1_mixed"]
+]
+
 def main():
   """Main function to test the checker optimizer. Pass batch 1..4 to run that batch."""
   checker = CheckJsonOptimizer()
   batch_num = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+  if batch_num < 1 or batch_num > len(BATCHES):
+    print(f"Invalid batch number. Please choose from 1 to {len(BATCHES)}.")
+    return
   batch_names = BATCHES[batch_num - 1]
   print(f"Running Batch {batch_num} ({len(batch_names)} tests): {batch_names}")
   run_tests(batch_names, checker=checker)

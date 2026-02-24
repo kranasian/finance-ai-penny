@@ -39,7 +39,8 @@ def retrieve_subscriptions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
     
     df['output_category'] = df['category'].apply(format_category)
   
-  log(f"**Retrieved Subscription Transactions** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Retrieved Subscription Transactions** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return df
 
 
@@ -50,7 +51,8 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> str:
     str: Newline-separated subscription descriptions (max MAX_SUBSCRIPTIONS). 
       If there are more subscriptions, appends a message like "n more subscriptions."
   """
-  log(f"**Subscription Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Subscription Names/Amounts**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")
@@ -215,13 +217,15 @@ def subscription_names_and_amounts(df: pd.DataFrame, template: str) -> str:
     utterance_text += f"\n{remaining_count} more subscription{'s' if remaining_count != 1 else ''}."
   
   log(f"**Returning** {len(utterances)} utterances. Has more: {has_more}")
-  log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
+  utterances_str = "`\n  - `".join(utterances)
+  log(f"**Utterances**:\n  - `{utterances_str}`")
   return utterance_text
 
 
 def utter_subscription_totals(df: pd.DataFrame, template: str) -> str:
   """Calculate total subscription transaction amounts and return formatted string"""
-  log(f"**Subscription Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Subscription Totals**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")

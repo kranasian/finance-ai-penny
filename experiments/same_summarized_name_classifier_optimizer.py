@@ -43,55 +43,60 @@ SCHEMA = types.Schema(
 
 SYSTEM_PROMPT = """You are an expert at determining if two transaction names represent the same kind of charge from the same entity, for the purpose of financial categorization.
 
+## Decision Axes (maximize discrimination on these)
+
+Apply these axes consistently. When any axis distinguishes left from right, the result is **"different"**:
+
+1. **Transaction type:** Different payment or transfer methods are different (e.g. mobile vs physical check, check vs cash, retry vs standard payment).
+2. **Corrected identity via raw_names:** `short_name` and `description` may be wrong. Use `raw_names` on both sides to infer the true merchant or transaction type; verify whether left-group transactions truly belong with right-group before judging.
+3. **Inflows vs outflows:** If one side is inflow and the other outflow (or inferable as such), result is **"different"**.
+4. **Specific vs generic:** A transaction that indicates a **specific product, service, or tier** from a provider is **different** from a transaction that indicates only the **provider or brand**. Same brand with only location or branch in the name is **same**.
+5. **ACH vs non-ACH:** ACH transactions are **different** from non-ACH (card, wire, etc.). Do not merge them.
+6. **Physical vs online:** For brands that have both physical and online presence, physical-store transactions and online-store transactions are **different**. If the establishment is online-only, ".com" or domain in the name alone does not make them different → **same**.
+7. **P2P memo/purpose:** For person-to-person transfers, use the **memo or stated purpose** to decide: if the purpose makes one transfer semantically distinct from the other, treat as **different**. Same recipient with same generic purpose → **same**; specific purpose vs no purpose or different purpose → **different**.
+
 ## Core Task
 
-Your decision-making process must follow these two questions:
-1. Can the `short_name` from the left item be used to accurately and completely describe all transactions in the right item's set?
-2. Can the `short_name` from the right item be used to accurately and completely describe all transactions in the left item's set?
+**Step 1 — Correct using raw_names:** Use `raw_names` on both left and right to infer the true merchant or transaction type. Do not trust `short_name` or `description` alone. Verify that left-group and right-group transactions truly belong together; only then apply the interchangeability test.
 
-- If the answer to **both** questions is **yes**, the result is **"same"**. This means the names are effectively interchangeable.
-- If the answer to **either or both** questions is **no**, the result is **"different"**.
+**Step 2 — Interchangeability:** For the *corrected* understanding of left and right:
+1. Can the left (corrected) name accurately and completely describe all transactions in the right set?
+2. Can the right (corrected) name accurately and completely describe all transactions in the left set?
 
-## Key Considerations
+- If **both** are yes → **"same"**.
+- If **either** is no → **"different"**.
 
-- **Ignore Geographic Locations**: Transactions at different physical locations should be considered the **same**.
+## Critical Rules (apply before interchangeability)
+
+- **Specificity:** Sub-brands, departments, and specific product or service lines are **different** from the establishment's generic name. Specific service from a provider ≠ transaction showing only the provider.
+
+- **Location and branch only:** If the **only** difference is physical location, city, state, or branch (or one name has a location and the other is the generic brand), result is **"same"**. Do not treat location in the name as a sub-brand.
+
+- **Transaction type:** Different payment or transfer types are **different**: mobile vs physical check, check vs cash, retry vs standard, ACH vs non-ACH. For **merchant** line items, ignore noise like "Payment", "Ref", reference numbers, card suffixes, and location — same merchant → **same** unless the transaction type is fundamentally different (pending vs settled, retry vs standard).
+
+- **ACH vs non-ACH:** ACH and non-ACH are **different**. Do not merge.
+
+- **Pending vs non-pending:** Pending (authorization) and posted/settled are **different**. Do not merge.
+
+- **Inflows vs outflows:** One side inflow and the other outflow → **"different"**.
+
+- **Online vs physical:** Unless the establishment is online-only, physical store and online store of the same brand are **different**. Online-only: ".com" or domain alone → **same**.
+
+- **P2P memo:** For person-to-person transfers, use memo/purpose: distinct purpose → **different**; same recipient, same generic purpose → **same**; specific purpose vs no or different purpose → **different**.
 
 ## Analysis Heuristics
 
-**1. Marketplaces vs. Payment Processors:**
-- **Marketplaces**: Transactions made through a distinct marketplace or platform are **different** from a direct transaction with a merchant. The marketplace is a critical part of the transaction's context.
-- **Payment Processors**: The involvement of a pure payment processor should be **ignored**. These do not change the fundamental nature of the transaction.
-
-**2. Product/Service Distinction:**
-- Transactions are **different** if they represent distinct products, service tiers, or types of charges from the same company. Renaming one to the other would be inaccurate.
-
-**3. Online vs. Physical Retail:**
-- Transactions from an online store are **different** from transactions at a physical store of the same brand. The channel is a distinguishing factor.
-
-**4. Payment & Transfer Specificity:**
-- **Direction**: Transactions with different directions are **different**.
-- **Type**: Specific transfer types are **different** from each other and from general transfers.
-- **Memo/Purpose**: For Person-to-Person (P2P) transfers, a transaction with a specific purpose is **different** from a general transfer to the same person.
-
-**5. Sub-brands and Departments:**
-- **Treat sub-brands and departments as the same entity.**
-
-**6. Name & Description Analysis (Supporting Evidence):**
-- Use `short_name`, `raw_names`, and `description` to determine if one name is simply a variation of the other or if they represent fundamentally different things.
+- **Marketplaces:** A transaction through a distinct marketplace or platform is **different** from a direct transaction with the merchant. Ignore pure payment processor names when comparing merchant identity only.
+- **Product/Service tier:** Distinct products, service tiers, or charge types from the same company → **different**.
+- **Name evidence:** Use `short_name`, `raw_names`, and `description` to correct misprocessed names and to apply the axes above.
 
 ## Output Format & Reasoning Guide
 
-Provide a JSON array. For each item, the `reasoning` must be a **concise, single phrase** that states the decisive factor.
-
-JSON array where each element contains:
-- `match_id`: Same as input
-- `reasoning`: A single, concise phrase explaining the core reason.
-- `result`: "same" or "different"
-- `confidence`: "high", "medium", or "low"
+Output a JSON array. Each element: `match_id`, `reasoning` (one concise phrase), `result` ("same" or "different"), `confidence` ("high", "medium", "low").
 
 ## Rules
-- Process all pairs and maintain input order.
-- Base your decision on the Core Task and Analysis Heuristics.
+- Process all pairs in input order.
+- Apply Critical Rules first, then Core Task.
 - Be conservative with "high" confidence.
 - Reasoning must be a single, concise phrase.
 """
@@ -109,7 +114,7 @@ class SameSummarizedNameClassifierOptimizer:
     self.client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
     
     # Model Configuration
-    self.thinking_budget = 4096
+    self.thinking_budget = 0
     self.model_name = model_name
     
     # Generation Configuration Constants
@@ -218,22 +223,44 @@ output:""")
       raise Exception(f"Failed to get models: {str(e)}")
 
 
-def _run_test_with_logging(transaction_history_pairs: list, detector: SameSummarizedNameClassifierOptimizer = None):
+def _run_sandbox_check(transaction_history_pairs: list, result: list, label: str = "Sandbox"):
+  """Run checker on classifier output (Sandbox Execution)."""
+  if result is None:
+    return
+  try:
+    from check_same_summarized_name_classifier_optimizer import (
+      run_test_case,
+      CheckSameSummarizedNameClassifier,
+    )
+    checker = CheckSameSummarizedNameClassifier()
+    run_test_case(label, transaction_history_pairs, result, [], checker)
+  except Exception as e:
+    print(f"Sandbox check failed: {e}")
+    import traceback
+    print(traceback.format_exc())
+
+
+def _run_test_with_logging(
+  transaction_history_pairs: list,
+  detector: SameSummarizedNameClassifierOptimizer = None,
+  run_sandbox: bool = True,
+):
   """
   Internal helper function that runs a test with consistent logging.
-  
+
   Args:
     transaction_history_pairs: List of establishment pairs to analyze
     detector: Optional SameSummarizedNameClassifierOptimizer instance. If None, creates a new one.
-    
+    run_sandbox: If True, run checker on the classifier output after detection.
+
   Returns:
     The detection results as a list
   """
   import json
-  
+
   if detector is None:
     detector = SameSummarizedNameClassifierOptimizer()
-  
+
   # Print the input
   print("=" * 80)
   print("INPUT:")
@@ -241,10 +268,10 @@ def _run_test_with_logging(transaction_history_pairs: list, detector: SameSummar
   print(json.dumps(transaction_history_pairs, indent=2))
   print("=" * 80)
   print()
-  
+
   try:
     result = detector.detect_similarity(transaction_history_pairs)
-    
+
     # Print the output
     print("=" * 80)
     print("OUTPUT:")
@@ -252,7 +279,14 @@ def _run_test_with_logging(transaction_history_pairs: list, detector: SameSummar
     print(json.dumps(result, indent=2))
     print("=" * 80)
     print()
-    
+
+    if run_sandbox and result:
+      print("=" * 80)
+      print("SANDBOX EXECUTION (Checker):")
+      print("=" * 80)
+      _run_sandbox_check(transaction_history_pairs, result, "Optimizer run")
+      print()
+
     return result
   except Exception as e:
     print(f"**Error**: {str(e)}")
@@ -268,52 +302,49 @@ def test_batch_1(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   transaction_history_pairs = [
     {
-      "match_id": "2112:2113",
+      "match_id": "MSFT-01",
       "left": {
-        "short_name": "OpenAI",
-        "raw_names": [
-          "OPENAI",
-          "OPENAI +14158799686 USA"
-        ],
-        "description": "sells access to its large language model API, including text generation, translation, and code completion",
-        "amounts": [6.00, 5.32]
+        "short_name": "Microsoft",
+        "raw_names": ["MICROSOFT", "Microsoft Corp Billing"],
+        "description": "sells software licenses, cloud services, and developer tools",
+        "amounts": [12.00, 8.50]
       },
       "right": {
-        "short_name": "OpenAI Chatgpt",
-        "raw_names": ["Openai Chatgpt Subscr"],
-        "description": "sells subscriptions to use the AI chatbot for various tasks such as writing, coding, and problem-solving",
-        "amounts": [21.28, 20.00]
+        "short_name": "Microsoft Xbox Game Pass",
+        "raw_names": ["Xbox Game Pass Ultimate"],
+        "description": "sells gaming subscription for console and PC access",
+        "amounts": [14.99, 14.99]
       }
     },
     {
-        "match_id": "SPOT-01",
-        "left": {
-            "short_name": "Spotify Silver Plan",
-            "raw_names": ["Spotify Silver Plan"],
-            "description": "Subscription for music streaming service.",
-            "amounts": [9.99]
-        },
-        "right": {
-            "short_name": "Spotify Platinum",
-            "raw_names": ["SPOTIFY PLATINUM"],
-            "description": "Premium subscription for music and podcast streaming.",
-            "amounts": [15.99]
-        }
+      "match_id": "DISNEY-01",
+      "left": {
+        "short_name": "Disney+ Basic",
+        "raw_names": ["Disney Plus Monthly"],
+        "description": "Subscription for streaming Disney movies and series.",
+        "amounts": [7.99]
+      },
+      "right": {
+        "short_name": "Disney+ Bundle",
+        "raw_names": ["DISNEY PLUS HULU ESPN"],
+        "description": "Premium bundle including Disney, Hulu, and ESPN+ streaming.",
+        "amounts": [14.99]
+      }
     },
     {
-        "match_id": "GRAB-01",
-        "left": {
-            "short_name": "Grab: Wendy's",
-            "raw_names": ["GrabFood*Wendy's"],
-            "description": "Food delivery from a fast-food chain.",
-            "amounts": [12.50]
-        },
-        "right": {
-            "short_name": "Wendy's",
-            "raw_names": ["WENDY'S"],
-            "description": "Fast-food restaurant specializing in hamburgers.",
-            "amounts": [18.75]
-        }
+      "match_id": "DD-01",
+      "left": {
+        "short_name": "DoorDash: Chipotle",
+        "raw_names": ["DOORDASH *CHIPOTLE"],
+        "description": "Food delivery order placed through DoorDash from a Mexican grill chain.",
+        "amounts": [22.40]
+      },
+      "right": {
+        "short_name": "Chipotle",
+        "raw_names": ["CHIPOTLE MEXICAN GRILL"],
+        "description": "Fast-casual Mexican restaurant for dine-in and takeout.",
+        "amounts": [18.00, 14.25]
+      }
     }
   ]
   return _run_test_with_logging(transaction_history_pairs, detector)
@@ -325,48 +356,48 @@ def test_batch_2(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   transaction_history_pairs = [
     {
-        "match_id": "FB-01",
-        "left": {
-            "short_name": "Facebook.com",
-            "raw_names": ["FACEBOOK.COM"],
-            "description": "Social media platform for connecting with friends and family.",
-            "amounts": [10.00]
-        },
-        "right": {
-            "short_name": "Facebook",
-            "raw_names": ["Facebook"],
-            "description": "Online social networking service.",
-            "amounts": [15.50]
-        }
-    },
-    {
-        "match_id": "PP-01",
-        "left": {
-            "short_name": "Paypal Retry Payment",
-            "raw_names": ["PAYPAL *RETRY PYMT"],
-            "description": "A second attempt for a PayPal transaction.",
-            "amounts": [45.00]
-        },
-        "right": {
-            "short_name": "Paypal Payment",
-            "raw_names": ["PayPal Payment"],
-            "description": "A standard payment made via PayPal.",
-            "amounts": [45.00]
-        }
-    },
-    {
-      "match_id": "2124:2125",
+      "match_id": "NETFLIX-01",
       "left": {
-        "short_name": "Marco's Pizza",
-        "raw_names": ["Marco's Pizza"],
-        "description": "pizza restaurant that sells a variety of pizzas, subs, wings, sides, and desserts",
-        "amounts": [70.92, 31.37]
+        "short_name": "Netflix.com",
+        "raw_names": ["NETFLIX.COM"],
+        "description": "Streaming service for movies and television series.",
+        "amounts": [15.49]
       },
       "right": {
-        "short_name": "Marcos Pizza",
-        "raw_names": ["MARCOS PIZZA REF# 505100025146 WAXAHACHIE,TX Card ending in 3458"],
-        "description": "A payment for food and beverages at a pizza restaurant",
-        "amounts": [16.23, 22.70, 27.48, 23.97]
+        "short_name": "Netflix",
+        "raw_names": ["Netflix"],
+        "description": "Online video streaming subscription.",
+        "amounts": [15.49, 15.49]
+      }
+    },
+    {
+      "match_id": "VENMO-01",
+      "left": {
+        "short_name": "Venmo Retry Payment",
+        "raw_names": ["VENMO *RETRY PAYMENT"],
+        "description": "A second attempt for a Venmo transaction.",
+        "amounts": [32.00]
+      },
+      "right": {
+        "short_name": "Venmo Payment",
+        "raw_names": ["Venmo payment"],
+        "description": "A standard payment made via Venmo.",
+        "amounts": [32.00]
+      }
+    },
+    {
+      "match_id": "PAPA-01",
+      "left": {
+        "short_name": "Papa John's Pizza",
+        "raw_names": ["Papa John's Pizza"],
+        "description": "pizza restaurant that sells pizzas, sides, and drinks",
+        "amounts": [28.50, 34.20]
+      },
+      "right": {
+        "short_name": "Papa Johns Pizza",
+        "raw_names": ["PAPA JOHNS REF# 601200089012 AUSTIN,TX Card ending in 8821"],
+        "description": "A payment for food at a pizza restaurant",
+        "amounts": [19.99, 24.00, 31.45]
       }
     }
   ]
@@ -379,53 +410,52 @@ def test_batch_3(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   transaction_history_pairs = [
     {
-      "match_id": "2130:2131",
+      "match_id": "TGT-01",
       "left": {
-        "short_name": "Old Navy Kids",
-        "raw_names": ["Old Navy Kids"],
-        "description": "sells clothing, shoes, and accessories for children",
-        "amounts": [39.09, 44.03, 50.88]
+        "short_name": "Target Optical",
+        "raw_names": ["Target Optical"],
+        "description": "sells eyewear, contact lenses, and eye exams within Target stores",
+        "amounts": [89.00, 120.50]
       },
       "right": {
-        "short_name": "Old Navy",
-        "raw_names": ["Old Navy"],
-        "description": "sells clothing and accessories for men, women, and children",
-        "amounts": [145.54, 189.48, 227.18]
+        "short_name": "Target",
+        "raw_names": ["Target"],
+        "description": "sells general merchandise, groceries, and household goods",
+        "amounts": [45.00, 78.30, 112.00]
       }
     },
     {
-      "match_id": "2114:2115",
+      "match_id": "HILTON-01",
       "left": {
-        "short_name": "MGM Grand",
-        "raw_names": ["MGM Grand"],
-        "description": "sells hotel rooms, casino gaming, dining, entertainment, and other resort amenities",
-        "amounts": [128.93]
+        "short_name": "Hilton Garden Inn",
+        "raw_names": ["Hilton Garden Inn"],
+        "description": "sells hotel rooms, breakfast, and meeting space at midscale properties",
+        "amounts": [142.00]
       },
       "right": {
-        "short_name": "MGM Grand Detroit",
-        "raw_names": ["Mgm grand detroi"],
-        "description": "sells various types of casino games, including slots, table games, and poker",
-        "amounts": [506.23, 1023.44, 1057.96, 1166.57, 1181.45, 1168.88]
+        "short_name": "Hilton Garden Inn Phoenix",
+        "raw_names": ["HILTON GARDEN INN PHOENIX AIRPORT"],
+        "description": "sells hotel accommodations and amenities at an airport location",
+        "amounts": [168.00, 155.00]
       }
     },
     {
-      "match_id": "2126:2127",
+      "match_id": "SBUX-01",
       "left": {
-        "short_name": "Cleveland Marriott",
+        "short_name": "Starbucks Downtown Seattle",
         "raw_names": [
-          "MOBILE PURCHASE 0501 CLE EMBERS 681115 CLEVELAND OH XXXXX8751XXXXXXXXXX5621",
-          "MOBILE PURCHASE CLE EMBERS 681115 CLEVELAND OH ON 05/01",
-          "MOBILE PURCHASE CLE SPORTS ST1576 CLEVELAND OH ON 05/01",
-          "MOBILE PURCHASE CLEVELAND MARRIOT CLEVELAND OH ON 04/30" 
+          "STARBUCKS STORE 18492 SEATTLE WA",
+          "STARBUCKS 18492 DOWNTOWN SEATTLE",
+          "STARBUCKS SEATTLE WA"
         ],
-        "description": "sells hotel accommodations, meeting rooms, and other services",
-        "amounts": [5.40, 46.04, 23.67, 10.72, 43.88]
+        "description": "sells coffee, espresso drinks, and light food at a café location",
+        "amounts": [5.85, 7.20, 6.45, 4.90]
       },
       "right": {
-        "short_name": "Marriott",
-        "raw_names": ["Marriott"],
-        "description": "sells hotel accommodations, resort stays, and other travel-related services",
-        "amounts": [23.47, 6.43, 7.54]
+        "short_name": "Starbucks",
+        "raw_names": ["Starbucks"],
+        "description": "sells coffee and café beverages and food",
+        "amounts": [6.00, 8.50]
       }
     }
   ]
@@ -438,53 +468,52 @@ def test_batch_4(detector: SameSummarizedNameClassifierOptimizer = None):
   """
   transaction_history_pairs = [
     {
-        "match_id": "ZELLE-01",
-        "left": {
-            "short_name": "Zelle to Gabby",
-            "raw_names": ["Zelle Transfer to Gabby"],
-            "description": "Peer-to-peer money transfer.",
-            "amounts": [50.00]
-        },
-        "right": {
-            "short_name": "Zelle to Gabby: Jollibee",
-            "raw_names": ["Zelle to Gabby: Jollibee"],
-            "description": "Peer-to-peer money transfer with a memo.",
-            "amounts": [25.30]
-        }
-    },
-    {
-      "match_id": "2128:2129",
+      "match_id": "CASHAPP-01",
       "left": {
-        "short_name": "Sales",
-        "raw_names": ["Sales"],
-        "description": "Undetermined",
-        "amounts": [1581.33, 2366.88, 3487.34, 1582.67, 3181.54, 439.55]
+        "short_name": "Cash App to Marcus",
+        "raw_names": ["Cash App payment to Marcus"],
+        "description": "Peer-to-peer money transfer.",
+        "amounts": [75.00]
       },
       "right": {
-        "short_name": "Seamless",
-        "raw_names": ["Seamless"],
-        "description": "sells food delivery services from various restaurants",
-        "amounts": [84.29, 52.17, 78.39, 46.76]
+        "short_name": "Cash App to Marcus: Concert tickets",
+        "raw_names": ["Cash App to Marcus: Concert tickets"],
+        "description": "Peer-to-peer money transfer with a memo.",
+        "amounts": [120.00]
       }
     },
     {
-      "match_id": "2134:2135",
+      "match_id": "MISC-01",
       "left": {
-        "short_name": "Dollar Tree",
-        "raw_names": [
-          "DOLLARTREE REF# 504200037537 WAXAHACHIE,TX Card ending in 3466",
-          "DOLLARTREE REF# 504500026805 DESOTO,TX Card ending in 3466",
-          "DOLLARTREE REF# 505200026122 WAXAHACHIE,TX Card ending in 3466",
-          "Dollartree"
-        ],
-        "description": "A discount retail store selling a variety of household goods, groceries, and seasonal items.",
-        "amounts": [4.06, 18.34, 5.34, 11.13]
+        "short_name": "Income",
+        "raw_names": ["Income"],
+        "description": "Undetermined",
+        "amounts": [2400.00, 2400.00]
       },
       "right": {
-        "short_name": "Dollar Tree Payment",
-        "raw_names": ["DOLLARTREE REF# 502300022154 DESOTO,TX Card ending in 3466"],
-        "description": "payment to Dollar Tree with reference number 502300022154",
-        "amounts": [4.06]
+        "short_name": "Uber Eats",
+        "raw_names": ["Uber Eats"],
+        "description": "sells food delivery from restaurants via the Uber platform",
+        "amounts": [35.20, 18.90]
+      }
+    },
+    {
+      "match_id": "CVS-01",
+      "left": {
+        "short_name": "CVS Pharmacy",
+        "raw_names": [
+          "CVS/PHARMACY #12345 BOSTON MA",
+          "CVS PHARMACY BOSTON MA",
+          "CVS"
+        ],
+        "description": "A pharmacy and retail store selling prescriptions, health, and convenience items.",
+        "amounts": [12.99, 24.50, 8.75]
+      },
+      "right": {
+        "short_name": "CVS Pharmacy Payment",
+        "raw_names": ["CVS/PHARMACY REF# 789012 BOSTON MA Card ending in 4412"],
+        "description": "payment to CVS Pharmacy with reference number 789012",
+        "amounts": [12.99]
       }
     }
   ]

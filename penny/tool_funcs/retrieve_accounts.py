@@ -60,7 +60,8 @@ def retrieve_depository_accounts_function_code_gen(user_id: int = 1) -> pd.DataF
   # Filter for depository accounts (account_type starts with 'deposit_')
   depository_df = df[df['account_type'].str.startswith('deposit_', na=False)]
   
-  log(f"**Retrieved Depository Accounts** of `U-{user_id}`: `df: {depository_df.shape}` w/ **cols**:\n  - `{'`, `'.join(depository_df.columns)}`")
+  cols_str = "`, `".join(depository_df.columns)
+  log(f"**Retrieved Depository Accounts** of `U-{user_id}`: `df: {depository_df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return depository_df
 
 
@@ -79,13 +80,15 @@ def retrieve_credit_accounts_function_code_gen(user_id: int = 1) -> pd.DataFrame
   # Combine credit and loan accounts
   combined_df = pd.concat([credit_df, loan_df], ignore_index=True) if not (credit_df.empty and loan_df.empty) else pd.DataFrame()
   
-  log(f"**Retrieved Credit and Loan Accounts** of `U-{user_id}`: `df: {combined_df.shape}` w/ **cols**:\n  - `{'`, `'.join(combined_df.columns)}`")
+  cols_str = "`, `".join(combined_df.columns)
+  log(f"**Retrieved Credit and Loan Accounts** of `U-{user_id}`: `df: {combined_df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return combined_df
 
 
 def account_names_and_balances(df: pd.DataFrame, template: str) -> str:
   """Generate a formatted string describing account names and balances using the provided template"""
-  log(f"**Account Names/Balances**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Account Names/Balances**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")
@@ -290,13 +293,15 @@ def account_names_and_balances(df: pd.DataFrame, template: str) -> str:
     utterances.append(utterance)
   
   log(f"**Returning** {len(utterances)} utterances.")
-  log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
+  utterances_str = "`\n  - `".join(utterances)
+  log(f"**Utterances**:\n  - `{utterances_str}`")
   return "\n".join(utterances)
 
 
 def utter_account_totals(df: pd.DataFrame, template: str) -> str:
   """Calculate total balances and return formatted string"""
-  log(f"**Account Totals**: `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Account Totals**: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   
   if df.empty:
     log("- **`df` is empty**, returning empty string.")

@@ -346,7 +346,8 @@ def forecast_dates_and_amount(df: pd.DataFrame, template: str) -> str:
     result += f"\n{remaining_count} more forecast{'s' if remaining_count != 1 else ''}."
   
   log(f"**Forecast Dates and Amounts**: Returning {len(utterances)} utterances. Has more: {has_more}")
-  log(f"**Utterances**:\n  - `{'`\n  - `'.join(utterances)}`")
+  utterances_str = "`\n  - `".join(utterances)
+  log(f"**Utterances**:\n  - `{utterances_str}`")
   
   return result
 

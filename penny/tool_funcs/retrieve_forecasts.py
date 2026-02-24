@@ -84,7 +84,8 @@ def retrieve_spending_forecasts_function_code_gen(user_id: int = 1, granularity:
   # Post-process: adjust parent category forecasts to equal sum of children
   df = _adjust_parent_forecasts(df)
   
-  log(f"**Retrieved Spending Forecasts** of `U-{user_id}` (granularity: {granularity}): `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Retrieved Spending Forecasts** of `U-{user_id}` (granularity: {granularity}): `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return df
 
 
@@ -125,6 +126,7 @@ def retrieve_income_forecasts_function_code_gen(user_id: int = 1, granularity: s
   # Post-process: adjust parent category forecasts to equal sum of children
   df = _adjust_parent_forecasts(df)
   
-  log(f"**Retrieved Income Forecasts** of `U-{user_id}` (granularity: {granularity}): `df: {df.shape}` w/ **cols**:\n  - `{'`, `'.join(df.columns)}`")
+  cols_str = "`, `".join(df.columns)
+  log(f"**Retrieved Income Forecasts** of `U-{user_id}` (granularity: {granularity}): `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return df
 
