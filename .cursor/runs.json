@@ -1,0 +1,14 @@
+{
+  "experiments/check_verbalizer_text_with_memory.py": {
+    "json": false,
+    "sanitize": false,
+    "gen_config": {
+      "top_k": 40,
+      "top_p": 0.95,
+      "temperature": 0.6,
+      "thinking_budget": 4096,
+      "max_output_tokens": 6000
+    },
+    "model_name": "gemini-flash-lite-latest"
+  }
+}

@@ -7,71 +7,53 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a checker verifying research and strategy outputs against rules.
+SYSTEM_PROMPT = """You are an exacting and meticulous checker of financial strategy outputs. Your sole purpose is to validate a given text (`REVIEW_NEEDED`) against a set of strict rules and provided data (`EVAL_INPUT`). You must be precise and unforgiving in your evaluation.
 
 ## Input:
-- **EVAL_INPUT**: Contains "**User request**:" followed by the user's financial goal/request, and "**Input Information from previous skill**:" followed by detailed financial data (savings balance, accounts, past transactions, forecasted patterns, savings rate)
-- **PAST_REVIEW_OUTCOMES**: Array of past reviews, each with `output`, `good_copy`, `info_correct`, `eval_text`
-- **REVIEW_NEEDED**: Research and strategy output to review (string)
+- **EVAL_INPUT**: The user's request and all relevant financial data. This is the single source of truth.
+- **PAST_REVIEW_OUTCOMES**: A history of previous evaluations.
+- **REVIEW_NEEDED**: The financial strategy text to be validated.
 
 ## Output:
-JSON: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: True if REVIEW_NEEDED addresses EVAL_INPUT and includes required elements
-- `info_correct`: True if REVIEW_NEEDED follows all rules from the VerbalizerTextWithMemory template
-- `eval_text`: Required if either boolean is False; be specific and concise
+A single, clean JSON object: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
+- `good_copy`: `true` only if all formatting and structural rules are met.
+- `info_correct`: `true` only if all information is perfectly accurate and logically consistent.
+- `eval_text`: If any check fails, provide a concise but comprehensive explanation of all errors as a bulleted list of phrases, ensuring newlines are escaped (e.g., '- Error 1\\n- Error 2'). If both `good_copy` and `info_correct` are true, `eval_text` must be an empty string.
 
-## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
-**MANDATORY**: If PAST_REVIEW_OUTCOMES flags issues that still exist in REVIEW_NEEDED, mark as incorrect.
-- Extract all issues from past `eval_text` fields
-- Check if REVIEW_NEEDED repeats the same mistakes
-- If past reviews flag a missing element and it's still missing → mark `info_correct: False`
+## Core Directives
 
-## Rules
+### 1. Zero Tolerance for Past Mistakes
+**MANDATORY**: Before anything else, check `PAST_REVIEW_OUTCOMES`. If `REVIEW_NEEDED` repeats a mistake from a past `eval_text`, it is an automatic and immediate failure. Mention the repeated error in your `eval_text`.
 
-### Process Requirements
-1. **Find the Goal**: Must pinpoint the user's primary financial aim
-2. **List Key Facts**: Must take income, expenses, savings, capacity from "**Input Information from previous skill**", and research on market data necessary to answer the "**User request**"
-3. **Analyze Savings Opportunities**: If the user's goal requires increased savings, MUST analyze all spending data from "Key Facts" and provide a prioritized, actionable list of recommendations for reducing spending or increasing income. These recommendations MUST be integrated directly into the strategy.
-4. **Create a Strategy**: 
-   - Design a complete, self-contained strategy of **no more than 3 steps**
-   - **No open-ended tasks for the user**
-   - Must provide the concrete insights an expert would
-   - Must specify exact financial vehicles and researched targets
-   - User should have liquidity (an emergency fund) at any point of time
+### 2. Information Correctness (`info_correct`) Verification
+- **Internal Consistency**: All numbers, timelines, and statements within `REVIEW_NEEDED` must be perfectly consistent. A mismatch between the `Summary` and the `Strategy` calculation is a critical failure.
+- **External Consistency**: Every single claim, number, and calculation must be directly traceable to `EVAL_INPUT`.
+- **No External Information or Advice**: The strategy must not introduce any concepts, numbers (like an arbitrary emergency fund amount), or financial advice (like investing in index funds) that were not explicitly part of the `EVAL_INPUT`. The response must only use the data provided.
+- **Logical and Complete**: The strategy must be a sound financial plan that directly and fully answers the user's request in `EVAL_INPUT`.
+- **No Account IDs**: Account IDs should never be mentioned in `REVIEW_NEEDED`.
+- **No Transaction IDs**: Transaction IDs should never be mentioned in `REVIEW_NEEDED`.
+- **No Underscores in Categories**: Category names in `REVIEW_NEEDED` must not contain underscores.
 
-### Output Format Requirements (~120 words)
-1. **Summary**: A simple 1-2 sentence summary of the plan
-2. **Key Facts**: 
-   - Must include main result, monthly/timeline, feasibility/growth
-   - Each fact must have format: `[Main result] (Input: "[quote relevant part]")`
-   - Must quote relevant parts from Input Information
-3. **Strategy**: 
-   - Must have exactly 3 steps (no more, no less)
-   - Each step must include calculation and Input reference
-   - Format: `1. [Step from strategy with calculation and Input reference]`
-4. **Risks**: A single, brief bullet point on a potential risk or consideration
+### 3. Copy Quality (`good_copy`) Verification
+- **Absolutely No Markdown**: `REVIEW_NEEDED` must be 100% plain text. The presence of any markdown syntax (e.g., `**`, `##`, `*`, `- ` for lists) is an immediate failure.
+- **Conversational Tone & Tone for Inability/Mistakes**: Avoid explicit greetings (e.g., "Hi", "Hey", "Good morning"). Other conversational openers are permitted. When communicating inability to fulfill a user's request or acknowledging mistakes in shared information, the tone MUST be apologetic AND actionable (e.g., provide other options to help, commit to share feedback for improvement of app). Simple refusals or dry apologies without next steps are immediate failures.
+- **Emojis**: Emojis are allowed, but they must not be in unicode format.
 
-### Content Quality Requirements
-- **Concise**: Should be around 120 words total
-- **Well-rationalized**: Strategy must be logical and well-reasoned
-- **Easy-to-follow**: Clear structure and language
-- **Concrete**: No vague or open-ended instructions
-- **Expert-level**: Must provide specific financial vehicles and researched targets
+## Verification and Output Generation Workflow
 
-## Verification Steps
+1.  **Initial Check**: Review `PAST_REVIEW_OUTCOMES` for repeated errors.
+2.  **Full Audit**: Perform a full audit based on all `info_correct` and `good_copy` rules.
+3.  **Construct `eval_text`**: If any rule is violated, construct a clear and exhaustive `eval_text` that precisely lists ALL detected faults as a bulleted list of phrases, ensuring newlines are escaped.
+4.  **Final Review**: Before outputting, review your own analysis. Is the JSON valid? Is the `eval_text` clear, accurate, and covering all detected faults? Then, and only then, provide the final JSON output.
 
-1. **Check PAST_REVIEW_OUTCOMES first**: Extract all flagged issues. If REVIEW_NEEDED repeats them → mark False
-2. **Verify good_copy**: Does REVIEW_NEEDED address EVAL_INPUT? Includes Summary, Key Facts, Strategy (3 steps), and Risks? Missing elements = False
-3. **Verify info_correct**: Apply all rules:
-   - Does it follow the Process Requirements (Goal, Key Facts, Savings Opportunities if needed, Strategy)?
-   - Does it have exactly 3 strategy steps with calculations and Input references?
-   - Are there any open-ended tasks for the user? (Should be False)
-   - Does it specify exact financial vehicles and researched targets?
-   - Does it address liquidity/emergency fund?
-   - Does Key Facts format include Input quotes?
-   - Is it concise (~120 words)?
-   - Is it well-rationalized and easy-to-follow?
-4. **Write eval_text**: If False, list specific issues. Reference unfixed PAST_REVIEW_OUTCOMES issues.
+---
+**Internal Thought Rule**:
+- ONLY analyze `EVAL_INPUT`, `PAST_REVIEW_OUTCOMES`, and `REVIEW_NEEDED`.
+- STRICTLY adhere to `Core Directives` for evaluation.
+- DO NOT generate new content or financial advice.
+- Focus exclusively on identifying and explaining errors concisely.
+- Be extremely brief.
+---
 """
 
 class CheckVerbalizerTextWithMemory:
@@ -153,22 +135,54 @@ Output:"""
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True
+      ),
     )
 
     # Generate response
     output_text = ""
+    thought_summary = ""
+    
+    # According to Gemini API docs: iterate through chunks and check part.thought boolean
+    print("Starting generation stream...")
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
       config=generate_content_config,
     ):
+      # print(".", end="", flush=True) # Debug progress
+      # Extract text content (non-thought parts)
       if chunk.text is not None:
         output_text += chunk.text
+      
+      # Extract thought summary from chunk
+      if hasattr(chunk, 'candidates') and chunk.candidates:
+        for candidate in chunk.candidates:
+          # Extract thought summary from parts (per Gemini API docs)
+          # Check part.thought boolean to identify thought parts
+          if hasattr(candidate, 'content') and candidate.content:
+            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+              for part in candidate.content.parts:
+                # Check if this part is a thought summary (per documentation)
+                if hasattr(part, 'thought') and part.thought:
+                  if hasattr(part, 'text') and part.text:
+                    # Accumulate thought summary text (for streaming, it may come in chunks)
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
     
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
+    
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("="*80)
     
     # Parse JSON response
     try:
@@ -235,46 +249,127 @@ def run_test_case(test_name: str, eval_input: str, review_needed: str, past_revi
     return None
 
 
-def run_correct_response(checker: CheckVerbalizerTextWithMemory = None):
-  """
-  Run the test case for correct_response.
-  """
-  eval_input = """**User request**: Based on the current savings balance and net monthly savings rate provided, calculate the projected time (in years and months) required to reach a savings goal of $100,000.
+  eval_input = """**User request**: Create a budget for my monthly groceries, currently I spend around $500.
 **Input Information from previous skill**:
-Total Current Savings Balance: $24502
-Savings Accounts:
-Account 'Chase Savings' (account_id: 6854) has $24502.
---- Past Transactions ---
-Total Past Income: earned $92194
-Total Past Spending: spent $90195
---- Forecasted Patterns ---
-Total Expected Income: earn $250000
-Forecasted Income:
-- income_salary on 2025-11-01: $20000
-- income_salary on 2025-12-01: $20000
-Total Expected Spending: spend $212555
-Forecasted Spending:
-- meals on 2025-11-01: $1861
-- meals on 2025-12-01: $2170
---- Savings Rate ---
-Past Savings Rate (Income - Spending): 14.98%"""
-  
-  review_needed = """**Summary:** You'll reach $100,000 in approximately 3 years and 2 months by maintaining your current savings rate of 14.98% and applying it to your forecasted income.
+Monthly Grocery Spending: $500
+Average Income: $3000"""
+  review_needed = """Here's a breakdown for your grocery budget:
+- Allocate $450 for groceries this month. 🛒
+- This is a slight reduction to help you save more. 💰
+- Enjoy your delicious meals! 😋"""
+  return run_test_case("Batch 1 - Test 1: All Correct", eval_input, review_needed, [], checker)
 
-**Key Facts:**
-- Current savings balance of $24,502 (Input: "Total Current Savings Balance: $24502")
-- Past savings rate of 14.98% (Input: "Past Savings Rate (Income - Spending): 14.98%")
-- Need additional $75,498 to reach goal (Input: "savings goal of $100,000" and "Total Current Savings Balance: $24502")
+def run_test_batch(batch_number: int, checker: CheckVerbalizerTextWithMemory = None):
+  """
+  Run a specific batch of test cases.
+  """
+  if checker is None:
+    checker = CheckVerbalizerTextWithMemory()
 
-**Strategy:**
+  print(f"\n{'='*80}")
+  print(f"Running Batch {batch_number}")
+  print(f"{'='*80}")
 
-1. Calculate monthly savings from forecasted income: $20,000/month income with 14.98% savings rate yields $2,996/month savings (Input: "income_salary on 2025-11-01: $20000" and "Past Savings Rate (Income - Spending): 14.98%")
-2. Project timeline: $75,498 needed ÷ $2,996/month = 25.2 months (approximately 2 years 1 month) to reach goal (Input: "Need additional $75,498" and "$2,996/month savings")
-3. Maintain emergency fund of $10,000 in Chase Savings account, invest excess beyond goal in index funds (Input: "Account 'Chase Savings' (account_id: 6854) has $24502")
+  if batch_number == 1:
+    # Test 1: Extra Advice (Not in Input) -> Should Fail info_correct
+    eval_input_1 = """**User request**: Create a budget for my monthly groceries.
+**Input Information from previous skill**:
+Monthly Grocery Spending: $500
+Average Income: $3000"""
+    review_needed_1 = """Based on your spending, I've set a grocery budget of $450. You should also consider opening a high-yield savings account for your emergency fund. 💰"""
+    run_test_case(f"Batch {batch_number} - Test 1: Extra Advice", eval_input_1, review_needed_1, [], checker)
 
-**Risks:** Forecasted spending patterns may change, affecting actual savings rate."""
-  
-  return run_test_case("correct_response", eval_input, review_needed, [], checker)
+    # Test 2: Markdown List -> Should Fail good_copy
+    eval_input_2 = """**User request**: List my recent transactions.
+**Input Information from previous skill**:
+- Uber: $15
+- Kroger: $50"""
+    review_needed_2 = """Here are your recent transactions:
+- Uber: $15 🚗
+- Kroger: $50 🛒"""
+    run_test_case(f"Batch {batch_number} - Test 2: Markdown List", eval_input_2, review_needed_2, [], checker)
+
+    # Test 3: Inability (Bad Tone) -> Should Fail good_copy
+    eval_input_3 = """**User request**: Predict my credit score for next year.
+**Input Information from previous skill**:
+(No capability to predict credit score)"""
+    review_needed_3 = """I cannot predict your credit score for next year. 🛑"""
+    run_test_case(f"Batch {batch_number} - Test 3: Inability (Bad Tone)", eval_input_3, review_needed_3, [], checker)
+
+  elif batch_number == 2:
+    # Test 4: Inability (Good Tone) -> Should Pass
+    eval_input_4 = """**User request**: Predict my credit score for next year.
+**Input Information from previous skill**:
+(No capability to predict credit score)"""
+    review_needed_4 = """I apologize, but I can't predict your future credit score. However, I can help you track your current score or set up payment reminders to help improve it! I'll also share this request with the team. 🙏📈"""
+    run_test_case(f"Batch {batch_number} - Test 4: Inability (Good Tone)", eval_input_4, review_needed_4, [], checker)
+
+    # Test 5: Unicode Emoji -> Should Fail good_copy
+    eval_input_5 = """**User request**: How much did I save?
+**Input Information from previous skill**:
+Savings: $100"""
+    review_needed_5 = """You saved $100! &#127881;"""
+    run_test_case(f"Batch {batch_number} - Test 5: Unicode Emoji", eval_input_5, review_needed_5, [], checker)
+
+    # Test 6: Plain List (Valid) -> Should Pass
+    eval_input_6 = """**User request**: List my recent transactions.
+**Input Information from previous skill**:
+- Uber: $15
+- Kroger: $50"""
+    review_needed_6 = """Here are your recent transactions:
+🚗 Uber: $15
+🛒 Kroger: $50"""
+    run_test_case(f"Batch {batch_number} - Test 6: Plain List (Valid)", eval_input_6, review_needed_6, [], checker)
+
+  elif batch_number == 3:
+    # Test 7: Extra Info (Subtle) -> Should Fail info_correct
+    eval_input_7 = """**User request**: How much did I spend on coffee?
+**Input Information from previous skill**:
+Coffee Spending: $50"""
+    review_needed_7 = """You spent $50 on coffee. That's about 10% of your discretionary income. ☕"""
+    run_test_case(f"Batch {batch_number} - Test 7: Extra Info (Subtle)", eval_input_7, review_needed_7, [], checker)
+
+    # Test 8: Inability (Apologetic but not Actionable) -> Should Fail good_copy
+    eval_input_8 = """**User request**: Buy me some stocks.
+**Input Information from previous skill**:
+(No trading capability)"""
+    review_needed_8 = """I'm really sorry, but I can't buy stocks for you. 😔"""
+    run_test_case(f"Batch {batch_number} - Test 8: Inability (Not Actionable)", eval_input_8, review_needed_8, [], checker)
+
+    # Test 9: Inability (Actionable but not Apologetic) -> Should Fail good_copy
+    eval_input_9 = """**User request**: Buy me some stocks.
+**Input Information from previous skill**:
+(No trading capability)"""
+    review_needed_9 = """I can't do that. Instead, I can show you your current portfolio performance. I'll note this for the team. 📉"""
+    run_test_case(f"Batch {batch_number} - Test 9: Inability (Not Apologetic)", eval_input_9, review_needed_9, [], checker)
+
+  elif batch_number == 4:
+    # Test 10: Complex Valid -> Should Pass
+    eval_input_10 = """**User request**: What are my top expenses?
+**Input Information from previous skill**:
+1. Rent: $1200
+2. Food: $400"""
+    review_needed_10 = """Your top expenses are:
+🏠 Rent: $1200
+🍔 Food: $400"""
+    run_test_case(f"Batch {batch_number} - Test 10: Complex Valid", eval_input_10, review_needed_10, [], checker)
+
+    # Test 11: Repeated Error -> Should Fail (Repeated)
+    past_outcome_11 = [{"output": "...", "good_copy": False, "info_correct": True, "eval_text": "- markdown present"}]
+    eval_input_11 = """**User request**: Status?
+**Input Information from previous skill**:
+Status: Good"""
+    review_needed_11 = """Status is **Good**! 👍"""
+    run_test_case(f"Batch {batch_number} - Test 11: Repeated Error", eval_input_11, review_needed_11, past_outcome_11, checker)
+
+    # Test 12: Internal Info -> Should Fail info_correct
+    eval_input_12 = """**User request**: Transaction details?
+**Input Information from previous skill**:
+ID: 999
+Amount: $10"""
+    review_needed_12 = """Transaction 999 was for $10. 💸"""
+    run_test_case(f"Batch {batch_number} - Test 12: Internal Info", eval_input_12, review_needed_12, [], checker)
+
 
 
 
@@ -282,8 +377,8 @@ def main():
   """Main function to test the VerbalizerTextWithMemory checker"""
   checker = CheckVerbalizerTextWithMemory()
   
-  # Run all tests
-  run_correct_response(checker)
+  for batch_num in range(1, 5):
+    run_test_batch(batch_num, checker)
 
 
 if __name__ == "__main__":
