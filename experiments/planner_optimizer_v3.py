@@ -78,7 +78,7 @@ Write a python function `execute_plan` that takes no arguments:
 - If the Last User Request is a question (e.g., "what are the steps to save money?"), avoid using `create_budget_or_goal_or_reminder`.
 - Only use `create_budget_or_goal_or_reminder` if the user explicitly asks you to *create*, *set up*, *establish*, or *track* a budget, goal, or reminder.
 
-**4. Acknowledgments / No-Action Messages:** If the Last User Request does not require any new financial data, analysis, or creation (e.g., pure gratitude, social niceties, or "ok"/"got it" just acknowledging information), do not call any skills and instead return a brief smooth response.
+**4. Acknowledgments / No-Action Messages:** If the Last User Request does not require any new financial data, analysis, or creation (e.g., pure gratitude, social niceties, or "ok"/"got it" just acknowledging information), do not call any skills and instead return a brief natural response.
 
 <AVAILABLE_SKILL_FUNCTIONS>
 
@@ -526,7 +526,7 @@ Penny: I can set a reminder to cancel Netflix at the end of the month. Should I 
         "last_user_request": "ok",
         "previous_conversation": """User: how much did I spend on dining last month?
 Penny: You spent $412 on dining out last month—about $85 over your usual.""",
-        "ideal_response": "Expected: 'ok' means 'I see' or 'got it' (acknowledging the answer). No skill calls. execute_plan returns (True, brief smooth acknowledgment). Do NOT return 'You're welcome!' (user did not thank). Do NOT call lookup/create/research/categorize.",
+        "ideal_response": "Expected: 'ok' means 'I see' or 'got it' (acknowledging the answer). No skill calls. execute_plan returns (True, brief natural acknowledgment). Do NOT return 'You're welcome!' (user did not thank). Do NOT call lookup/create/research/categorize.",
     },
 ]
 
