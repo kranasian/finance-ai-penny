@@ -50,6 +50,7 @@ from penny.tool_funcs.create_budget_or_goal import create_budget_or_goal
 from penny.tool_funcs.create_budget_or_goal_from_request import create_budget_or_goal_from_request
 from penny.tool_funcs.create_reminder import create_reminder
 from penny.tool_funcs.create_category_spending_limit import create_category_spending_limit
+from penny.tool_funcs.create_income_goal import create_income_goal
 from penny.tool_funcs.create_savings_goal import create_savings_goal
 
 
@@ -340,6 +341,9 @@ def _get_safe_globals(user_id,use_full_datetime=False):
   def create_category_spending_limit_wrapper(category: str, granularity: str, start_date: str, end_date: str, amount: float, title: str):
     return create_category_spending_limit(category, granularity, start_date, end_date, amount, title)
 
+  def create_income_goal_wrapper(category: str, granularity: str, start_date: str, end_date: str, amount: float, title: str):
+    return create_income_goal(category, granularity, start_date, end_date, amount, title)
+
   def create_savings_goal_wrapper(amount: float, end_date: str, title: str, goal_type: str = "save_X_amount", granularity: Optional[str] = None, start_date: str = "", account_ids: Optional[list] = None):
     return create_savings_goal(amount, end_date, title, goal_type=goal_type, granularity=granularity, start_date=start_date, account_ids=account_ids)
 
@@ -485,6 +489,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "get_date_string": get_date_string,
     "create_budget_or_goal": create_budget_or_goal_wrapper,
     "create_category_spending_limit": create_category_spending_limit_wrapper,
+    "create_income_goal": create_income_goal_wrapper,
     "create_savings_goal": create_savings_goal_wrapper,
     "create_category_budget": create_category_spending_limit_wrapper,
     "validate_budget_or_goal": validate_budget_or_goal,
