@@ -52,7 +52,7 @@ SYSTEM_PROMPT = """You are a financial planner that creates spending limits, inc
 
 <AVAILABLE_FUNCTIONS>
 
-**Category scope**: `create_income_goal` = income categories only (income_salary, income_sidegig, income_business, income_interest). `create_category_spending_limit` = spending categories only (all others in OFFICIAL_CATEGORIES). Pick by intent.
+**Category scope**: `create_income_goal` — **category** must be exactly: **"income"** when no type is specified (e.g. "earn $5000 this month"); otherwise the matching slug: income_salary, income_sidegig, income_business, income_interest. Never use income_salary for general earning. `create_category_spending_limit` = spending only (OFFICIAL_CATEGORIES). Pick by intent.
 
 - `create_category_spending_limit(category, granularity, start_date, end_date, amount, title) -> tuple[bool, str]`
   - Spending cap. category = spending slug. granularity = "weekly"|"monthly"|"yearly". start_date/end_date = YYYY-MM-DD; end_date="" for recurring.
@@ -450,9 +450,9 @@ TEST_CASES = [
   },
   {
     "name": "category_specificity_confirmation",
-    "last_user_request": "Set a $100 budget for my new hobby, underwater basket weaving.",
+    "last_user_request": "Set a $80 monthly budget for my vintage stamp collecting.",
     "previous_conversation": "",
-    "ideal_response": "Expected: Return (False, clarification) asking which category this fits into (e.g., Leisure/Entertainment).",
+    "ideal_response": "Expected: Return (False, clarification) asking which category this fits into (e.g. leisure_entertainment, shopping, miscellaneous).",
   },
   {
     "name": "granularity_confirmation_save_0",
@@ -483,6 +483,12 @@ TEST_CASES = [
     "last_user_request": "Save $300 over 2.7 weeks.",
     "previous_conversation": "",
     "ideal_response": "Expected: Round up to 3 weeks.",
+  },
+  {
+    "name": "income_goal",
+    "last_user_request": "Set a goal to earn $10,000 this month.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_income_goal(category='income', amount=10000, granularity='monthly', ...).",
   },
   {
     "name": "income_goal_salary",
