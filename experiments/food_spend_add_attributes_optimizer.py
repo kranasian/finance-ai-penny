@@ -16,22 +16,41 @@ SCHEMA = types.Schema(
       "primary": types.Schema(
         type=types.Type.ARRAY,
         items=types.Schema(type=types.Type.STRING),
-        description="List containing at least one of: Fast food, Restaurant, Beverage, Grocery"
+        description="List containing at least one of: Fast food, Restaurant, Beverage, Grocery, Dessert. Borderline places can have multiple (e.g., both Restaurant and Beverage)."
       ),
       "secondary": types.Schema(
         type=types.Type.ARRAY,
         items=types.Schema(type=types.Type.STRING),
-        description="List of 2-5 descriptive tags (Cuisine, Dish, Style)"
+        description="List of 2-5 HIGH-VALUE business categories or precise descriptors. MUST NOT contain: food, dish, cuisine, snack, meal, heat, eatery, entree."
       ),
     },
     required=["id", "primary", "secondary"]
   )
 )
 
+<<<<<<< HEAD
 SYSTEM_PROMPT = """Task: Analyze food establishment data to determine primary category and secondary attributes.
 
 Input: JSON list of establishments (id, name, description).
 Output: JSON list of attributes (id, primary, secondary).
+=======
+SYSTEM_PROMPT = """Task: Transform Food Establishment JSON to Attribute JSON utilizing standard business taxonomy.
+
+Mapping Rules:
+1. Copy `id`.
+2. `primary`: List [1+ items]. Options: "Fast food", "Restaurant", "Beverage", "Grocery", "Dessert".
+   - Inference: "Tea/Coffee" -> "Beverage". "Market/Mart" -> "Grocery". "Fast-casual" -> "Fast food".
+   - IF borderline (e.g., cafe with bakery), INCLUDE ALL relevant (e.g., "Restaurant", "Beverage").
+3. `secondary`: List [3-7 items]. Extract highly specific, high-value Google Places/Yelp-style category tags.
+   - For Fast food & Restaurants: Extract specific Cuisine (e.g. "Mexican", "Filipino"), key recognizable items (e.g. "Burgers", "Tacos"), or Dining Style.
+   - For Beverage: Extract specific Types (e.g., "Coffee Shop", "Boba", "Juice Bar").
+   - For Grocery: Extract specialty (e.g., "Japanese Market", "Organic").
+   - For Dessert: Extract specific type (e.g., "Frozen Yogurt", "Donut Shop").
+   - Sparse Descriptions: If info is sparse, infer high-value descriptive characteristics (e.g., flavor profiles like "Spicy") without generic nouns.
+   - CRITICAL NEGATIVE CONSTRAINTS: Tags MUST NOT contain the following words (even as substrings):
+     "food", "dish", "cuisine", "snack", "meal", "eatery", "appetizer", "entree", "heat", "place".
+   - ONLY use standard singular nouns for items (e.g. "Burger"), flavor descriptors, or established category names (e.g. "Coffee Shop").
+>>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
 
 Definitions:
 - `primary`: Select one or more from ["Fast food", "Restaurant", "Beverage", "Grocery"].
@@ -185,12 +204,122 @@ output: """
       raise ValueError(f"Failed to parse JSON response: {e}\nResponse text: {output_text}")
 
 
-def test_with_inputs(establishments: list, optimizer: FoodSpendAddAttributesOptimizer = None):
+TEST_CASES = [
+  {
+    "name": "Test 1: Basic establishment types",
+    "establishments": [
+      {
+        "id": 342,
+        "name": "Snack Tiger Tea",
+        "description": "A purchase of snacks and beverages from a cafe."
+      },
+      {
+        "id": 567,
+        "name": "San Froyo",
+        "description": "This establishment sells frozen yogurt and other dessert items."
+      },
+      {
+        "id": 891,
+        "name": "Manila Bay Cuisine",
+        "description": "sells Filipino dishes"
+      }
+    ],
+    "ideal_response": """[
+  {"id": 342, "primary": ["Beverage"], "secondary": ["Boba", "Tea", "Cafe"]},
+  {"id": 567, "primary": ["Dessert"], "secondary": ["Frozen yogurt", "Frozen dessert"]},
+  {"id": 891, "primary": ["Restaurant"], "secondary": ["Filipino", "Rice dish", "Family style"]}
+]
+Key validations:
+- Expansive attributes that list attributes of the establishment
+- Too "generic" tags like "Snack", "Dish" must not be included."""
+  },
+  {
+    "name": "Test 2: Basic establishment types",
+    "establishments": [
+      {
+        "id": 234,
+        "name": "Boudin Stonestown",
+        "description": "This establishment sells baked goods and cafe items."
+      },
+      {
+        "id": 678,
+        "name": "Chipotle",
+        "description": "Fast-casual Mexican restaurant serving burritos, bowls, and tacos"
+      },
+      {
+        "id": 123,
+        "name": "Trader Joe's",
+        "description": "sells a variety of groceries, including private-label products, organic produce, and prepared foods"
+      }
+    ],
+    "ideal_response": """[
+  {"id": 234, "primary": ["Restaurant", "Beverage"], "secondary": ["Baked goods", "Coffee", "Pastry", "Bread"]},
+  {"id": 678, "primary": ["Fast food"], "secondary": ["Mexican", "Burrito", "Bowl", "Taco"]},
+  {"id": 123, "primary": ["Grocery"], "secondary": ["Private-label", "Organic", "Prepared food"]}
+]
+Key validations:
+- Singular nouns only
+- Borderline primary can have multiple primary attributes."""
+  },
+  {
+    "name": "Test 2: Multiple Establishments",
+    "establishments": [
+      {
+        "id": 456,
+        "name": "Nijiya Market",
+        "description": "sells Japanese groceries, including fresh produce, seafood, meat, snacks, and other items"
+      },
+      {
+        "id": 789,
+        "name": "Panda Express",
+        "description": "fast-food restaurant chain that serves American Chinese cuisine"
+      },
+      {
+        "id": 135,
+        "name": "Burning Mouth",
+        "description": "This establishment sells spicy food."
+      }
+    ],
+    "ideal_response": """[
+  {"id": 456, "primary": ["Grocery"], "secondary": ["Japanese", "Specialty"]},
+  {"id": 789, "primary": ["Fast food"], "secondary": ["American Chinese"]},
+  {"id": 135, "primary": ["Restaurant"], "secondary": ["Spicy food", "Burgers""]}
+]
+Key validations:
+- Relevant 2-5 tags that is diverse and might not even be in the title.
+- Too "generic" tags like "Food" or "Cuisine" must not be included."""
+  },
+#   {
+#     "name": "Test 3: Multiple Establishments",
+#     "establishments": [
+#       {
+#         "id": 246,
+#         "name": "Goldilocks Bakeshop",
+#         "description": "sells cakes, pastries, breads, and other baked goods"
+#       },
+#       {
+#         "id": 369,
+#         "name": "Ramen Nagi",
+#         "description": "sells ramen noodles and other Japanese dishes"
+#       }
+#     ],
+#     "ideal_response": """# [
+#   {"id": 246, "primary": ["Restaurant", "Fast food"], "secondary": ["Cake", "Pastry", "Bread", "Baked goods"]},
+#   {"id": 369, "primary": ["Restaurant"], "secondary": ["Ramen", "Japanese"]}
+# ]
+# Key validations:
+# - Singular nouns
+# - Relevant 2-5 tags"""
+#   }
+]
+
+
+def test_with_inputs(test_name_or_index_or_dict, optimizer: FoodSpendAddAttributesOptimizer = None):
   """
   Convenient method to test the optimizer with custom inputs.
   
   Args:
-    establishments: List of dictionaries, each containing id, name, and description.
+    test_name_or_index_or_dict: Test case index, name or dict (Wait, could be a list of establishments directly for backward compatibility)
     optimizer: Optional FoodSpendAddAttributesOptimizer instance. If None, creates a new one.
     
   Returns:
@@ -198,9 +327,30 @@ def test_with_inputs(establishments: list, optimizer: FoodSpendAddAttributesOpti
   """
   if optimizer is None:
     optimizer = FoodSpendAddAttributesOptimizer()
+    
+  test_case = None
   
-  return optimizer.generate(establishments)
+  # Backward compatibility: handle a direct list of establishments
+  if isinstance(test_name_or_index_or_dict, list):
+    return optimizer.generate(test_name_or_index_or_dict)
+    
+  if isinstance(test_name_or_index_or_dict, dict):
+    if "establishments" in test_name_or_index_or_dict:
+      test_case = test_name_or_index_or_dict
+  elif isinstance(test_name_or_index_or_dict, int):
+    if 0 <= test_name_or_index_or_dict < len(TEST_CASES):
+      test_case = TEST_CASES[test_name_or_index_or_dict]
+  elif isinstance(test_name_or_index_or_dict, str):
+    for tc in TEST_CASES:
+      if tc["name"] == test_name_or_index_or_dict:
+        test_case = tc
+        break
+        
+  if not test_case:
+    print(f"Test case '{test_name_or_index_or_dict}' not found.")
+    return None
 
+<<<<<<< HEAD
 
 def run_test_set_1(optimizer: FoodSpendAddAttributesOptimizer = None):
   return test_with_inputs([
@@ -229,6 +379,20 @@ def run_test_set_4(optimizer: FoodSpendAddAttributesOptimizer = None):
     { "id": 2002, "name": "Marugame Udon", "description": "This is a credit from a Japanese restaurant specializing in udon noodles and tempura." },
     { "id": 2003, "name": "Harry & David", "description": "sends fruit baskets and gourmet gifts" }
   ], optimizer)
+=======
+  print(f"\n{'='*80}")
+  print(f"Running test: {test_case.get('name', 'custom_test')}")
+  print(f"{'-'*80}\n")
+  
+  result = optimizer.generate(test_case["establishments"])
+  
+  if test_case.get("ideal_response", ""):
+    print(f"\n{'='*80}")
+    print(f"Ideal response:\n{test_case['ideal_response']}")
+    print(f"{'='*80}\n")
+    
+  return result
+>>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
 
 
 def main(batch: int = 1):
@@ -236,13 +400,20 @@ def main(batch: int = 1):
   Main function to test the FoodSpendAddAttributesOptimizer
   
   Args:
+<<<<<<< HEAD
     batch: Batch number (1-4) to determine which tests to run
+=======
+    batch: Batch number to run
+>>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
   """
   print(f"Testing FoodSpendAddAttributesOptimizer - Batch {batch}\n")
   
   optimizer = FoodSpendAddAttributesOptimizer()
   
+  optimizer = FoodSpendAddAttributesOptimizer()
+  
   if batch == 1:
+<<<<<<< HEAD
     run_test_set_1(optimizer)
   elif batch == 2:
     run_test_set_2(optimizer)
@@ -252,6 +423,14 @@ def main(batch: int = 1):
     run_test_set_4(optimizer)
   else:
     raise ValueError("batch must be between 1 and 4")
+=======
+    for tc in TEST_CASES:
+      test_with_inputs(tc, optimizer)
+  elif batch == 2:
+    print("Batch 2 not yet implemented.")
+  else:
+    raise ValueError("batch must be 1")
+>>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
   
   print("Test completed!")
 

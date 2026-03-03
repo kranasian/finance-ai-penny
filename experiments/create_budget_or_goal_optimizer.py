@@ -1,6 +1,6 @@
 """
 Create Budget or Goal Optimizer v2.
-Only has access to create_category_spending_limit and create_savings_goal (no lookup, no research).
+Only has access to create_category_spending_limit, create_income_goal, and create_savings_goal (no lookup, no research).
 Uses IMPLEMENTED_DATE_FUNCTIONS (date_utils) for date calculations.
 Outputs process_input() -> tuple[bool, str] for sandbox.execute_agent_with_tools.
 """
@@ -20,19 +20,19 @@ if parent_dir not in sys.path:
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial planner that creates spending limits and savings goals. You may only call `create_category_spending_limit` and `create_savings_goal`. Output a single Python function `process_input() -> tuple[bool, str]` that returns the tuple from the create function (or (False, clarification_message)). Do not modify or append to the result string.
+SYSTEM_PROMPT = """You are a financial planner that creates spending limits, income goals, and savings goals. You may only call `create_category_spending_limit`, `create_income_goal`, and `create_savings_goal`. Output a single Python function `process_input() -> tuple[bool, str]` that returns the tuple from the create function (or (False, clarification_message)). Do not modify or append to the result string.
 
 ## Directives
 
 1.  **Inputs**: **Creation Request** = what to create. **Input Info from previous skill** = optional context. Use it to resolve ambiguity; it is not available at runtime. When Input Info contains **depository accounts and balances** (e.g. lines with "account_id: N" or "(account_id: 8957)"), extract the numeric **account_id** values in the order they appear and pass them as `account_ids=[...]` to `create_savings_goal`.
-2.  **Intent**: Spending limit in a category → `create_category_spending_limit`. Saving money → `create_savings_goal`. If critical details (amount, timeline) are missing or intent is ambiguous, return (False, clarification_message) without calling a create function.
+2.  **Intent**: Spending limit → `create_category_spending_limit`. Income goal (earn/target in income category) → `create_income_goal`; same (granularity, start_date, end_date, amount, title) as spending limit. Saving money → `create_savings_goal`. If critical details (amount, timeline) are missing or intent is ambiguous, return (False, clarification_message) without calling a create function.
     - **Implicit Intent**: A request may not explicitly say "goal" or "budget", but if it implies a spending limit (e.g., "I should stop spending so much on coffee") or savings (e.g., "I want to put aside money for a house"), infer the correct tool.
 3.  **goal_type**: 
     - **save_X_amount**: save a **total amount by a date** (e.g. $10000 by end of year). **Always use granularity="monthly"** for save_X_amount. **end_date cannot be blank** for save_X_amount.
     - **save_0**: save **X per period** (e.g. $200/month). **Always provide end_date=""** for save_0.
     - **Prioritization**: If both a total savings goal (e.g., "save $5000") and a periodic target (e.g., "save $200/month") are mentioned, set the goal towards the **total savings goal** (`save_X_amount`) only.
 4.  **start_date defaults** (use IMPLEMENTED_DATE_FUNCTIONS; define `today = datetime.datetime.today()` INSIDE `process_input` when using date helpers):
-    - **Category spending limit**: If user does not specify a bounded period ("for next month", "for March"), use start of current period: monthly → `get_date_string(get_start_of_month(today))`, weekly → `get_date_string(get_start_of_week(today))`. If user specifies a bounded period, set both start_date and end_date to that period (first and last day).
+    - **Category spending limit and income goal**: If user does not specify a bounded period ("for next month", "for March"), use start of current period: monthly → `get_date_string(get_start_of_month(today))`, weekly → `get_date_string(get_start_of_week(today))`. If user specifies a bounded period, set both start_date and end_date to that period (first and last day).
     - **Savings save_X_amount** (total by date): `start_date=get_date_string(datetime.datetime.today())`.
     - **Savings save_0** (per period): monthly → `get_date_string(get_start_of_month(today))`, weekly → `get_date_string(get_start_of_week(today))`.
 5.  **Date and Duration Logic**:
@@ -41,7 +41,7 @@ SYSTEM_PROMPT = """You are a financial planner that creates spending limits and 
     - **Actual Dates**: Ensure all function calls point to actual YYYY-MM-DD strings.
 6.  **Amount and Category**:
     - **Computation**: Amounts must be computed from the input (e.g., "save $60,000 by 3 months from now" = 60000.0 total, or "10% of my $5000 salary" = 500.0).
-    - **Category Matching**: If a category is too specific or too general to match the `OFFICIAL_CATEGORIES` (e.g., "concert tickets" vs "entertainment"), return `(False, clarification_message)` asking for confirmation before setting the goal. **You MUST provide specific category options/suggestions from the OFFICIAL_CATEGORIES list in your clarification message.** For common sub-items with clear mappings (e.g., coffee → `meals_dining_out`), map directly.
+    - **Category Matching**: If a category is too specific or too general to match the `OFFICIAL_CATEGORIES` (e.g., "concert tickets" vs "entertainment"), return `(False, clarification_message)` asking for confirmation before setting the goal. **You MUST provide specific category options/suggestions from the OFFICIAL_CATEGORIES list in your clarification message.** For common sub-items with clear mappings (e.g., coffee → `meals_dining_out`), map directly. Category scope (income vs spending) is defined in AVAILABLE_FUNCTIONS—use the matching function.
 7.  **Granularity**:
     - For `save_0` goals, if granularity is missing, ask for confirmation. For `save_X_amount` goals, assume "monthly". Granularity can also be inferred from the conversation context.
 8.  **Account IDs**:
@@ -52,8 +52,12 @@ SYSTEM_PROMPT = """You are a financial planner that creates spending limits and 
 
 <AVAILABLE_FUNCTIONS>
 
+**Category scope**: `create_income_goal` = income categories only (income_salary, income_sidegig, income_business, income_interest). `create_category_spending_limit` = spending categories only (all others in OFFICIAL_CATEGORIES). Pick by intent.
+
 - `create_category_spending_limit(category, granularity, start_date, end_date, amount, title) -> tuple[bool, str]`
-  - Spending cap for a category. category = OFFICIAL_CATEGORIES slug. granularity = "weekly"|"monthly"|"yearly". start_date/end_date = YYYY-MM-DD. amount = cap. title = goal name with emoji. **Use end_date="" for recurring budgets without a specified end.**
+  - Spending cap. category = spending slug. granularity = "weekly"|"monthly"|"yearly". start_date/end_date = YYYY-MM-DD; end_date="" for recurring.
+- `create_income_goal(category, granularity, start_date, end_date, amount, title) -> tuple[bool, str]`
+  - Income target. category = income slug only (see above). Same parameters; end_date="" for recurring.
 - `create_savings_goal(amount, end_date, title, goal_type, granularity, start_date, account_ids=None) -> tuple[bool, str]`
   - goal_type **save_X_amount**: total to save by a date (amount = total, end_date = target). **Always use granularity="monthly"**. start_date = today. **save_0**: amount per period (amount = per period, granularity required). **Always provide end_date="" for save_0**.
 
@@ -237,7 +241,7 @@ Today's date is |TODAY_DATE|.
 
 
 class CreateBudgetOrGoalOptimizerV2:
-  """Create budget/goal optimizer v2: uses create_category_spending_limit and create_savings_goal."""
+  """Create budget/goal optimizer v2: uses create_category_spending_limit, create_income_goal, and create_savings_goal."""
 
   def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=4096):
     """Initialize the Gemini agent with API configuration for financial goal creation."""
@@ -325,6 +329,10 @@ output:""")
       print(thought_summary.strip())
       print("-" * 80 + "\n")
     return output_text
+
+
+class CreateBudgetOrGoal(CreateBudgetOrGoalOptimizerV2):
+  """Create budget or goal using create_category_spending_limit, create_income_goal, and create_savings_goal (no reminders)."""
 
 
 def extract_code_from_response(text: str) -> str:
@@ -475,7 +483,25 @@ TEST_CASES = [
     "last_user_request": "Save $300 over 2.7 weeks.",
     "previous_conversation": "",
     "ideal_response": "Expected: Round up to 3 weeks.",
-  }
+  },
+  {
+    "name": "income_goal_salary",
+    "last_user_request": "Set a goal to earn $5000 in salary this month.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_income_goal(category='income_salary', amount=5000, granularity='monthly', ...).",
+  },
+  {
+    "name": "income_goal_sidegig",
+    "last_user_request": "I want to make $6000 from my side gig this year.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_income_goal(category='income_sidegig', amount=6000, granularity='yearly', ...).",
+  },
+  {
+    "name": "income_goal_sidegig_monthly",
+    "last_user_request": "I want to make to earn at least $5000 from my side gig monthly.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_income_goal(category='income_sidegig', amount=6000, granularity='yearly', ...).",
+  },
 ]
 
 
@@ -551,7 +577,7 @@ def main(test: str = None, no_thinking: bool = False):
 
 if __name__ == "__main__":
   import argparse
-  parser = argparse.ArgumentParser(description="Create budget or goal optimizer v2 (create_category_spending_limit, create_savings_goal only)")
+  parser = argparse.ArgumentParser(description="Create budget or goal optimizer v2 (create_category_spending_limit, create_income_goal, create_savings_goal)")
   parser.add_argument("--test", type=str, help='Test name or index (e.g. "0" or "food_budget_next_month" or "all")')
   parser.add_argument("--no-thinking", action="store_true", help="Set thinking_budget=0 (Thinking OFF) for comparison")
   args = parser.parse_args()
