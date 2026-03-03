@@ -26,8 +26,8 @@ def lookup_user_accounts_transactions_income_and_spending_patterns(
         # General format
         sample_output = """--- Account Balances ---
 Depository Accounts:
-- Asset Account 'Chase Total Checking **1563': Current: $567, Available: $567
-- Asset Account 'Chase Savings **3052': Current: $1202, Available: $1202
+Account 'Chase Total Checking **1563' (account_id: 8957): Current: $567, Available: $567
+Account 'Chase Savings **3052' (account_id: Current: $1202, Available: $1202
 Total Depository Balance: $1769.
 
 --- Recent Income (Last 30 Days) ---

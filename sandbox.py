@@ -335,8 +335,18 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     return respond_to_app_inquiry(inquiry)
   
   # Create wrapper functions for create_budget_or_goal, create_category_spending_limit, create_savings_goal, and create_reminder
-  def create_budget_or_goal_wrapper(category: str, granularity: str, start_date: str, end_date: str, amount: float, title: str):
-    return create_budget_or_goal(category, granularity, start_date, end_date, amount, title)
+  # Signature matches penny2: (category, granularity, start_date, end_date, amount, title, **kwargs). Extra kwargs (e.g. match_category from LLM-generated code) absorbed; category = match_category or category when calling backend.
+  def create_budget_or_goal_wrapper(
+    category: str = "",
+    granularity: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    amount: float = 0.0,
+    title: str = "",
+    **kwargs
+  ):
+    cat = kwargs.pop("match_category", None) or category
+    return create_budget_or_goal(cat, granularity, start_date, end_date, amount, title)
 
   def create_category_spending_limit_wrapper(category: str, granularity: str, start_date: str, end_date: str, amount: float, title: str):
     return create_category_spending_limit(category, granularity, start_date, end_date, amount, title)

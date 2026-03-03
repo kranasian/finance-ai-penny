@@ -331,6 +331,10 @@ output:""")
     return output_text
 
 
+class CreateBudgetOrGoal(CreateBudgetOrGoalOptimizerV2):
+  """Create budget or goal using create_category_spending_limit, create_income_goal, and create_savings_goal (no reminders)."""
+
+
 def extract_code_from_response(text: str) -> str:
   """Extract Python code from markdown code block."""
   code_start = text.find("```python")
