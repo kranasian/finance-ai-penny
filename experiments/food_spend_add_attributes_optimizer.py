@@ -28,17 +28,23 @@ SCHEMA = types.Schema(
   )
 )
 
-SYSTEM_PROMPT = """Task: Transform Food Establishment JSON to Attribute JSON.
+SYSTEM_PROMPT = """Task: Analyze food establishment data to determine primary category and secondary attributes.
 
-Mapping Rules:
-1. Copy `id`.
-2. `primary`: List [1+ items]. Options: "Fast food", "Restaurant", "Beverage", "Grocery".
-   - Inference: "Tea/Coffee" -> "Beverage". "Market/Mart" -> "Grocery". "Fast-casual" -> "Fast food".
-3. `secondary`: List [3-7 items]. Extract specific Cuisine, Dish, or Style.
-   - Example: "Sells tacos" -> ["Mexican", "Tacos"].
-   - Use singular nouns and avoid plurals.
+Input: JSON list of establishments (id, name, description).
+Output: JSON list of attributes (id, primary, secondary).
 
-Output: JSON Array only."""
+Definitions:
+- `primary`: Select one or more from ["Fast food", "Restaurant", "Beverage", "Grocery"].
+- `secondary`: Extract 3-7 specific tags (Cuisine, Dish, Style, or Type) from the Name and Description.
+
+Constraints:
+- Use singular nouns for `secondary` tags.
+- STRICTLY EXCLUDE standalone generic terms: "Food", "Drink", "Fare", "Meal", "Dish", "Beverage", "Cuisine", "Restaurant", "Store".
+- Allow compound terms (e.g., "Frozen meal", "Health food").
+- Infer attributes from the Name if relevant.
+- MUST NOT repeat `primary` categories in `secondary`.
+- MANDATORY: Ensure at least 3 `secondary` tags. If specific details are missing, infer broad categories (e.g., "Chain", "Retail", "Shop", "Dining", "Asian", "European").
+- Output JSON only."""
 
 class FoodSpendAddAttributesOptimizer:
   """Handles all Gemini API interactions for generating food establishment attributes based on establishment information"""
@@ -58,7 +64,9 @@ class FoodSpendAddAttributesOptimizer:
     # Generation Configuration Constants
     self.temperature = 0.5
     self.top_p = 0.95
+    self.top_k = 40
     self.max_output_tokens = 4096
+    self.response_mime_type = "application/json"
     
     # Safety Settings
     self.safety_settings = [
@@ -101,7 +109,9 @@ output: """
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
+      top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
+      response_mime_type=self.response_mime_type,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
       thinking_config=types.ThinkingConfig(
@@ -192,74 +202,32 @@ def test_with_inputs(establishments: list, optimizer: FoodSpendAddAttributesOpti
   return optimizer.generate(establishments)
 
 
-def run_test_first_set(optimizer: FoodSpendAddAttributesOptimizer = None):
-  """
-  Run the test case for Starbucks.
-  """
+def run_test_set_1(optimizer: FoodSpendAddAttributesOptimizer = None):
   return test_with_inputs([
-    {
-      "id": 342,
-      "name": "Snack Tiger Tea",
-      "description": "A purchase of snacks and beverages from a cafe."
-    },
-    {
-      "id": 567,
-      "name": "San Froyo",
-      "description": "This establishment sells frozen yogurt and other dessert items."
-    },
-    {
-      "id": 891,
-      "name": "Manila Bay Cuisine",
-      "description": "sells Filipino dishes"
-    },
-    {
-      "id": 234,
-      "name": "Boudin Stonestown",
-      "description": "This establishment sells baked goods and cafe items."
-    },
-    {
-      "id": 678,
-      "name": "Chipotle",
-      "description": "Fast-casual Mexican restaurant serving burritos, bowls, and tacos"
-    }
+    { "id": 101, "name": "Erewhon Market", "description": "sells organic and natural foods, groceries, produce, and health and wellness products" },
+    { "id": 102, "name": "Waffle House", "description": "A restaurant chain serving American diner fare." },
+    { "id": 103, "name": "Blue Apron", "description": "sends boxes of food to houses for customers to cook" }
   ], optimizer)
 
-
-def run_test_second_set(optimizer: FoodSpendAddAttributesOptimizer = None):
-  """
-  Run the test case with multiple establishments.
-  """
+def run_test_set_2(optimizer: FoodSpendAddAttributesOptimizer = None):
   return test_with_inputs([
-    {
-      "id": 123,
-      "name": "Trader Joe's",
-      "description": "sells a variety of groceries, including private-label products, organic produce, and prepared foods"
-    },
-    {
-      "id": 456,
-      "name": "Nijiya Market",
-      "description": "sells Japanese groceries, including fresh produce, seafood, meat, snacks, and other items"
-    },
-    {
-      "id": 789,
-      "name": "Panda Express",
-      "description": "fast-food restaurant chain that serves American Chinese cuisine"
-    },
-    {
-      "id": 135,
-      "name": "Burning Mouth",
-      "description": "This establishment sells spicy food."
-    },
-    {
-      "id": 246,
-      "name": "Goldilocks Bakeshop",
-      "description": "sells cakes, pastries, breads, and other baked goods"
-    },
-    {
-      "id": 369,
-      "name": "Ramen Nagi",
-      "description": "sells ramen noodles and other Japanese dishes"
-    }
+    { "id": 201, "name": "7-Eleven", "description": "convenience store chain sells snacks, drinks, groceries, hot food, and other everyday items" },
+    { "id": 202, "name": "Korean House", "description": "A purchase from a Korean restaurant for food and beverages." },
+    { "id": 203, "name": "Nobu", "description": "Japanese restaurant that serves sushi, sashimi, and other Japanese-Peruvian fusion dishes" }
+  ], optimizer)
+
+def run_test_set_3(optimizer: FoodSpendAddAttributesOptimizer = None):
+  return test_with_inputs([
+    { "id": 901, "name": "Costco", "description": "sells bulk groceries, electronics, furniture, and other goods at discounted prices with a membership fee" },
+    { "id": 902, "name": "Daily Harvest", "description": "delivers frozen plant-based meals" },
+    { "id": 903, "name": "Lidl", "description": "Payment for groceries and household items from a discount supermarket." }
+  ], optimizer)
+
+def run_test_set_4(optimizer: FoodSpendAddAttributesOptimizer = None):
+  return test_with_inputs([
+    { "id": 2001, "name": "Shake Shack", "description": "fast-casual restaurant chain that serves burgers, hot dogs, fries, and shakes" },
+    { "id": 2002, "name": "Marugame Udon", "description": "This is a credit from a Japanese restaurant specializing in udon noodles and tempura." },
+    { "id": 2003, "name": "Harry & David", "description": "sends fruit baskets and gourmet gifts" }
   ], optimizer)
 
 
@@ -268,40 +236,30 @@ def main(batch: int = 1):
   Main function to test the FoodSpendAddAttributesOptimizer
   
   Args:
-    batch: Batch number (1 or 2) to determine which tests to run
+    batch: Batch number (1-4) to determine which tests to run
   """
-  print("Testing FoodSpendAddAttributesOptimizer\n")
+  print(f"Testing FoodSpendAddAttributesOptimizer - Batch {batch}\n")
+  
+  optimizer = FoodSpendAddAttributesOptimizer()
   
   if batch == 1:
-    # Batch 1: Basic establishment types
-    optimizer = FoodSpendAddAttributesOptimizer()
-    print("Test 1: Starbucks")
-    print("-" * 80)
-    run_test_first_set(optimizer)
-    
-    print("Test 2: Multiple Establishments")
-    print("-" * 80)
-    run_test_second_set(optimizer)
-        
-  # elif batch == 2:
-    # # Batch 2: Restaurant and multiple establishments
-    # optimizer = FoodSpendAddAttributesOptimizer()
-    # print("Test 1: Italian Restaurant")
-    # print("-" * 80)
-    # result4 = run_test_italian_restaurant(optimizer)
-    # print(f"\nResult: {json.dumps(result4, indent=2)}")
-    # print("\n")
+    run_test_set_1(optimizer)
+  elif batch == 2:
+    run_test_set_2(optimizer)
+  elif batch == 3:
+    run_test_set_3(optimizer)
+  elif batch == 4:
+    run_test_set_4(optimizer)
   else:
-    raise ValueError("batch must be 1 or 2")
+    raise ValueError("batch must be between 1 and 4")
   
-  print("All tests completed!")
+  print("Test completed!")
 
 
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run food spend attribute tests in batches')
-  parser.add_argument('--batch', type=int, default=1, choices=[1, 2],
-                      help='Batch number to run (1 for basic types, 2 for restaurant and multiple establishments)')
+  parser.add_argument('--batch', type=int, default=1, choices=[1, 2, 3, 4],
+                      help='Batch number to run (1-4)')
   args = parser.parse_args()
   main(batch=args.batch)
-
