@@ -41,14 +41,14 @@ SYSTEM_PROMPT = """You are a financial planner that creates spending limits, inc
     - **Actual Dates**: Ensure all function calls point to actual YYYY-MM-DD strings.
 6.  **Amount and Category**:
     - **Computation**: Amounts must be computed from the input (e.g., "save $60,000 by 3 months from now" = 60000.0 total, or "10% of my $5000 salary" = 500.0).
-    - **Category Matching**: If a category is too specific or too general to match the `OFFICIAL_CATEGORIES` (e.g., "concert tickets" vs "entertainment"), return `(False, clarification_message)` asking for confirmation before setting the goal. **You MUST provide specific category options/suggestions from the OFFICIAL_CATEGORIES list in your clarification message.** For common sub-items with clear mappings (e.g., coffee → `meals_dining_out`), map directly. Category scope (income vs spending) is defined in AVAILABLE_FUNCTIONS—use the matching function.
+    - **Category Matching**: Parent and child slugs from OFFICIAL_CATEGORIES are valid. **When the user names a parent category**, create with that parent slug—do not ask for a subcategory. Map when clear: "food" → category="meals"; coffee → `meals_dining_out`; specific items that map to one category (e.g. NBA tickets → `leisure_entertainment`) → create, do not ask. When the request **could map to multiple categories** (e.g. a merchant like Walmart, or a term like "subscriptions", "craft supplies", "vintage stamp collecting"), return (False, clarification) with category options—do not infer one. Clarification format: "Which category? Options: slug1, slug2, slug3." Use AVAILABLE_FUNCTIONS for income vs spending scope.
 7.  **Granularity**:
     - For `save_0` goals, if granularity is missing, ask for confirmation. For `save_X_amount` goals, assume "monthly". Granularity can also be inferred from the conversation context.
 8.  **Account IDs**:
     - Use `account_ids` only if a specific storage account is mentioned in `Input Info`. If not mentioned, keep `account_ids` blank/None. It is not a requirement to set a goal/budget.
 9.  **Multiple Goals**: If multiple goals/budgets are requested, you **must call the create functions for each one** sequentially. Return a combined result string: `(True, f"Successfully created {count} goals: {msg1}. {msg2}")`.
-10. **Clarification**: If information is lacking, include available options (e.g., categories) in the message.
-11. **Output**: One function `process_input`. Return exactly (success, result) as described. **Do NOT define or mock any functions.** Use only the available functions listed below. **Do NOT include any code outside of the `process_input` function.** **Do NOT include any markdown text or explanations outside of the code block.**
+10. **Clarification**: One short sentence plus options. Format: "Which category? Options: slug1, slug2, slug3." No filler.
+11. **Output**: One function `process_input`. Return exactly (success, result) from the create function—do not rephrase or append. **Generated code must not include any comments.** **Do NOT define or mock any functions.** Use only the available functions below. **Do NOT include any code outside of `process_input`.** **Do NOT include markdown or text outside the code block.**
 
 <AVAILABLE_FUNCTIONS>
 
@@ -100,7 +100,6 @@ output:
 def process_input() -> tuple[bool, str]:
     import datetime
     today = datetime.datetime.today()
-    # Goal 1: Weekly Grocery Budget
     s1, r1 = create_category_spending_limit(
         category="meals_groceries",
         granularity="weekly",
@@ -109,7 +108,6 @@ def process_input() -> tuple[bool, str]:
         amount=150.0,
         title="Weekly Groceries 🛒"
     )
-    # Goal 2: House Deposit Savings
     s2, r2 = create_savings_goal(
         amount=5000.0,
         end_date="2028-01-01",
@@ -133,7 +131,6 @@ output:
 def process_input() -> tuple[bool, str]:
     import datetime
     today = datetime.datetime.today()
-    # Granularity inferred as monthly for save_X_amount. End date is 2 years from today.
     success, result = create_savings_goal(
         amount=50000.0,
         end_date=get_date_string(get_after_periods(today, "yearly", 2)),
@@ -150,8 +147,24 @@ input: **Creation Request**: Set a food budget for me.
 output:
 ```python
 def process_input() -> tuple[bool, str]:
-    # Food is too general. Provide specific options from OFFICIAL_CATEGORIES.
-    return False, "I can help with that! Which food category would you like to set a budget for? Options include: 'meals_groceries', 'meals_dining_out', or 'meals_delivered_food'. Also, please let me know the amount and if it's weekly or monthly."
+    return False, "I can set a budget for food. How much would you like the limit to be, and is it weekly or monthly?"
+```
+
+input: **Creation Request**: Set this month's food budget to $100.
+
+output:
+```python
+def process_input() -> tuple[bool, str]:
+    import datetime
+    today = datetime.datetime.today()
+    return create_category_spending_limit(
+        category="meals",
+        granularity="monthly",
+        start_date=get_date_string(get_start_of_month(today)),
+        end_date=get_date_string(get_end_of_month(today)),
+        amount=100.0,
+        title="Monthly Meals 🍽️"
+    )
 ```
 
 input: **Creation Request**: Set an annual budget for my insurance.
@@ -159,7 +172,6 @@ input: **Creation Request**: Set an annual budget for my insurance.
 output:
 ```python
 def process_input() -> tuple[bool, str]:
-    # Missing amount.
     return False, "I can set an annual budget for your insurance (bills_insurance). How much is the annual limit?"
 ```
 
@@ -172,7 +184,6 @@ output:
 def process_input() -> tuple[bool, str]:
     import datetime
     today = datetime.datetime.today()
-    # Goal 1: Monthly Shopping Limit
     s1, r1 = create_category_spending_limit(
         category="shopping_clothing",
         granularity="monthly",
@@ -181,8 +192,6 @@ def process_input() -> tuple[bool, str]:
         amount=500.0,
         title="Monthly Shopping 🛍️"
     )
-    # Goal 2: Car Savings (save_X_amount requires end_date, which is missing)
-    # Since end_date is missing for the total goal, we must ask for it.
     return False, f"I've noted your $500 shopping budget. For your $20,000 car goal, when would you like to reach this target by? I need an end date to set it up."
 ```
 
@@ -193,8 +202,6 @@ output:
 def process_input() -> tuple[bool, str]:
     import datetime
     today = datetime.datetime.today()
-    # Amount is 60000.0 total. Date is 3 months from today.
-    # This implies saving $20,000 every month, but we set the total goal.
     success, result = create_savings_goal(
         amount=60000.0,
         end_date=get_date_string(get_after_periods(today, "monthly", 3)),
@@ -213,7 +220,6 @@ output:
 def process_input() -> tuple[bool, str]:
     import datetime
     today = datetime.datetime.today()
-    # 10% of 5000 = 500.0. Periodic saving = save_0.
     success, result = create_savings_goal(
         amount=500.0,
         end_date="",
@@ -230,8 +236,15 @@ input: **Creation Request**: Set a $100 budget for my new hobby, underwater bask
 output:
 ```python
 def process_input() -> tuple[bool, str]:
-    # Category too specific. Suggest options.
-    return False, "I'd love to help with your underwater basket weaving budget! Which category should I use for this? Options include: 'leisure_entertainment', 'shopping_kids', or 'miscellaneous'."
+    return False, "Which category? Options: leisure_entertainment, shopping_kids, miscellaneous."
+```
+
+input: **Creation Request**: Limit my Walmart spending to $300 this month.
+
+output:
+```python
+def process_input() -> tuple[bool, str]:
+    return False, "Which category? Options: meals_groceries, shopping_clothing, shopping_gadgets, shopping_kids, shopping_pets."
 ```
 
 </EXAMPLES>
@@ -257,7 +270,6 @@ class CreateBudgetOrGoalOptimizerV2:
     self.top_p = 0.95
     self.top_k = 40
     self.max_output_tokens = 4096
-    self.thinking_budget = 0
 
     self.safety_settings = [
       types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
@@ -315,8 +327,10 @@ output:""")
           for candidate in chunk.candidates:
             if hasattr(candidate, "content") and candidate.content and getattr(candidate.content, "parts", None):
               for part in candidate.content.parts:
-                if getattr(part, "thought", False) and getattr(part, "text", None):
-                  thought_summary = (thought_summary + part.text) if thought_summary else part.text
+                if getattr(part, "thought", False):
+                  t = getattr(part, "text", None) or (getattr(part.thought, "text", None) if hasattr(part, "thought") else None)
+                  if t:
+                    thought_summary = (thought_summary + t) if thought_summary else t
     except ClientError as e:
       if self.thinking_budget == 0 and "only works in thinking mode" in (str(e) or ""):
         print("\n[NOTE] This model requires thinking mode; API rejected thinking_budget=0. Use default (no --no-thinking) or a different model for non-thinking.", flush=True)
@@ -328,6 +342,8 @@ output:""")
       print("-" * 80)
       print(thought_summary.strip())
       print("-" * 80 + "\n")
+    elif self.thinking_budget > 0:
+      print("\n[No thought summary returned—model may not support thinking or returned no reasoning block.]\n")
     return output_text
 
 
@@ -361,7 +377,9 @@ def _get_heavy_data_user_id() -> int:
 
 
 def _run_test_with_logging(creation_request: str, input_info: str = None, optimizer: CreateBudgetOrGoalOptimizerV2 = None, user_id: int = None):
-  """Run one test with logging. Uses sandbox.execute_agent_with_tools (expects process_input())."""
+  """Run one test with logging. Uses sandbox.execute_agent_with_tools (expects process_input()).
+  Returns (llm_result, execution_success, execution_output, error).
+  execution_success/execution_output are None if no code was extracted or sandbox raised."""
   if optimizer is None:
     optimizer = CreateBudgetOrGoalOptimizerV2()
   if user_id is None:
@@ -386,6 +404,9 @@ output:"""
   print("=" * 80 + "\n")
 
   code = extract_code_from_response(result)
+  execution_success = None
+  execution_output = None
+  run_error = None
   if code:
     print("=" * 80)
     print("EXECUTION RESULTS:")
@@ -393,6 +414,8 @@ output:"""
     try:
       import sandbox
       success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(result, user_id)
+      execution_success = success
+      execution_output = output_string or ""
       print(f"Success: {success}")
       print()
       print("Output:")
@@ -404,11 +427,12 @@ output:"""
         print("Goals list:", json.dumps(goals_list, indent=2))
       print("=" * 80 + "\n")
     except Exception as e:
-      print(f"**Sandbox Execution Error**: {str(e)}")
+      run_error = str(e)
+      print(f"**Sandbox Execution Error**: {run_error}")
       import traceback
       print(traceback.format_exc())
       print("=" * 80 + "\n")
-  return result
+  return result, execution_success, execution_output, run_error
 
 
 TEST_CASES = [
@@ -416,97 +440,176 @@ TEST_CASES = [
     "name": "total_vs_periodic_savings",
     "last_user_request": "I want to save $10,000 for a car by next year, maybe $500 a month.",
     "previous_conversation": "User: I have $20,000 in my savings account (account_id: 1234).",
-    "ideal_response": "Expected: create_savings_goal(amount=10000, goal_type='save_X_amount', account_ids=[1234], ...). Should prioritize the total amount.",
+    "ideal_response": "Expected: create_savings_goal(amount=10000.0, end_date=<end of next year YYYY-MM-DD>, title='Car savings' or similar, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=[1234]). Should prioritize the total amount.",
+    "expected_success": True,
   },
   {
     "name": "missing_info_with_options",
     "last_user_request": "I want to set a spending limit for my food.",
     "previous_conversation": "User: I usually spend on Groceries and Dining Out.",
     "ideal_response": "Expected: Return (False, clarification) asking for amount and granularity, and mentioning options like Groceries or Dining Out.",
+    "expected_success": False,
   },
   {
     "name": "implicit_intent_spending_limit",
     "last_user_request": "Limit my coffee spending to $50 every month.",
     "previous_conversation": "",
-    "ideal_response": "Expected: create_category_spending_limit(category='meals_dining_out', amount=50, granularity='monthly', ...).",
+    "ideal_response": "Expected: create_category_spending_limit(category='meals_dining_out', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=50.0, title='Monthly coffee' or similar).",
+    "expected_success": True,
   },
   {
     "name": "rounding_duration_up",
     "last_user_request": "I want to save $1000 over the next 1.3 weeks.",
     "previous_conversation": "",
-    "ideal_response": "Expected: end_date should be rounded up to 2 weeks from today.",
+    "ideal_response": "Expected: create_savings_goal(amount=1000.0, end_date=<2 weeks from today YYYY-MM-DD, rounded up from 1.3>, title=..., goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None).",
+    "expected_success": True,
   },
   {
     "name": "year_inference_passed_date",
     "last_user_request": "Save $500 by January 15th.",
     "previous_conversation": "Today is Feb 20, 2026.",
-    "ideal_response": "Expected: target_year should be 2027 since Jan 15, 2026 has passed.",
+    "ideal_response": "Expected: create_savings_goal(amount=500.0, end_date='2027-01-15', title=..., goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None). Target year 2027 since Jan 15, 2026 has passed.",
+    "expected_success": True,
   },
   {
     "name": "computed_amount_percentage",
     "last_user_request": "Save 10% of my $5000 monthly income.",
     "previous_conversation": "",
-    "ideal_response": "Expected: amount=500.0.",
+    "ideal_response": "Expected: create_savings_goal(amount=500.0, end_date='', title='Monthly Savings' or similar, goal_type='save_0', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, account_ids=None).",
+    "expected_success": True,
+  },
+  {
+    "name": "parent_category_matching",
+    "last_user_request": "set this month's food budget to $100",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_category_spending_limit(category='meals', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date=<end of current month YYYY-MM-DD>, amount=100.0, title='Monthly Meals' or similar).",
+    "expected_success": True,
   },
   {
     "name": "category_specificity_confirmation",
     "last_user_request": "Set a $80 monthly budget for my vintage stamp collecting.",
     "previous_conversation": "",
     "ideal_response": "Expected: Return (False, clarification) asking which category this fits into (e.g. leisure_entertainment, shopping, miscellaneous).",
+    "expected_success": False,
+  },
+  {
+    "name": "category_clear_mapping",
+    "last_user_request": "limit my nba tickets spending to $300 this month.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: Return (True, create_category_spending_limit(category='leisure_entertainment', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=300.0, title='NBA tickets' or similar)).",
+    "expected_success": True,
+  },
+  {
+    "name": "category_ambiguity_walmart",
+    "last_user_request": "limit my walmart spending to $300 this month.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: Return (False, clarification) asking which category this fits into (e.g. meals_groceries, shopping_clothing, shopping_gadgets, shopping_kids, shopping_pets).",
+    "expected_success": False,
+  },
+  {
+    "name": "category_ambiguous_subscriptions",
+    "last_user_request": "Set a $200 monthly budget for subscriptions.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: Return (False, clarification) asking which category (subscriptions span multiple, e.g. bills_connectivity, leisure_entertainment).",
+    "expected_success": False,
   },
   {
     "name": "granularity_confirmation_save_0",
     "last_user_request": "I want to save $200 for my vacation.",
     "previous_conversation": "",
     "ideal_response": "Expected: Return (False, clarification) asking for granularity or a target date.",
+    "expected_success": False,
   },
   {
     "name": "inferred_end_date_from_context",
     "last_user_request": "Set that savings goal for the house we talked about.",
     "previous_conversation": "User: I want to buy a house in 2 years. It will cost $50,000.",
-    "ideal_response": "Expected: create_savings_goal(amount=50000, end_date=2 years from now, ...).",
+    "ideal_response": "Expected: create_savings_goal(amount=50000.0, end_date=<2 years from today YYYY-MM-DD>, title='House savings' or similar, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None).",
+    "expected_success": True,
   },
   {
     "name": "account_id_storage_inference",
     "last_user_request": "Save $1000 in my rainy day fund.",
     "previous_conversation": "User: My rainy day fund is account_id 9999.",
-    "ideal_response": "Expected: account_ids=[9999].",
+    "ideal_response": "Expected: create_savings_goal(amount=1000.0, end_date='', title='Rainy day fund' or similar, goal_type='save_X_amount' or 'save_0', granularity='monthly', start_date=<today or start of month YYYY-MM-DD>, account_ids=[9999]).",
+    "expected_success": True,
   },
   {
     "name": "multiple_goals_execution_output",
     "last_user_request": "Set a $200 monthly limit for groceries and save $1000 for a trip by December.",
     "previous_conversation": "",
-    "ideal_response": "Expected: Call both create functions and return a success message mentioning both.",
+    "ideal_response": "Expected: create_category_spending_limit(category='meals_groceries', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=200.0, title='Monthly Groceries' or similar) and create_savings_goal(amount=1000.0, end_date=<December current year YYYY-12-31>, title='Trip' or similar, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None). Return success message mentioning both.",
+    "expected_success": True,
   },
   {
     "name": "non_whole_number_weeks",
     "last_user_request": "Save $300 over 2.7 weeks.",
     "previous_conversation": "",
-    "ideal_response": "Expected: Round up to 3 weeks.",
+    "ideal_response": "Expected: create_savings_goal(amount=300.0, end_date=<3 weeks from today YYYY-MM-DD, rounded up from 2.7>, title=..., goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None).",
+    "expected_success": True,
   },
   {
     "name": "income_goal",
     "last_user_request": "Set a goal to earn $10,000 this month.",
     "previous_conversation": "",
-    "ideal_response": "Expected: create_income_goal(category='income', amount=10000, granularity='monthly', ...).",
+    "ideal_response": "Expected: create_income_goal(category='income', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date=<end of current month YYYY-MM-DD>, amount=10000.0, title='Monthly income' or similar).",
+    "expected_success": True,
   },
   {
     "name": "income_goal_salary",
     "last_user_request": "Set a goal to earn $5000 in salary this month.",
     "previous_conversation": "",
-    "ideal_response": "Expected: create_income_goal(category='income_salary', amount=5000, granularity='monthly', ...).",
+    "ideal_response": "Expected: create_income_goal(category='income_salary', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date=<end of current month YYYY-MM-DD>, amount=5000.0, title='Monthly salary' or similar).",
+    "expected_success": True,
   },
   {
     "name": "income_goal_sidegig",
     "last_user_request": "I want to make $6000 from my side gig this year.",
     "previous_conversation": "",
-    "ideal_response": "Expected: create_income_goal(category='income_sidegig', amount=6000, granularity='yearly', ...).",
+    "ideal_response": "Expected: create_income_goal(category='income_sidegig', granularity='yearly', start_date=<start of current year YYYY-01-01>, end_date=<end of current year YYYY-12-31>, amount=6000.0, title='Side gig' or similar).",
+    "expected_success": True,
   },
   {
     "name": "income_goal_sidegig_monthly",
     "last_user_request": "I want to make to earn at least $5000 from my side gig monthly.",
     "previous_conversation": "",
-    "ideal_response": "Expected: create_income_goal(category='income_sidegig', amount=6000, granularity='yearly', ...).",
+    "ideal_response": "Expected: create_income_goal(category='income_sidegig', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=5000.0, title='Monthly side gig' or similar).",
+    "expected_success": True,
+  },
+  {
+    "name": "bounded_period_spending_limit",
+    "last_user_request": "Set a $500 budget for dining out for March.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_category_spending_limit(category='meals_dining_out', granularity='monthly', start_date='YYYY-03-01', end_date='YYYY-03-31', amount=500.0, title=...). Bounded period so both start_date and end_date set to March.",
+    "expected_success": True,
+  },
+  {
+    "name": "save_0_weekly",
+    "last_user_request": "I want to save $100 per week.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_savings_goal(amount=100.0, end_date='', title=..., goal_type='save_0', granularity='weekly', start_date=<start of current week YYYY-MM-DD>, account_ids=None).",
+    "expected_success": True,
+  },
+  {
+    "name": "parent_category_bills",
+    "last_user_request": "Set a $400 monthly budget for bills.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_category_spending_limit(category='bills', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=400.0, title='Monthly Bills' or similar).",
+    "expected_success": True,
+  },
+  {
+    "name": "income_goal_interest",
+    "last_user_request": "I want to earn $500 in interest this year.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: create_income_goal(category='income_interest', granularity='yearly', start_date=<start of current year YYYY-01-01>, end_date=<end of current year YYYY-12-31>, amount=500.0, title='Interest' or similar).",
+    "expected_success": True,
+  },
+  {
+    "name": "intent_ambiguous_clarification",
+    "last_user_request": "I want to set aside some money.",
+    "previous_conversation": "",
+    "ideal_response": "Expected: Return (False, clarification) asking for amount and whether they want a spending limit, savings goal, or income goal.",
+    "expected_success": False,
   },
 ]
 
@@ -525,51 +628,92 @@ def get_test_case(test_name_or_index):
 
 
 def run_test(test_name_or_index_or_dict, optimizer: CreateBudgetOrGoalOptimizerV2 = None):
+  """Run a single test. Returns dict with keys: passed (bool), name (str), reason (str or None)."""
   if isinstance(test_name_or_index_or_dict, dict):
     if "last_user_request" not in test_name_or_index_or_dict:
       print("Invalid test dict: must contain 'last_user_request'.")
-      return None
-    name = test_name_or_index_or_dict.get("name", "custom_test")
+      return {"passed": False, "name": "custom_test", "reason": "invalid dict"}
+    tc = test_name_or_index_or_dict
+    name = tc.get("name", "custom_test")
     print(f"\n{'='*80}\nRunning test: {name}\n{'='*80}\n")
-    result = _run_test_with_logging(
-      test_name_or_index_or_dict["last_user_request"],
-      test_name_or_index_or_dict.get("previous_conversation", ""),
+    result, execution_success, execution_output, run_error = _run_test_with_logging(
+      tc["last_user_request"],
+      tc.get("previous_conversation", ""),
       optimizer,
     )
-    if test_name_or_index_or_dict.get("ideal_response"):
-      print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + test_name_or_index_or_dict["ideal_response"] + "\n" + "=" * 80 + "\n")
-    return result
+    if tc.get("ideal_response"):
+      print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + tc["ideal_response"] + "\n" + "=" * 80 + "\n")
+    expected = tc.get("expected_success")
+    passed, reason = _check_pass_fail(name, expected, execution_success, run_error)
+    if not passed:
+      print(f"\n*** FAIL: {name} — {reason}\n")
+    return {"passed": passed, "name": name, "reason": reason}
   tc = get_test_case(test_name_or_index_or_dict)
   if tc is None:
     print(f"Test case '{test_name_or_index_or_dict}' not found.")
-    return None
+    return {"passed": False, "name": str(test_name_or_index_or_dict), "reason": "test not found"}
   print(f"\n{'='*80}\nRunning test: {tc['name']}\n{'='*80}\n")
-  result = _run_test_with_logging(tc["last_user_request"], tc.get("previous_conversation", ""), optimizer)
+  result, execution_success, execution_output, run_error = _run_test_with_logging(
+    tc["last_user_request"], tc.get("previous_conversation", ""), optimizer
+  )
   if tc.get("ideal_response"):
     print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + tc["ideal_response"] + "\n" + "=" * 80 + "\n")
-  return result
+  expected = tc.get("expected_success")
+  passed, reason = _check_pass_fail(tc["name"], expected, execution_success, run_error)
+  if not passed:
+    print(f"\n*** FAIL: {tc['name']} — {reason}\n")
+  return {"passed": passed, "name": tc["name"], "reason": reason}
+
+
+def _check_pass_fail(name: str, expected_success: bool, execution_success, run_error: str):
+  """Return (passed: bool, reason: str)."""
+  if expected_success is None:
+    return True, None
+  if run_error:
+    return False, f"Sandbox error: {run_error}"
+  if execution_success is None:
+    return False, "No code extracted or no execution (expected_success cannot be checked)"
+  if execution_success != expected_success:
+    return False, f"expected success={expected_success}, got success={execution_success}"
+  return True, None
 
 
 def main(test: str = None, no_thinking: bool = False):
-  """Run single test (--test <index|name>) or all tests (--test all). --no-thinking sets thinking_budget=0."""
+  """Run single test (--test <index|name>) or all tests (--test all). --no-thinking sets thinking_budget=0.
+  Exit code 1 if any test fails (when expected_success != execution success)."""
   optimizer = CreateBudgetOrGoalOptimizerV2(thinking_budget=0 if no_thinking else 4096)
 
   if test is not None:
     if test.strip().lower() == "all":
       print(f"\n{'='*80}\nRunning ALL test cases\n{'='*80}\n")
+      results = []
       for i in range(len(TEST_CASES)):
-        run_test(i, optimizer)
+        outcome = run_test(i, optimizer)
+        results.append(outcome)
         if i < len(TEST_CASES) - 1:
           print("\n" + "-" * 80 + "\n")
-      return
+      passed_count = sum(1 for r in results if r["passed"])
+      failed_count = len(results) - passed_count
+      print("\n" + "=" * 80)
+      print("SUMMARY")
+      print("=" * 80)
+      print(f"Passed: {passed_count}  Failed: {failed_count}  Total: {len(results)}")
+      if failed_count > 0:
+        print("\nFailed tests:")
+        for r in results:
+          if not r["passed"]:
+            print(f"  - {r['name']}: {r.get('reason', 'unknown')}")
+      print("=" * 80 + "\n")
+      return 0 if failed_count == 0 else 1
     test_val = int(test) if test.isdigit() else test
-    result = run_test(test_val, optimizer)
-    if result is None:
+    outcome = run_test(test_val, optimizer)
+    if outcome.get("reason") == "test not found":
       print("\nAvailable test cases:")
       for i, tc in enumerate(TEST_CASES):
         print(f"  {i}: {tc['name']}")
       print("  all: run all test cases")
-    return
+      return 0
+    return 0 if outcome["passed"] else 1
 
   print("Usage:")
   print("  Run a single test: --test <name_or_index>")
@@ -579,12 +723,14 @@ def main(test: str = None, no_thinking: bool = False):
   for i, tc in enumerate(TEST_CASES):
     print(f"  {i}: {tc['name']}")
   print("  all: run all test cases")
+  return 0
 
 
 if __name__ == "__main__":
   import argparse
+  import sys
   parser = argparse.ArgumentParser(description="Create budget or goal optimizer v2 (create_category_spending_limit, create_income_goal, create_savings_goal)")
   parser.add_argument("--test", type=str, help='Test name or index (e.g. "0" or "food_budget_next_month" or "all")')
   parser.add_argument("--no-thinking", action="store_true", help="Set thinking_budget=0 (Thinking OFF) for comparison")
   args = parser.parse_args()
-  main(test=args.test, no_thinking=args.no_thinking)
+  sys.exit(main(test=args.test, no_thinking=args.no_thinking))
