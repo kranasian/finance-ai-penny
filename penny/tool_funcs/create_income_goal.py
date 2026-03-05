@@ -7,6 +7,7 @@ from typing import Tuple
 from penny.tool_funcs.create_category_spending_limit import create_category_spending_limit
 
 INCOME_CATEGORIES = frozenset({
+    "income",
     "income_salary",
     "income_sidegig",
     "income_business",
