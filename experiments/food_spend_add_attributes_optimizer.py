@@ -28,12 +28,6 @@ SCHEMA = types.Schema(
   )
 )
 
-<<<<<<< HEAD
-SYSTEM_PROMPT = """Task: Analyze food establishment data to determine primary category and secondary attributes.
-
-Input: JSON list of establishments (id, name, description).
-Output: JSON list of attributes (id, primary, secondary).
-=======
 SYSTEM_PROMPT = """Task: Transform Food Establishment JSON to Attribute JSON utilizing standard business taxonomy.
 
 Mapping Rules:
@@ -50,7 +44,6 @@ Mapping Rules:
    - CRITICAL NEGATIVE CONSTRAINTS: Tags MUST NOT contain the following words (even as substrings):
      "food", "dish", "cuisine", "snack", "meal", "eatery", "appetizer", "entree", "heat", "place".
    - ONLY use standard singular nouns for items (e.g. "Burger"), flavor descriptors, or established category names (e.g. "Coffee Shop").
->>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
 
 Definitions:
 - `primary`: Select one or more from ["Fast food", "Restaurant", "Beverage", "Grocery"].
@@ -350,7 +343,6 @@ def test_with_inputs(test_name_or_index_or_dict, optimizer: FoodSpendAddAttribut
     print(f"Test case '{test_name_or_index_or_dict}' not found.")
     return None
 
-<<<<<<< HEAD
 
 def run_test_set_1(optimizer: FoodSpendAddAttributesOptimizer = None):
   return test_with_inputs([
@@ -379,20 +371,6 @@ def run_test_set_4(optimizer: FoodSpendAddAttributesOptimizer = None):
     { "id": 2002, "name": "Marugame Udon", "description": "This is a credit from a Japanese restaurant specializing in udon noodles and tempura." },
     { "id": 2003, "name": "Harry & David", "description": "sends fruit baskets and gourmet gifts" }
   ], optimizer)
-=======
-  print(f"\n{'='*80}")
-  print(f"Running test: {test_case.get('name', 'custom_test')}")
-  print(f"{'-'*80}\n")
-  
-  result = optimizer.generate(test_case["establishments"])
-  
-  if test_case.get("ideal_response", ""):
-    print(f"\n{'='*80}")
-    print(f"Ideal response:\n{test_case['ideal_response']}")
-    print(f"{'='*80}\n")
-    
-  return result
->>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
 
 
 def main(batch: int = 1):
@@ -413,7 +391,6 @@ def main(batch: int = 1):
   optimizer = FoodSpendAddAttributesOptimizer()
   
   if batch == 1:
-<<<<<<< HEAD
     run_test_set_1(optimizer)
   elif batch == 2:
     run_test_set_2(optimizer)
@@ -423,14 +400,6 @@ def main(batch: int = 1):
     run_test_set_4(optimizer)
   else:
     raise ValueError("batch must be between 1 and 4")
-=======
-    for tc in TEST_CASES:
-      test_with_inputs(tc, optimizer)
-  elif batch == 2:
-    print("Batch 2 not yet implemented.")
-  else:
-    raise ValueError("batch must be 1")
->>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
   
   print("Test completed!")
 
