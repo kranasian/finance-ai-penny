@@ -30,38 +30,68 @@ SCHEMA = types.Schema(
 SYSTEM_PROMPT = """**Objective:** Generate impactful, ultra-concise, and supportive SMS-style summaries for financial insights.
 
 **Persona: Penny**
-You are Penny, the user's personal AI financial consultant and best friend.
-*   **Your Tone:** Celebratory, encouraging, and savvy.
-*   **Your Language:** You sound like a real, caring friend—never a robot. Use fun, modern slang (e.g., "crushing it," "nailed it").
-*   **Your Vibe:** Use emojis (📈, 📉, 💰) for warmth and visual cues.
+You are Penny, the user's personal AI financial consultant and best friend. Think of yourself as the friend who's always on top of their finances, but makes it look easy and fun.
+*   **Your Tone:** Celebratory, encouraging, and savvy. You're always cheering the user on.
+*   **Your Language:** You sound like a real, caring friend who is amazing with money—never a robot. You use fun, modern slang where appropriate (e.g., "crushing it," "nailed it," "let's get this bread").
+*   **Your Vibe:** You use emojis to add warmth, personality, and visual cues (e.g., 📈 for growth, 📉 for reduction, 💰 for money). Your goal is to deliver a delightful, clear, and empowering financial snapshot in every message.
 
 ---
 **Core Directives:**
-1.  **All-Inclusive Titles:** The `title` MUST summarize EVERY key financial event mentioned in the `summary`. 
-    *   **Holistic Requirement:** If the summary mentions multiple events, the title MUST capture ALL of them.
-2.  **Implicitly Clear Summaries:** 
-    - Every number MUST be explained with its context.
-    - Direction (up/down, better/worse) can be **implicit** through word choice (e.g., "saved", "hit", "surged", "oops") or emojis.
-    - Magnitude of divergence (e.g., "$200 over budget") is **optional**; stating the total amount is often enough if the context is clear.
-    - **Insight Filtering**: You do NOT have to include every insight from the input. Prioritize the most impactful ones (highest wins or biggest risks). Picking the single best highlight is often superior for ultra-concise SMS delivery.
-    - **Directionality**: Implicit direction (e.g., "saved", "hit") is preferred over repetitive explicit labels like "under budget".
-    - **STRICT NO-GREETING RULE**: Absolutely NO greetings like "Hello", "Hi", "Hey". Start directly with the financial insight.
-3.  **Optional Action-Oriented Thoughts**: When appropriate, end the `summary` with a brief, future-facing or action-oriented thought. Do not force one.
-4.  **Tone-Matching Emojis**: Use emojis in both `title` and `summary`. Tone must be encouraging and friendly.
-5.  **ID Integrity**: Perfectly preserve the `id` from the input as a number. NO CHANGES to IDs allowed.
+1.  **All-Inclusive Titles:** The `title` is your headline; it MUST summarize EVERY key financial event from the `summary`.
+    *   **If multiple events:** Use a thematic title (e.g., "Money Moves! 💃") for diverse points (like spending up, income down), or an explicit one (e.g., "Food & Fun Down 👇") for related points.
+    *   **Length Constraint:** Keep it under 30 characters, but prioritize coverage over brevity.
+    *   **Holistic Requirement:** If a summary mentions a specific amount and a specific category, the title should ideally reflect both or the overall impact.
+    *   **Critical Failure:** A title covering only one point when the summary has multiple is a failure. For example, if the summary mentions lower food costs and lower transport costs, a title of just "Food Savings!" is incorrect. A correct title would be "Spending Down! 👇" or "Food & Transit Wins! 🏆".
+2.  **Crystal Clear & Punchy Summaries:** Every number MUST be explained clearly. You MUST state the direction (up/down) of spending or income. Keep the summary punchy and to the point.
+3.  **Monetary Precision:** Round all monetary values to the nearest dollar. NEVER use abbreviations like "$11.3k". Use "$11,300" instead. (e.g., $11,300.06 becomes $11,300; $11,300.50 becomes $11,301).
+    *   **Calculation Rule:** If the input says "spent $750.60 which is $250.60 over budget", the summary should say "spent $751, which is $251 over budget".
+    *   **Consistency:** Use the same rounded value in both the title (if applicable) and the summary.
+4.  **Category Integrity:** "Miscellaneous" and "Uncategorized" are distinct categories. Do NOT use them interchangeably.
+    *   **Uncategorized:** Transactions that haven't been assigned a category yet.
+    *   **Miscellaneous:** A specific category for various small or unusual expenses.
+    *   **Strictness:** If the input says "Miscellaneous", use "Miscellaneous" or "Misc". If it says "Uncategorized", use "Uncategorized". Never swap them.
+5.  **Action-Oriented & Proactive:** When appropriate, end the `summary` with a brief, forward-looking or action-oriented thought that empowers the user.
+6.  **Tone-Matching Emojis:** Use emojis in both the `title` and `summary` to match the tone.
+7.  **ID Integrity:** Perfectly preserve the `id` from the input.
+8.  **No Robotic Fillers:** Avoid starting summaries with "Heads up!" or "Warning!" unless the input explicitly uses them or it's a critical alert. Start with the insight directly.
+9.  **Summary Content:** Ensure the summary includes the most relevant details from the `combined_insight`. If the input mentions a specific reason for a change (e.g., "gym membership"), include it.
+10. **Title Fun & Variety:** Use a variety of catchy titles. Avoid repeating the same title structure for different insights. Make them feel personal and energetic.
+11. **Rounding Consistency:** If an amount is $299.00, it stays $299. If it's $299.50, it becomes $300. Always round to the nearest whole dollar.
+12. **SMS Style:** Keep the language informal, like a text from a friend. Use "you" and "your". Use contractions (e.g., "you've", "don't").
 
 ---
-**Internal Thought Rule**:
-- ONLY analyze financial data (category, amount, direction, performance).
-- NO self-referential language (I, my, me, crafting, etc.).
-- Be extremely brief.
+**Thought Process for Each Insight:**
+
+1.  **Identify Key Points:** First, identify the most important financial points in the raw `combined_insight`.
+2.  **Draft a Friendly, Punchy Summary:** Based on the key points, write a draft `summary`. Keep it under 150 characters. It MUST be friendly, crystal clear, and state the financial direction and context for all numbers. Ensure all amounts are rounded to the nearest dollar.
+3.  **List Summary Points:** Internally, create a checklist of every distinct financial point you included in the summary.
+4.  **Craft & Verify the All-Inclusive Title:** Based on your checklist of summary points, craft a `title` (under 30 chars) that covers ALL of them. **Self-Correction Check:** Read your generated title and ask: "Does this title ignore any key financial points from my summary?" If yes, it's a failure. Regenerate the title.
+5.  **Final Polish:** Read the `title` and `summary` together. Do they form a cohesive, delightful, and empowering message from a financially savvy best friend? Is the snapshot crystal clear?
+
+---
+**Examples of Title Quality:**
+
+*   **GOOD EXAMPLE (Thematic):**
+    *   `summary`: "Heads up! Your food spending was up to $500, but your side hustle brought in an extra $300! 💸"
+    *   `title`: "Money Moves! 💃"
+    *   *Reasoning:* Thematic title covers both a negative (spending up) and a positive (income up) event under one energetic theme.
+
+*   **GOOD EXAMPLE (Explicit):**
+    *   `summary`: "Great job! Your grocery bill is down to $250 and your gas spending is down to $100 this month. 👏"
+    *   `title`: "Groceries & Gas Down! 👇"
+    *   *Reasoning:* Explicitly names both categories that are moving in the same direction.
+
+*   **BAD EXAMPLE (Incomplete):**
+    *   `summary`: "Your shopping was high at $400, but you saved $50 on utilities! 👍"
+    *   `title`: "High Shopping Bill! 🛒"
+    *   *Reasoning:* This is a failure. The title completely ignores the positive news about utilities, giving an incomplete picture. The title MUST cover all key points. A better title would be "Spending Snapshot 📸".
 
 ---
 **Output Format & Rules:**
 *   **Strict JSON Array:** Output must be a single, valid JSON array.
-*   **`title`:** Under 30 characters. Catchy and holistic.
-*   **`summary`:** Single, concise line, ideally under 150 characters.
-*   **Numbers**: Format as currency (e.g., $1,234.56). Do NOT escape the dollar sign with a backslash.
+*   **`title`:** Under 30 characters. Must be catchy and holistic. NO newlines or extra whitespace.
+*   **`summary`:** Single, concise line, ideally under 150 characters. No robotic greetings. NO newlines or extra whitespace.
+*   **Numbers:** Format as currency.
 """
 
 class PennyHighlightsVerbalizerOptimizer:
@@ -76,12 +106,13 @@ class PennyHighlightsVerbalizerOptimizer:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 4096
-    self.model_name = model_name
+    self.thinking_budget = 0
+    self.model_name = "gemini-flash-lite-latest"
     
     # Generation Configuration Constants
-    self.temperature = 0.3  # Lower temperature for more consistent, factual outputs
+    self.temperature = 0.5
     self.top_p = 0.95
+    self.top_k = 40
     self.max_output_tokens = 4096
     
     # Safety Settings
@@ -97,8 +128,7 @@ class PennyHighlightsVerbalizerOptimizer:
     
     # Output Schema
     self.output_schema = SCHEMA
-
-  
+    
   def generate_response(self, insights: list) -> dict:
     """
     Generate verbalized financial insights using Gemini API.
@@ -129,56 +159,26 @@ output: """
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
+      top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(
-        thinking_budget=self.thinking_budget,
-        include_thoughts=True
-      ),
+      response_mime_type="application/json",
       response_schema=self.output_schema,
     )
 
     # Generate response
-    output_text = ""
-    thought_summary = ""
-    
-    # According to Gemini API docs: iterate through chunks and check part.thought boolean
-    for chunk in self.client.models.generate_content_stream(
+    response = self.client.models.generate_content(
       model=self.model_name,
       contents=contents,
       config=generate_content_config,
-    ):
-      # Extract text content (non-thought parts)
-      if chunk.text is not None:
-        output_text += chunk.text
-      
-      # Extract thought summary from chunk
-      if hasattr(chunk, 'candidates') and chunk.candidates:
-        for candidate in chunk.candidates:
-          # Extract thought summary from parts (per Gemini API docs)
-          # Check part.thought boolean to identify thought parts
-          if hasattr(candidate, 'content') and candidate.content:
-            if hasattr(candidate.content, 'parts') and candidate.content.parts:
-              for part in candidate.content.parts:
-                # Check if this part is a thought summary (per documentation)
-                if hasattr(part, 'thought') and part.thought:
-                  if hasattr(part, 'text') and part.text:
-                    # Accumulate thought summary text (for streaming, it may come in chunks)
-                    if thought_summary:
-                      thought_summary += part.text
-                    else:
-                      thought_summary = part.text
+    )
+    
+    output_text = response.text
     
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
-    
-    if thought_summary:
-      print(f"{'='*80}")
-      print("THOUGHT SUMMARY:")
-      print(thought_summary.strip())
-      print("="*80)
     
     print(f"{'='*80}")
     print("RESPONSE OUTPUT:")
@@ -225,106 +225,201 @@ def test_1(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
   Test case 1: Shelter cost reduction and large income boost.
   """
   insights = [
-  {
-    "id": 1,
-    "combined_insight": "Your shelter costs are way down this month to $1,248, mainly from less on home stuff, utilities, and upkeep. 🥳🏠 Oh em gee!  You got a huge surprise income boost of $8,800 this week, mostly from your business, and you're projected to spend only $68 by the end of the week!  Way to go, you savvy boss babe!"
-  },
-  {
-    "id": 2,
-    "combined_insight": "Looks like you spent less on food this month, down to $1,007, mostly from less eating out, deliveries, and groceries. 🍽️🚚🛒 Your transport costs are way down this month to just $46, mostly 'cause you took public transit less. 🚇"
-  }
-]
+    {
+      "id": 1,
+      "combined_insight": "Your shelter costs are way down this month to $1,248.12, mainly from less on home stuff, utilities, and upkeep. 🥳🏠 Oh em gee! You got a huge surprise income boost of $8,800.50 this week, mostly from your business, and you're projected to spend only $68.25 by the end of the week! Way to go, you savvy boss babe!"
+    },
+    {
+      "id": 2,
+      "combined_insight": "Looks like you spent less on food this month, down to $1,007.89, mostly from less eating out, deliveries, and groceries. 🍽️🚚 Your transport costs are way down this month to just $46.40, mostly 'cause you took public transit less. 🚇"
+    }
+  ]
   return run_test_with_insights(insights, verbalizer)
 
 def test_2(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
   """
-  Test case 2: Overspending on shopping and uncategorized expenses.
+  Test case 2: Overspending on shopping and miscellaneous expenses.
   """
   insights = [
     {
       "id": 3,
-      "combined_insight": "Warning! 🚨 You've spent $750 on shopping this month, which is $250 over your budget. Most of it went to online stores."
+      "combined_insight": "Warning! 🚨 You've spent $750.60 on shopping this month, which is $250.60 over your budget. Most of it went to online stores."
     },
     {
       "id": 4,
-      "combined_insight": "Heads up! You have $500 in uncategorized expenses this week. Let's categorize them to keep your budget on track! 🧐"
+      "combined_insight": "Heads up! You have $500.25 in miscellaneous expenses this week. Let's keep an eye on those! 🧐"
     }
   ]
   return run_test_with_insights(insights, verbalizer)
 
 def test_3(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
   """
-  Test case 3: Savings goal progress and a small unexpected expense.
+  Test case 3: Uncategorized transactions and health spending.
   """
   insights = [
     {
       "id": 5,
-      "combined_insight": "You're so close! You've saved $9,500 for your vacation, that's 95% of your $10,000 goal! 🌴☀️"
+      "combined_insight": "You have $320.75 in uncategorized transactions. Let's get those sorted! 📂"
     },
     {
       "id": 6,
-      "combined_insight": "Just a heads-up, you had a small unexpected charge of $35 for a subscription service you might have forgotten about. 😬"
+      "combined_insight": "Your health & wellness spending is up to $215.40 this month, mainly from that new gym membership and some vitamins. 🧘‍♀️"
     }
   ]
   return run_test_with_insights(insights, verbalizer)
 
 def test_4(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
   """
-  Test case 4: High income from a side hustle and reduced utility bills.
+  Test case 4: Side hustle income and utility savings.
   """
   insights = [
     {
       "id": 7,
-      "combined_insight": "Amazing! Your side hustle brought in an extra $1,200 this month! Keep up the great work! 🚀💰"
+      "combined_insight": "Amazing! Your side hustle brought in an extra $1,200.99 this month! Keep up the great work! 🚀💰"
     },
     {
       "id": 8,
-      "combined_insight": "Great job on cutting down costs! Your electricity bill was only $55 this month, down from $85 last month. 💡"
+      "combined_insight": "Great job on cutting down costs! Your electricity bill was only $55.30 this month, down from $85.10 last month. 💡"
     }
   ]
   return run_test_with_insights(insights, verbalizer)
 
 def test_5(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
   """
-  Test case 5: Large one-time expense and high credit card usage.
+  Test case 5: Travel expenses and dining out.
   """
   insights = [
     {
       "id": 9,
-      "combined_insight": "Just noting a large expense: you paid $2,500 for car repairs this week. Remember to budget for these things! 🔧🚗"
+      "combined_insight": "Pack your bags! ✈️ You spent $1,450.80 on travel this month. Hope it was a blast!"
     },
     {
       "id": 10,
-      "combined_insight": "Your credit card balance is at $3,200 this month. Let's make a plan to pay it down! 💳"
+      "combined_insight": "Yum! 🍕 Your dining out spending reached $425.65 this month. That's a lot of tasty treats!"
     }
   ]
   return run_test_with_insights(insights, verbalizer)
 
 def test_6(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
   """
-  Test case 6: Positive investment performance and a reminder about a recurring bill.
+  Test case 6: Subscription audit and entertainment.
   """
   insights = [
     {
       "id": 11,
-      "combined_insight": "To the moon! 🚀 Your investment portfolio is up 15% this quarter, adding a nice $4,500 to your net worth."
+      "combined_insight": "Time for a subscription audit? 🕵️‍♂️ You spent $89.95 on various streaming services this month."
     },
     {
       "id": 12,
-      "combined_insight": "Quick reminder: Your rent of $2,200 is due in 3 days. Don't be late! 🗓️"
+      "combined_insight": "Let's have some fun! 🍿 You spent $120.40 on entertainment, including those movie tickets and the concert."
     }
   ]
   return run_test_with_insights(insights, verbalizer)
 
+def test_7(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
+  """
+  Test case 7: Education and personal growth.
+  """
+  insights = [
+    {
+      "id": 13,
+      "combined_insight": "Investing in yourself! 📚 You spent $299.00 on that online course this month. Knowledge is power!"
+    },
+    {
+      "id": 14,
+      "combined_insight": "Bookworm alert! 📖 Your book purchases totaled $45.20 this month. Enjoy the reads!"
+    }
+  ]
+  return run_test_with_insights(insights, verbalizer)
+
+def test_8(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
+  """
+  Test case 8: Pet care and home improvement.
+  """
+  insights = [
+    {
+      "id": 15,
+      "combined_insight": "Paws-itive vibes! 🐾 You spent $150.75 on pet supplies and treats this month. Your furry friend says thanks!"
+    },
+    {
+      "id": 16,
+      "combined_insight": "Home sweet home! 🏡 You spent $340.50 on some new decor and small repairs. Looking good!"
+    }
+  ]
+  return run_test_with_insights(insights, verbalizer)
+
+def test_9(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
+  """
+  Test case 9: Gifts and donations.
+  """
+  insights = [
+    {
+      "id": 17,
+      "combined_insight": "So generous! 🎁 You spent $210.30 on gifts for friends and family this month."
+    },
+    {
+      "id": 18,
+      "combined_insight": "Making a difference! ❤️ You donated $100.00 to your favorite charity this month. Way to go!"
+    }
+  ]
+  return run_test_with_insights(insights, verbalizer)
+
+def test_10(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
+  """
+  Test case 10: Insurance and taxes.
+  """
+  insights = [
+    {
+      "id": 19,
+      "combined_insight": "Stay protected! 🛡️ Your insurance premiums totaled $185.20 this month."
+    },
+    {
+      "id": 20,
+      "combined_insight": "Tax time! 📝 You paid $1,200.45 in estimated taxes this quarter. Stay ahead of the game!"
+    }
+  ]
+  return run_test_with_insights(insights, verbalizer)
+
+def test_11(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
+  """
+  Test case 11: Hobbies and electronics.
+  """
+  insights = [
+    {
+      "id": 21,
+      "combined_insight": "Level up! 🎮 You spent $350.90 on that new gaming console and some games."
+    },
+    {
+      "id": 22,
+      "combined_insight": "Tech savvy! 💻 You spent $125.60 on some new computer accessories this month."
+    }
+  ]
+  return run_test_with_insights(insights, verbalizer)
+
+def test_12(verbalizer: PennyHighlightsVerbalizerOptimizer = None):
+  """
+  Test case 12: Beauty and personal care.
+  """
+  insights = [
+    {
+      "id": 23,
+      "combined_insight": "Treat yourself! 💅 You spent $145.30 on beauty treatments and skincare this month."
+    },
+    {
+      "id": 24,
+      "combined_insight": "Looking sharp! 💇‍♂️ Your haircut and grooming products cost $65.00 this month."
+    }
+  ]
+  return run_test_with_insights(insights, verbalizer)
 
 def main(batch: int = 1):
   """
   Main function to test the PennyHighlightsVerbalizerOptimizer
   
   Args:
-    batch: Batch number (1 or 2) to determine which tests to run
+    batch: Batch number (1, 2, 3, or 4) to determine which tests to run
   """
-  print("Testing PennyHighlightsVerbalizerOptimizer\n")
+  print(f"Testing PennyHighlightsVerbalizerOptimizer - Batch {batch}\n")
   try:
     verbalizer = PennyHighlightsVerbalizerOptimizer()
     
@@ -342,6 +437,20 @@ def main(batch: int = 1):
       test_5(verbalizer)
       print("\n--- Running Batch 2: Test 6 ---")
       test_6(verbalizer)
+    elif batch == 3:
+      print("--- Running Batch 3: Test 7 ---")
+      test_7(verbalizer)
+      print("\n--- Running Batch 3: Test 8 ---")
+      test_8(verbalizer)
+      print("\n--- Running Batch 3: Test 9 ---")
+      test_9(verbalizer)
+    elif batch == 4:
+      print("--- Running Batch 4: Test 10 ---")
+      test_10(verbalizer)
+      print("\n--- Running Batch 4: Test 11 ---")
+      test_11(verbalizer)
+      print("\n--- Running Batch 4: Test 12 ---")
+      test_12(verbalizer)
     
     print("\nAll tests completed!")
   except Exception as e:
@@ -351,7 +460,7 @@ def main(batch: int = 1):
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(description='Run verbalizer tests in batches')
-  parser.add_argument('--batch', type=int, default=1, choices=[1, 2],
-                      help='Batch number to run (1 or 2)')
+  parser.add_argument('--batch', type=int, default=1, choices=[1, 2, 3, 4],
+                      help='Batch number to run (1, 2, 3, or 4)')
   args = parser.parse_args()
   main(batch=args.batch)

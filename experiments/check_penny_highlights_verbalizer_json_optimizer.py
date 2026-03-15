@@ -12,27 +12,35 @@ from penny_highlights_verbalizer_json_optimizer import PennyHighlightsVerbalizer
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a rigorous checker verifying PennyHighlightsVerbalizerJsonOptimizer outputs against strict rules.
+SYSTEM_PROMPT = """You are a rigorous financial copy auditor.
+Audit `REVIEW_NEEDED` (copy) against `EVAL_INPUT` (facts).
 
-## Evaluation Goals:
-1. **ID Integrity**: Output IDs MUST match Input IDs exactly. Any mismatch must be flagged.
-2. **Fact Accuracy**: All numbers used must match the source data. However, the output does NOT have to include all insights from the input (filtering is allowed).
-3. **Implicit Performance Context**: Summaries can indicate if spending/income is over/under budget either **explicitly** (e.g., "over budget") or **implicitly** through tone/words (e.g., "saved", "hit", "oops"). Do not flag if the meaning is clear.
-4. **Magnitude Optionality**: Magnitude of divergence (exactly how much over budget) is NOT required in the output.
-5. **Tone Perfection**: 
-   - **Encouraging always**: Never negative, angry, or judgmental. Friendly slang like "oops", "ouch", "woah", or "oemgee" is ENCOURAGED as long as the overall tone remains supportive and not shaming.
-   - **Reality-aligned**: Tone must reflect the financial reality (celebratory for wins, supportive for risks).
-6. **Holistic Coverage**: Titles MUST encompass ALL financial events mentioned in the accompanying summary.
-7. **No Greetings**: No "Hi", "Hello", "Hey", or conversation openers.
+## Audit Flow:
+1. **Fact Audit (info_correct)**:
+   - **Check IDs**: Does the ID of the Nth insight in `EVAL_INPUT` match the ID of the Nth summary in `REVIEW_NEEDED`?
+   - **Check Numbers**: Are all numbers in `REVIEW_NEEDED` (titles and summaries) identical to those in `EVAL_INPUT`? (Note: not all information in `REVIEW_NEEDED` have to be present in `EVAL_INPUT`.)
+   - **Result**: `info_correct: true` ONLY if both above are 100% accurate.
+
+2. **Style Audit (good_copy)**:
+   - **Directions**: EVERY monetary value ($) MUST be accompanied by a direction relative to expectation (explicit or implied). See examples below.
+     - **FAIL**: "Medical is $50 this week." or similar
+     - **PASS (Explicit)**: "Medical is up at $50 this week." or similar
+     - **PASS (Implied)**: "Oh no! Medical is $50 this week." or similar (The "Oh no!" implies a negative state/increase)
+   - **No Greetings**: MUST NOT start with conversation openers such as "Hi", "Hello", "Hey", etc. Expressions are acceptable.
+   - **Tone**: MUST be friendly and encouraging. NEVER condescending.
+   - **Titles**: The title MUST encapsulate ALL discussion items shared in the summary.
+     - **PASS**: "Increased Spending!", "On your Meals and Health".
+     - **FAIL**: "Meals are Up", "Rising Health" (These are too specific/narrow if the summary covers multiple items).
+   - **Result**: `good_copy: true` ONLY if all above are 100% compliant.
+
+## Evaluation Rules:
+- **Feedback Format**: If any boolean is false, provide `eval_text`: "Insight [N]: [concise_issue]".
+  - [N] is the 1-based order in the list. Concatenate multiple issues with "; ".
+  - **CRITICAL**: `eval_text` must be concise and self-explanatory. The reader should understand the error without referring to the audit rules.
 
 ## Output Format:
-STRICT JSON ONLY. No conversational filler.
-`{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `info_correct`: True ONLY if ALL numbers, IDs, and financial facts match the EVAL_INPUT.
-- `good_copy`: True ONLY if ALL stylistic, tone, and formatting rules are met.
-- `eval_text`: Required if either boolean is False. **FORMAT**: "Insight [N]: [issue description]; Insight [N]: [issue description]; etc." where [N] is the order in the list.
-  - **MANDATORY**: List EVERY single issue found for each insight. Do not stop at the first issue.
-  - **Self-Contained Feedback**: Describe the issue directly (e.g., "Judgmental language like 'sneaky'", "Mismatched ID", "Title omits savings"). NEVER reference rule names or numbers.
+STRICT SINGLE JSON OBJECT: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
+Do NOT return an array.
 """
 
 class CheckHighlightsVerbalizerJsonOptimizer2:
@@ -47,12 +55,13 @@ class CheckHighlightsVerbalizerJsonOptimizer2:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 4096
+    self.thinking_budget = 2048
     self.model_name = model_name
     
     # Generation Configuration Constants
     self.temperature = 0.6
     self.top_p = 0.95
+    self.top_k = 40
     self.max_output_tokens = 6000
     
     # Safety Settings
@@ -100,8 +109,10 @@ class CheckHighlightsVerbalizerJsonOptimizer2:
 
 Output:"""
     
+    print(f"\n{'='*80}")
+    print("INPUT JSON:")
     print(request_text_str)
-    print(f"\n{'='*80}\n")
+    print("="*80)
     
     request_text = types.Part.from_text(text=request_text_str)
     
@@ -111,14 +122,20 @@ Output:"""
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
+      top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True
+      ),
     )
 
     # Generate response
     output_text = ""
+    thought_summary = ""
+    
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -126,10 +143,34 @@ Output:"""
     ):
       if chunk.text is not None:
         output_text += chunk.text
+      
+      # Extract thought summary from chunk
+      if hasattr(chunk, 'candidates') and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, 'content') and candidate.content:
+            if hasattr(candidate.content, 'parts') and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, 'thought') and part.thought:
+                  if hasattr(part, 'text') and part.text:
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
     
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
+    
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("="*80)
+    
+    print(f"{'='*80}")
+    print("RESPONSE OUTPUT:")
+    print(output_text.strip())
+    print("="*80)
     
     # Parse JSON response
     try:
@@ -198,22 +239,21 @@ def run_test_case(test_name: str, eval_input: list, review_needed: list, past_re
 
 def test_batch_1(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
   """
-  Batch 1: Test cases 1-2
+  Batch 1: Subscription and Savings
   """
   if verbalizer is None:
     verbalizer = PennyHighlightsVerbalizerOptimizer()
   if checker is None:
     checker = CheckHighlightsVerbalizerJsonOptimizer2()
   
-  # Test 1
   eval_input_1 = [
     {
-      "id": 1,
-      "combined_insight": "Your shelter costs are way down this month to $1,248, mainly from less on home stuff, utilities, and upkeep. 🥳🏠 Oh em gee!  You got a huge surprise income boost of $8,800 this week, mostly from your business, and you're projected to spend only $68 by the end of the week!  Way to go, you savvy boss babe!"
+      "id": 501,
+      "combined_insight": "Your monthly gym subscription increased to $65 this month, which is $15 higher than last month. Consider if you're still using it! 🏋️‍♂️💸"
     },
     {
-      "id": 2,
-      "combined_insight": "Looks like you spent less on food this month, down to $1,007, mostly from less eating out, deliveries, and groceries. 🍽️🚚🛒 Your transport costs are way down this month to just $46, mostly 'cause you took public transit less. 🚇"
+      "id": 502,
+      "combined_insight": "You've successfully saved $2,500 for your emergency fund, hitting 50% of your $5,000 goal! Keep it up! 🛡️💰"
     }
   ]
   
@@ -223,15 +263,26 @@ def test_batch_1(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker:
   print("\n--- Checking Test 1 ---")
   result_1 = run_test_case("batch_1_test_1", eval_input_1, review_needed_1, [], checker)
   
-  # Test 2
+  return [result_1]
+
+
+def test_batch_2(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
+  """
+  Batch 2: Food and Repairs
+  """
+  if verbalizer is None:
+    verbalizer = PennyHighlightsVerbalizerOptimizer()
+  if checker is None:
+    checker = CheckHighlightsVerbalizerJsonOptimizer2()
+  
   eval_input_2 = [
     {
-      "id": 3,
-      "combined_insight": "Warning! 🚨 You've spent $750 on shopping this month, which is $250 over your budget. Most of it went to online stores."
+      "id": 601,
+      "combined_insight": "Great job! Your grocery spending was lower at $280 this week. However, you spent $150 on dining out, which is higher than usual. 🛒🍽️"
     },
     {
-      "id": 4,
-      "combined_insight": "Heads up! You have $500 in uncategorized expenses this week. Let's categorize them to keep your budget on track! 🧐"
+      "id": 602,
+      "combined_insight": "Heads up! You had an unexpected car repair cost of $450. Your electricity bill was also higher at $180 this month. 🚗⚡"
     }
   ]
   
@@ -239,29 +290,28 @@ def test_batch_1(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker:
   review_needed_2 = verbalizer.generate_response(eval_input_2)
   
   print("\n--- Checking Test 2 ---")
-  result_2 = run_test_case("batch_1_test_2", eval_input_2, review_needed_2, [], checker)
+  result_2 = run_test_case("batch_2_test_2", eval_input_2, review_needed_2, [], checker)
   
-  return [result_1, result_2]
+  return [result_2]
 
 
-def test_batch_2(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
+def test_batch_3(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
   """
-  Batch 2: Test cases 3-4
+  Batch 3: Income and Budgeting
   """
   if verbalizer is None:
     verbalizer = PennyHighlightsVerbalizerOptimizer()
   if checker is None:
     checker = CheckHighlightsVerbalizerJsonOptimizer2()
   
-  # Test 3
   eval_input_3 = [
     {
-      "id": 5,
-      "combined_insight": "You're so close! You've saved $9,500 for your vacation, that's 95% of your $10,000 goal! 🌴☀️"
+      "id": 701,
+      "combined_insight": "Awesome! Your side hustle brought in $1,200 extra this month. You also received a tax refund of $850! 🚀💸"
     },
     {
-      "id": 6,
-      "combined_insight": "Just a heads-up, you had a small unexpected charge of $35 for a subscription service you might have forgotten about. 😬"
+      "id": 702,
+      "combined_insight": "You spent $300 on shopping, which is $100 over budget. On the plus side, your rent was lower at $1,100 this month. 🛍️🏠"
     }
   ]
   
@@ -269,17 +319,28 @@ def test_batch_2(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker:
   review_needed_3 = verbalizer.generate_response(eval_input_3)
   
   print("\n--- Checking Test 3 ---")
-  result_3 = run_test_case("batch_2_test_3", eval_input_3, review_needed_3, [], checker)
+  result_3 = run_test_case("batch_3_test_3", eval_input_3, review_needed_3, [], checker)
   
-  # Test 4
+  return [result_3]
+
+
+def test_batch_4(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
+  """
+  Batch 4: Investments and Medical
+  """
+  if verbalizer is None:
+    verbalizer = PennyHighlightsVerbalizerOptimizer()
+  if checker is None:
+    checker = CheckHighlightsVerbalizerJsonOptimizer2()
+  
   eval_input_4 = [
     {
-      "id": 7,
-      "combined_insight": "Amazing! Your side hustle brought in an extra $1,200 this month! Keep up the great work! 🚀💰"
+      "id": 801,
+      "combined_insight": "Your investment portfolio gained $500 this quarter! You also received $120 in dividends. 📈💰"
     },
     {
-      "id": 8,
-      "combined_insight": "Great job on cutting down costs! Your electricity bill was only $55 this month, down from $85 last month. 💡"
+      "id": 802,
+      "combined_insight": "You had a medical expense of $75. Your health insurance premium was slightly lower at $210 this month. 🏥🛡️"
     }
   ]
   
@@ -287,165 +348,47 @@ def test_batch_2(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker:
   review_needed_4 = verbalizer.generate_response(eval_input_4)
   
   print("\n--- Checking Test 4 ---")
-  result_4 = run_test_case("batch_2_test_4", eval_input_4, review_needed_4, [], checker)
+  result_4 = run_test_case("batch_4_test_4", eval_input_4, review_needed_4, [], checker)
   
-  return [result_3, result_4]
-
-
-def test_batch_3(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
-  """
-  Batch 3: Test cases 5-6
-  """
-  if verbalizer is None:
-    verbalizer = PennyHighlightsVerbalizerOptimizer()
-  if checker is None:
-    checker = CheckHighlightsVerbalizerJsonOptimizer2()
-  
-  # Test 5
-  eval_input_5 = [
-    {
-      "id": 9,
-      "combined_insight": "Just noting a large expense: you paid $2,500 for car repairs this week. Remember to budget for these things! 🔧🚗"
-    },
-    {
-      "id": 10,
-      "combined_insight": "Your credit card balance is at $3,200 this month. Let's make a plan to pay it down! 💳"
-    }
-  ]
-  
-  print("\n--- Generating verbalizer output for Test 5 ---")
-  review_needed_5 = verbalizer.generate_response(eval_input_5)
-  
-  print("\n--- Checking Test 5 ---")
-  result_5 = run_test_case("batch_3_test_5", eval_input_5, review_needed_5, [], checker)
-  
-  # Test 6
-  eval_input_6 = [
-    {
-      "id": 11,
-      "combined_insight": "To the moon! 🚀 Your investment portfolio is up 15% this quarter, adding a nice $4,500 to your net worth."
-    },
-    {
-      "id": 12,
-      "combined_insight": "Quick reminder: Your rent of $2,200 is due in 3 days. Don't be late! 🗓️"
-    }
-  ]
-  
-  print("\n--- Generating verbalizer output for Test 6 ---")
-  review_needed_6 = verbalizer.generate_response(eval_input_6)
-  
-  print("\n--- Checking Test 6 ---")
-  result_6 = run_test_case("batch_3_test_6", eval_input_6, review_needed_6, [], checker)
-  
-  return [result_5, result_6]
-
-
-def test_batch_4(verbalizer: PennyHighlightsVerbalizerOptimizer = None, checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
-  """
-  Batch 4: Test cases 7-8 (additional edge cases)
-  """
-  if verbalizer is None:
-    verbalizer = PennyHighlightsVerbalizerOptimizer()
-  if checker is None:
-    checker = CheckHighlightsVerbalizerJsonOptimizer2()
-  
-  # Test 7
-  eval_input_7 = [
-    {
-      "id": 13,
-      "combined_insight": "Hello! Your grocery spending increased to $450 this month, which is higher than your usual $300 average. 🛒"
-    },
-    {
-      "id": 14,
-      "combined_insight": "Good morning! Your income from freelancing was $2,000 this month, matching your target perfectly. Great job staying on track! 💼"
-    }
-  ]
-  
-  print("\n--- Generating verbalizer output for Test 7 ---")
-  review_needed_7 = verbalizer.generate_response(eval_input_7)
-  
-  print("\n--- Checking Test 7 ---")
-  result_7 = run_test_case("batch_4_test_7", eval_input_7, review_needed_7, [], checker)
-  
-  # Test 8
-  eval_input_8 = [
-    {
-      "id": 15,
-      "combined_insight": "Your dining out expenses were $180 this week, down significantly from last week's $320. You're making great progress! 🍽️"
-    },
-    {
-      "id": 16,
-      "combined_insight": "Heads up! Your subscription costs totaled $150 this month, which is $50 more than your budgeted $100. Consider reviewing your subscriptions. 📱"
-    }
-  ]
-  
-  print("\n--- Generating verbalizer output for Test 8 ---")
-  review_needed_8 = verbalizer.generate_response(eval_input_8)
-  
-  print("\n--- Checking Test 8 ---")
-  result_8 = run_test_case("batch_4_test_8", eval_input_8, review_needed_8, [], checker)
-  
-  return [result_7, result_8]
+  return [result_4]
 
 
 def test_batch_5(checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
   """
-  Batch 5: Failure cases to test Checker's detection (ID mismatch, tone, missing info, etc.)
+  Batch 5: Failure cases to test Checker's detection
   """
   if checker is None:
     checker = CheckHighlightsVerbalizerJsonOptimizer2()
 
   # Test Case 1: ID mismatch
-  eval_input_1 = [{"id": 101, "combined_insight": "You saved $50 on coffee this month."}]
-  review_needed_1 = [{"id": 1, "title": "Coffee Savings!", "summary": "You saved $50 on coffee this month!"}]
-  result_1 = run_test_case("ID mismatch (Case 1)", eval_input_1, review_needed_1, [], checker)
+  eval_input_1 = [{"id": 901, "combined_insight": "You saved $40 on coffee."}]
+  review_needed_1 = [{"id": 1, "title": "Coffee Savings", "summary": "You saved $40 on coffee this week!"}]
+  result_1 = run_test_case("ID mismatch", eval_input_1, review_needed_1, [], checker)
 
-  # Test Case 2: Title contradiction
-  eval_input_2 = [
-    {"id": 10, "combined_insight": "Food spending hit $500, which is $200 over budget. Shelter dropped to $1,200, which is $100 under budget."}
-  ]
-  review_needed_2 = [{
-    "id": 10,
-    "title": "Food and Shelter Excellence!",
-    "summary": "Food hit $500 (over budget). Shelter dropped to $1,200 (under budget)."
-  }]
-  result_2 = run_test_case("Title contradiction (Case 2)", eval_input_2, review_needed_2, [], checker)
+  # Test Case 2: Missing relative qualifier
+  eval_input_2 = [{"id": 902, "combined_insight": "Gym is $50."}]
+  review_needed_2 = [{"id": 902, "title": "Gym Cost", "summary": "Your gym cost is $50."}]
+  result_2 = run_test_case("Missing qualifier", eval_input_2, review_needed_2, [], checker)
 
-  # Test Case 3: Negative tone
-  eval_input_3 = [{"id": 11, "combined_insight": "You spent $500 on shoes this month, $300 over budget."}]
-  review_needed_3 = [{
-    "id": 11,
-    "title": "Irresponsible Spending! 😡",
-    "summary": "You spent $500 on shoes? That's irresponsible and you should be ashamed. You're failing your budget."
-  }]
-  result_3 = run_test_case("Negative tone (Case 3)", eval_input_3, review_needed_3, [], checker)
+  # Test Case 3: Greeting present
+  eval_input_3 = [{"id": 903, "combined_insight": "Rent is $1,200."}]
+  review_needed_3 = [{"id": 903, "title": "Rent", "summary": "Hello! Your rent hit $1,200."}]
+  result_3 = run_test_case("Greeting present", eval_input_3, review_needed_3, [], checker)
 
-  # Test Case 4: Missing performance context
-  eval_input_4 = [{"id": 12, "combined_insight": "Grocery spending is $100 this week."}]
-  review_needed_4 = [{
-    "id": 12,
-    "title": "Grocery Spend",
-    "summary": "Spending for groceries is $100."
-  }]
-  result_4 = run_test_case("Missing performance context (Case 4)", eval_input_4, review_needed_4, [], checker)
+  # Test Case 4: Title doesn't encapsulate all info
+  eval_input_4 = [{"id": 904, "combined_insight": "Food is $100 and Fun is $50."}]
+  review_needed_4 = [{"id": 904, "title": "Food Spend", "summary": "Food hit $100 and fun hit $50."}]
+  result_4 = run_test_case("Incomplete title", eval_input_4, review_needed_4, [], checker)
 
-  # Test Case 5: Missing amount
-  eval_input_5 = [{"id": 13, "combined_insight": "Grocery spending is $450 this month, which is higher than usual."}]
-  review_needed_5 = [{
-    "id": 13,
-    "title": "High Grocery Spend",
-    "summary": "Grocery spending is higher than usual this month."
-  }]
-  result_5 = run_test_case("Missing amount (Case 5)", eval_input_5, review_needed_5, [], checker)
+  # Test Case 5: Tone mismatch
+  eval_input_5 = [{"id": 905, "combined_insight": "You lost $1,000 in stocks."}]
+  review_needed_5 = [{"id": 905, "title": "Stock Loss", "summary": "Yay! You lost $1,000 in stocks! 🥳"}]
+  result_5 = run_test_case("Tone mismatch", eval_input_5, review_needed_5, [], checker)
 
   # Test Case 6: Multiple issues
-  eval_input_6 = [{"id": 99, "combined_insight": "Income hit $5,000 this month."}]
-  review_needed_6 = [{
-    "id": 1,
-    "title": "Income",
-    "summary": "Hello! Your income is high."
-  }]
-  result_6 = run_test_case("Multiple issues (Case 6)", eval_input_6, review_needed_6, [], checker)
+  eval_input_6 = [{"id": 906, "combined_insight": "Income is $5,000."}]
+  review_needed_6 = [{"id": 1, "title": "Income", "summary": "Hi! Income is $5,000."}]
+  result_6 = run_test_case("Multiple issues", eval_input_6, review_needed_6, [], checker)
 
   return [result_1, result_2, result_3, result_4, result_5, result_6]
 
@@ -453,10 +396,6 @@ def test_batch_5(checker: CheckHighlightsVerbalizerJsonOptimizer2 = None):
 def main(batch: int = 1, run_number: int = 1):
   """
   Main function to test the PennyHighlightsVerbalizerJsonOptimizer checker
-  
-  Args:
-    batch: Batch number (1-5) to determine which tests to run
-    run_number: Run number (1-3) for iterative optimization
   """
   print(f"\n{'='*80}")
   print(f"BATCH {batch} - RUN {run_number}")
