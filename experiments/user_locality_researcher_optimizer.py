@@ -12,6 +12,16 @@ load_dotenv()
 SCHEMA = types.Schema(
     type=types.Type.OBJECT,
     properties={
+        "annual_income_usd": types.Schema(
+            type=types.Type.OBJECT,
+            description="Annual household income ranges in USD",
+            properties={
+                "single_household": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.NUMBER), description="[min, max] median/average range for 1 earner"),
+                "couple_household": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.NUMBER), description="[min, max] median/average range for 2 earners"),
+                "family_of_four_household": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.NUMBER), description="[min, max] median/average range for family")
+            },
+            required=["single_household", "couple_household", "family_of_four_household"]
+        ),
         "rent_monthly_usd": types.Schema(
             type=types.Type.OBJECT,
             description="Monthly rent/housing ranges in USD",
@@ -64,6 +74,7 @@ SCHEMA = types.Schema(
         )
     },
     required=[
+        "annual_income_usd",
         "rent_monthly_usd", 
         "groceries_weekly_usd", 
         "utilities_monthly_usd", 
@@ -75,8 +86,9 @@ SCHEMA = types.Schema(
 SYSTEM_PROMPT = """You are a locality cost researcher.
 Task: Provide 2024-2025 cost estimates for a given `locality`.
 
-Protocol:
+Protocol:'
 1.  **Research**: Locate recent pricing for the following categories:
+    *   **Income**: Annual household income range (Median/Average) for Single, Couple, Family.
     *   **Rent**: Studio/1BR (Single), 1BR/2BR (Couple), 3BR+ (Family).
     *   **Groceries**: Weekly basket for 1, 2, and 4 people.
     *   **Utilities**: Monthly basics + Internet for 1, 2, and 4 people.
