@@ -117,10 +117,25 @@ def extract_python_code(text: str) -> str:
         return text.strip()
 
 
-def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer = None):
+def _format_mock_lookup_output(income_txns):
+  """Format a list of income transaction dicts into the lookup result string."""
+  lines = []
+  total = 0
+  for t in income_txns:
+    lines.append(f"- ${t['amount']} was received from {t['merchant']} on {t['date']} ({t['account']}) categorized as {t['category']}.")
+    total += t["amount"]
+  body = "\n".join(lines) + f"\nTotal recent income: earned ${total}."
+  return f"""--- Recent Income (Last 30 Days) ---
+Recent Income Transactions:
+{body}
+"""
+
+
+def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer = None, mock_income: list = None):
   if optimizer is None:
     optimizer = StrategizerOptimizer()
-  
+  mock_output = _format_mock_lookup_output(mock_income) if mock_income else None
+
   llm_input = f"""**Task Description**: {task_description}
 
 **Previous Outcomes**:
@@ -155,10 +170,15 @@ output:"""
       def wrapped_lookup(*args, **kwargs):
         print(f"\n[FUNCTION CALL] lookup_user_accounts_transactions_income_and_spending_patterns")
         print(f"  args: {args}")
-        result = lookup_user_accounts_transactions_income_and_spending_patterns(*args, **kwargs)
-        print(f"  [RETURN] success: {result[0]}")
-        print(f"  [RETURN] output: {result[1]}")
-        return result
+        if mock_output is not None:
+          res = (True, mock_output)
+          print(f"  [RETURN] (mock) success: {res[0]}")
+        else:
+          res = lookup_user_accounts_transactions_income_and_spending_patterns(*args, **kwargs)
+          print(f"  [RETURN] success: {res[0]}")
+        out = res[1]
+        print(f"  [RETURN] output: {out[:300]}{'...' if len(out) > 300 else ''}")
+        return res
       
       def wrapped_update(*args, **kwargs):
         print(f"\n[FUNCTION CALL] update_transaction_category_or_create_category_rules")
@@ -217,24 +237,42 @@ output:"""
   return result
 
 
+# Mock income data per test case: list of dicts with merchant, amount, date, account, category.
+MOCK_INCOME_ITERATION_1 = [
+  {"merchant": "CA State Payroll", "amount": 1440, "date": "2025-11-18", "account": "Chase Total Checking **1563", "category": "income_salary"},
+  {"merchant": "CA State Payroll", "amount": 1340, "date": "2025-10-31", "account": "Chase Total Checking **1563", "category": "income_salary"},
+]
+MOCK_INCOME_ITERATION_2 = [
+  {"merchant": "ADP PAYROLL", "amount": 2500, "date": "2025-11-20", "account": "Chase Total Checking **1563", "category": "uncategorized"},
+  {"merchant": "Gusto", "amount": 2500, "date": "2025-10-22", "account": "Chase Total Checking **1563", "category": "uncategorized"},
+]
+MOCK_INCOME_ITERATION_3 = [
+  {"merchant": "ADP PAYROLL", "amount": 2500, "date": "2025-11-20", "account": "Chase Total Checking **1563", "category": "uncategorized"},
+  {"merchant": "Gusto", "amount": 2500, "date": "2025-10-22", "account": "Chase Total Checking **1563", "category": "uncategorized"},
+  {"merchant": "Savings Interest", "amount": 3, "date": "2025-11-01", "account": "Chase Savings **3052", "category": "income_interest"},
+]
+
 TEST_CASES = [
   {
     "name": "salary_check_iteration_1",
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "None. This is the first attempt.",
-    "ideal_response": "Expected: lookup finding total income and whether there are salary categories already mapped."
+    "ideal_response": "Expected: lookup finding total income and whether there are salary categories already mapped.",
+    "mock_income": MOCK_INCOME_ITERATION_1,
   },
   {
     "name": "salary_check_iteration_2",
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: Tried to lookup the salary. Found total income is 5000, but no specific 'Salary' transactions found. Only uncategorized income.",
-    "ideal_response": "Expected: lookup to get a detailed list of uncategorized income transactions to identify patterns like 'Gusto' or 'ADP'."
+    "ideal_response": "Expected: lookup to get a detailed list of uncategorized income transactions to identify patterns like 'Gusto' or 'ADP'.",
+    "mock_income": MOCK_INCOME_ITERATION_2,
   },
   {
     "name": "salary_check_iteration_3",
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: Tried to lookup the salary. Found no specific 'Salary' transactions found. Only uncategorized income.\nOutcome 2: Looked up detailed list of uncategorized income. Found 2 recurring transactions of $2500 marked as 'ADP PAYROLL'.",
-    "ideal_response": "Expected: update_transaction_category_or_create_category_rules to set 'ADP PAYROLL' as Salary and create a rule."
+    "ideal_response": "Expected: update_transaction_category_or_create_category_rules to set 'ADP PAYROLL' as Salary and create a rule.",
+    "mock_income": MOCK_INCOME_ITERATION_3,
   }
 ]
 
@@ -244,24 +282,20 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None)
     if "task_description" in test_name_or_index_or_dict:
       test_name = test_name_or_index_or_dict.get("name", "custom_test")
       print(f"\n{'='*80}\nRunning test: {test_name}\n{'='*80}\n")
-      result = _run_test_with_logging(
+      return _run_test_with_logging(
         test_name_or_index_or_dict["task_description"],
         test_name_or_index_or_dict.get("previous_outcomes", ""),
-        optimizer
+        optimizer,
+        mock_income=test_name_or_index_or_dict.get("mock_income"),
       )
-      return result
-  
   if isinstance(test_name_or_index_or_dict, int):
-    if 0 <= test_name_or_index_or_dict < len(TEST_CASES):
-      tc = TEST_CASES[test_name_or_index_or_dict]
-    else: return None
+    tc = TEST_CASES[test_name_or_index_or_dict] if 0 <= test_name_or_index_or_dict < len(TEST_CASES) else None
   else:
     tc = next((t for t in TEST_CASES if t["name"] == test_name_or_index_or_dict), None)
-  
-  if not tc: return None
-  
+  if not tc:
+    return None
   print(f"\n{'='*80}\nRunning test: {tc['name']}\n{'='*80}\n")
-  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], optimizer)
+  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], optimizer, mock_income=tc.get("mock_income"))
 
 
 def main(test: str = None, no_thinking: bool = False):

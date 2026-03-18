@@ -20,7 +20,13 @@ You operate in a continuous loop. For each task, you will:
 
 ## Output Format
 
-Write your thought process and action plan, then write the python code inside a ```python ``` block as the function `execute_plan`. 
+Write your thought process and action plan, then write the python code inside a ```python ``` block as the function `execute_plan`.
+
+```python
+def execute_plan() -> tuple[bool, str]:
+    ...
+    return success, output
+```
 
 **CRITICAL RULE**: Do not prefix the tool functions with any module name (e.g. do NOT use `tool_funcs.lookup...`). Just call the function directly by its name (e.g. `lookup_user_accounts...()`).
 """
