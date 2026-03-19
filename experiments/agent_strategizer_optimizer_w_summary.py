@@ -15,15 +15,15 @@ from penny.tool_funcs.lookup_user_accounts_transactions_income_and_spending_patt
 from penny.tool_funcs.update_transaction_category_or_create_category_rules import update_transaction_category_or_create_category_rules
 from penny.tool_funcs.create_budget_or_goal_or_reminder import create_budget_or_goal_or_reminder
 from penny.tool_funcs.research_and_strategize_financial_outcomes import research_and_strategize_financial_outcomes
-from strategizer.prompts import STRATEGIZER_SYSTEM_PROMPT
+from strategizer.prompts import STRATEGIZER_W_SUMMARY_SYSTEM_PROMPT
 
 # Load environment variables
 load_dotenv()
 
 
-class StrategizerOptimizer:
-  """Handles all Gemini API interactions for the proactive Strategizer agent"""
-  
+class StrategizerWSummaryOptimizer:
+  """Handles all Gemini API interactions for the proactive Strategizer agent; output narrates each step as it runs."""
+
   def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=4096, max_output_tokens=4096):
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
@@ -34,7 +34,7 @@ class StrategizerOptimizer:
     self.temperature = 0.6
     self.top_p = 0.95
     self.max_output_tokens = max_output_tokens
-    
+
     # Safety Settings
     self.safety_settings = [
       types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
@@ -42,10 +42,9 @@ class StrategizerOptimizer:
       types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
       types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF")
     ]
-    
-    self.system_prompt = STRATEGIZER_SYSTEM_PROMPT
 
-  
+    self.system_prompt = STRATEGIZER_W_SUMMARY_SYSTEM_PROMPT
+
   def generate_response(self, task_description: str, previous_outcomes: str) -> str:
     request_text = types.Part.from_text(text=f"""**Task Description**: {task_description}
 
@@ -54,9 +53,9 @@ class StrategizerOptimizer:
 {previous_outcomes}
 
 output:""")
-    
+
     contents = [types.Content(role="user", parts=[request_text])]
-    
+
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
@@ -115,6 +114,14 @@ def extract_python_code(text: str) -> str:
         return text.strip()
 
 
+def extract_step_description(text: str) -> str:
+  """Extract the first line (step description) before the code block."""
+  code_start = text.find("```python")
+  pre = text[:code_start].strip() if code_start != -1 else text.strip()
+  first_line = pre.split("\n")[0].strip() if pre else ""
+  return first_line
+
+
 def _format_mock_lookup_output(income_txns):
   """Format a list of income transaction dicts into the lookup result string."""
   lines = []
@@ -129,9 +136,9 @@ Recent Income Transactions:
 """
 
 
-def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer = None, mock_income: list = None):
+def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerWSummaryOptimizer = None, mock_income: list = None):
   if optimizer is None:
-    optimizer = StrategizerOptimizer()
+    optimizer = StrategizerWSummaryOptimizer()
   mock_output = _format_mock_lookup_output(mock_income) if mock_income else None
 
   llm_input = f"""**Task Description**: {task_description}
@@ -141,32 +148,34 @@ def _run_test_with_logging(task_description: str, previous_outcomes: str, optimi
 {previous_outcomes}
 
 output:"""
-  
+
   print("=" * 80)
-  print("LLM INPUT:")
+  print("Sending task and previous outcomes to LLM.")
   print("=" * 80)
   print(llm_input)
   print("=" * 80)
   print()
-  
+
   result = optimizer.generate_response(task_description, previous_outcomes)
-  
+  step_line = extract_step_description(result)
+
   print("=" * 80)
-  print("LLM OUTPUT:")
+  print("LLM response:")
   print("=" * 80)
   print(result)
   print("=" * 80)
   print()
-  
+
   code = extract_python_code(result)
-  
+  plan_result = None
+
   if code:
     print("=" * 80)
-    print("EXECUTING GENERATED CODE:")
+    print("Extracting and executing generated Python code.")
     print("=" * 80)
     try:
       def wrapped_lookup(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] lookup_user_accounts_transactions_income_and_spending_patterns")
+        print(f"\nExecuting lookup_user_accounts_transactions_income_and_spending_patterns.")
         print(f"  args: {args}")
         if mock_output is not None:
           res = (True, mock_output)
@@ -177,62 +186,69 @@ output:"""
         out = res[1]
         print(f"  [RETURN] output: {out[:300]}{'...' if len(out) > 300 else ''}")
         return res
-      
+
       def wrapped_update(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] update_transaction_category_or_create_category_rules")
+        print(f"\nExecuting update_transaction_category_or_create_category_rules.")
         print(f"  args: {args}")
         result = update_transaction_category_or_create_category_rules(*args, **kwargs)
         print(f"  [RETURN] success: {result[0]}")
         print(f"  [RETURN] output: {result[1]}")
         return result
-        
+
       def wrapped_research(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] research_and_strategize_financial_outcomes")
+        print(f"\nExecuting research_and_strategize_financial_outcomes.")
         print(f"  args: {args}")
         result = research_and_strategize_financial_outcomes(*args, **kwargs)
         print(f"  [RETURN] success: {result[0]}")
         print(f"  [RETURN] output: {result[1]}")
         return result
-      
+
       def wrapped_create(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] create_budget_or_goal_or_reminder")
+        print(f"\nExecuting create_budget_or_goal_or_reminder.")
         print(f"  args: {args}")
         print(f"  kwargs: {kwargs}")
         result = create_budget_or_goal_or_reminder(*args, **kwargs)
         print(f"  [RETURN] success: {result[0]}")
         print(f"  [RETURN] output: {result[1]}")
         return (result[0], result[1])
-      
+
       namespace = {
         'lookup_user_accounts_transactions_income_and_spending_patterns': wrapped_lookup,
         'update_transaction_category_or_create_category_rules': wrapped_update,
         'research_and_strategize_financial_outcomes': wrapped_research,
         'create_budget_or_goal_or_reminder': wrapped_create,
       }
-      
+
       exec(code, namespace)
-      
+
       if 'execute_plan' in namespace:
         print("\n" + "=" * 80)
-        print("Calling execute_plan()...")
+        print("Calling execute_plan().")
         print("=" * 80)
-        result = namespace['execute_plan']()
+        plan_result = namespace['execute_plan']()
         print("\n" + "=" * 80)
-        print("execute_plan() FINAL RESULT:")
+        print("Step + execute_plan() result:")
         print("=" * 80)
-        print(f"  success: {result[0]}")
-        print(f"  output: {result[1]}")
+        if step_line:
+          print("Step:", step_line)
+        print("success:", plan_result[0])
+        print("output:", plan_result[1])
         print("=" * 80)
       else:
-        print("Warning: execute_plan() function not found in generated code")
+        print("\nexecute_plan() not found in generated code; skipping.")
         print("=" * 80)
     except Exception as e:
+      print("\nException while executing generated code.")
+      print("=" * 80)
       print(f"Error executing generated code: {str(e)}")
       import traceback
       print(traceback.format_exc())
       print("=" * 80)
-  
-  return result
+  else:
+    print("No Python code found in response; skipping execution.")
+    print("=" * 80)
+
+  return {"step": step_line, "result": result, "execute_plan": plan_result}
 
 
 # Mock income data per test case: list of dicts with merchant, amount, date, account, category.
@@ -255,27 +271,27 @@ TEST_CASES = [
     "name": "salary_check_iteration_1",
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "None. This is the first attempt.",
-    "ideal_response": "Expected: lookup finding total income and whether there are salary categories already mapped.",
+    "ideal_response": "Examined the user's transaction data and income patterns to see if salary was already detected or categorized.",
     "mock_income": MOCK_INCOME_ITERATION_1,
   },
   {
     "name": "salary_check_iteration_2",
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: Tried to lookup the salary. Found total income is 5000, but no specific 'Salary' transactions found. Only uncategorized income.",
-    "ideal_response": "Expected: lookup to get a detailed list of uncategorized income transactions to identify patterns like 'Gusto' or 'ADP'.",
+    "ideal_response": "Retrieved a detailed list of uncategorized income transactions to identify recurring patterns (e.g. Gusto, ADP).",
     "mock_income": MOCK_INCOME_ITERATION_2,
   },
   {
     "name": "salary_check_iteration_3",
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: Tried to lookup the salary. Found no specific 'Salary' transactions found. Only uncategorized income.\nOutcome 2: Looked up detailed list of uncategorized income. Found 2 recurring transactions of $2500 marked as 'ADP PAYROLL'.",
-    "ideal_response": "Expected: update_transaction_category_or_create_category_rules to set 'ADP PAYROLL' as Salary and create a rule.",
+    "ideal_response": "Set ADP PAYROLL and similar recurring payors as Salary and created a category rule.",
     "mock_income": MOCK_INCOME_ITERATION_3,
   }
 ]
 
 
-def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None):
+def run_test(test_name_or_index_or_dict, optimizer: StrategizerWSummaryOptimizer = None):
   if isinstance(test_name_or_index_or_dict, dict):
     if "task_description" in test_name_or_index_or_dict:
       test_name = test_name_or_index_or_dict.get("name", "custom_test")
@@ -303,11 +319,12 @@ def main(test: str = None, no_thinking: bool = False, thinking_budget: int = Non
     kw["max_output_tokens"] = max_output_tokens
   if model is not None:
     kw["model_name"] = model
-  optimizer = StrategizerOptimizer(**kw)
+  optimizer = StrategizerWSummaryOptimizer(**kw)
 
   if test is not None:
     if test.strip().lower() == "all":
-      for i in range(len(TEST_CASES)): run_test(i, optimizer)
+      for i in range(len(TEST_CASES)):
+        run_test(i, optimizer)
       return
     test_val = int(test) if test.isdigit() else test
     run_test(test_val, optimizer)
@@ -316,6 +333,7 @@ def main(test: str = None, no_thinking: bool = False, thinking_budget: int = Non
   print("Available test cases:")
   for i, tc in enumerate(TEST_CASES):
     print(f"  {i}: {tc['name']}")
+
 
 if __name__ == "__main__":
   import argparse
