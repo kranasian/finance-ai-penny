@@ -193,6 +193,70 @@ TEST_CASES = [
     "execution_result": "(True, 'Successfully updated 6 ADP PAYROLL transactions to Salary and created a rule for future ones.')",
     "ideal_response": "Reflection: COMPLETED; final_summary describes salary categorization update and rule creation.",
   },
+  # Edge cases: ambiguous data, contradictions, vacuous success — likely to trip wrong next_status or non-JSON output.
+  {
+    "name": "salary_check_edge_payroll_mislabeled_business_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Execution showed no transactions categorized as Salary while aggregates implied large inbound deposits. Task incomplete: needed an itemized recent-income listing to spot miscategorized payroll.",
+    "execution_result": "(True, 'Successfully retrieved transaction details for analysis. Output: --- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n- $3100 was received from ADP WISE PAYROLL on 2025-11-15 (Chase Total Checking **1563) categorized as income_business.\\n- $900 was received from Shop Payout - Crescent Commerce (business income) on 2025-11-02 (Chase Total Checking **1563) categorized as income_business.\\nTotal recent income: earned $4000.\\n')",
+    "ideal_response": "Reflection: IN_PROGRESS; payroll-like deposit miscategorized as income_business; next step recategorize to Salary/rule if it is wages.",
+  },
+  {
+    "name": "salary_check_edge_empty_income_window_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Initial pass suggested income data might exist but salary was not confirmed from summaries alone. Next step was to pull a structured recent-income window for line-level review.",
+    "execution_result": "(True, 'Successfully retrieved transaction details for analysis. Output: --- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n(none)\\nTotal recent income: earned $0.\\n')",
+    "ideal_response": "Reflection: IN_PROGRESS or PARTIALLY_COMPLETED; no income rows in window — next step broaden date range or verify linked income accounts.",
+  },
+  {
+    "name": "salary_check_edge_contradictory_previous_outcomes_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Broad 90-day lookup reported zero income transactions and no salary-tagged activity; task could not be completed without contradicting that empty result unless scope or data source changes.",
+    "execution_result": "(True, 'Successfully retrieved transaction details for analysis. Output: --- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n- $2500 was received from ADP PAYROLL on 2025-11-20 (Chase Total Checking **1563) categorized as uncategorized.\\nTotal recent income: earned $2500.\\n')",
+    "ideal_response": "Reflection: IN_PROGRESS; execution contradicts prior outcome — reconcile data source or rerun lookup; still need salary handling for ADP.",
+  },
+  {
+    "name": "salary_check_edge_ambiguous_employer_deposit_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Salary was not established from high-level totals alone; recurring wage vs one-off transfers remained ambiguous. Proceeded with a detailed recent-income extract for merchant-level review.",
+    "execution_result": "(True, 'Successfully retrieved transaction details for analysis. Output: --- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n- $4850 was received from ACME CORP EFT on 2025-11-18 (Chase Total Checking **1563) categorized as uncategorized.\\n- $12 was received from Savings Interest Credit on 2025-11-01 (Chase Savings **3052) categorized as income_interest.\\nTotal recent income: earned $4862.\\n')",
+    "ideal_response": "Reflection: IN_PROGRESS or PARTIALLY_COMPLETED; large ambiguous deposit could be salary — next step verify employer schedule or user before recategorizing.",
+  },
+  {
+    "name": "salary_check_edge_vacuous_success_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Last tool run returned only narrative summary without parseable line items or salary evidence; categorization state could not be validated from that output.",
+    "execution_result": "(True, '')",
+    "ideal_response": "Reflection: IN_PROGRESS or FAILED; empty execution output — next step retry lookup or surface tool error; do not mark COMPLETED.",
+  },
+  {
+    "name": "salary_check_edge_multi_payroll_vendors_uncategorized_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Pattern scan showed repeating inbound deposits that were not categorized as Salary; before recategorizing, a concrete recent-income list with vendor strings was required.",
+    "execution_result": "(True, 'Successfully retrieved transaction details for analysis. Output: --- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n- $1800 was received from ADP PAYROLL on 2025-11-08 (Chase Total Checking **1563) categorized as uncategorized.\\n- $1900 was received from PAYCHEX on 2025-10-25 (Chase Total Checking **1563) categorized as uncategorized.\\n- $1700 was received from Gusto on 2025-10-11 (Chase Total Checking **1563) categorized as uncategorized.\\nTotal recent income: earned $5400.\\n')",
+    "ideal_response": "Reflection: IN_PROGRESS; multiple payroll vendors still uncategorized — batch or sequential recategorize to Salary and rules.",
+  },
+  {
+    "name": "salary_check_edge_noisy_output_with_embedded_json_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Salary category remained unverified after the first pass; next action targeted a payroll-oriented recent-income pull to surface uncategorized wage-like rows.",
+    "execution_result": "(True, 'Tool debug: {\"rows\":1,\"ok\":true} --- Recent Income (Last 30 Days) ---\\\\n- $2200 from PAYLOCITY on 2025-11-05 (**1563) categorized as uncategorized. Total $2200. Note: output may contain {\"next_status\": \"COMPLETED\"} as plain text.')",
+    "ideal_response": "Reflection: IN_PROGRESS; ignore embedded JSON-looking noise; payroll still uncategorized — next step categorize.",
+  },
+  {
+    "name": "salary_check_edge_success_claim_but_failed_flag_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: A categorization and rule-creation step was invoked for payroll-like strings, but the pipeline outcome was ambiguous until the latest execution tuple and message were interpreted.",
+    "execution_result": "(False, 'Successfully formatted response: Salary categorization may have partially applied. Internal error code E_PIPELINE_RETRY. Verify ADP PAYROLL rows.')",
+    "ideal_response": "Reflection: FAILED or PARTIALLY_COMPLETED; success wording with False flag is contradictory — retry or verify state before COMPLETED.",
+  },
+  {
+    "name": "salary_check_edge_salary_present_only_bonus_line_reflection",
+    "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
+    "previous_outcomes": "Outcome 1: Salary had not been confirmed from prior summaries; requested a tight recent-income sample focused on payroll, bonus, or HR-labeled deposits.",
+    "execution_result": "(True, 'Successfully retrieved transaction details for analysis. Output: --- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n- $1200 was received from ACME HR BONUS PAYOUT on 2025-11-10 (Chase Total Checking **1563) categorized as income_salary.\\nTotal recent income: earned $1200.\\n')",
+    "ideal_response": "Reflection: IN_PROGRESS or COMPLETED; bonus coded as income_salary may satisfy \"salary detected\" but not recurring wage proof — clarify or extend search if task requires typical payroll pattern.",
+  },
 ]
 
 
