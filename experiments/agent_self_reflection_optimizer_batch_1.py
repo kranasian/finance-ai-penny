@@ -5,12 +5,26 @@ import os
 import sys
 from dotenv import load_dotenv
 import json
+from pydantic import BaseModel, Field
+from typing import Literal
 
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
   sys.path.insert(0, parent_dir)
 
 load_dotenv()
+
+class SCHEMA(BaseModel):
+    result_summary: str = Field(
+        description="Summarized execution result that clearly helps to progress the task at hand."
+    )
+    next_status: Literal["COMPLETED", "PARTIALLY_COMPLETED", "FAILED", "IN_PROGRESS"] = Field(
+        description="The workflow state classified based on the evidence."
+    )
+    outcome_reflection: str = Field(
+        description="What was good in the execution result that made progress towards the task and what could be done better that wasn't attempted in the Previous Outcomes."
+    )
+
 
 REFLECTION_WO_CODE_SYSTEM_PROMPT = """You are the reflection component of Strategizer AI.
 Inputs:
@@ -60,21 +74,15 @@ Quality rules:
 - Quote or paraphrase concrete facts from Execution Result; avoid inventing merchants, amounts, or categories not shown.
 - Let Previous Outcomes explain prior intent; do not reset context.
 - Keep "reflection" concise and auditable (what you saw → why this status).
-- final_summary: non-null only for terminal states (COMPLETED, FAILED, PARTIALLY_COMPLETED); null for IN_PROGRESS.
+- final_summary concept is now replaced by result_summary and outcome_reflection.
 
-Output strict JSON object:
-{
-  "reflection": "Concise evidence-based reasoning.",
-  "next_status": "COMPLETED | PARTIALLY_COMPLETED | FAILED | IN_PROGRESS",
-  "final_summary": "User-facing summary only for terminal states (COMPLETED/FAILED/PARTIALLY_COMPLETED); otherwise null."
-}
 """
 
 
 class SelfReflectionWoCodeOptimizer:
   """Reflection component without code_executed in input: Task + Previous Outcomes + Execution Result only."""
 
-  def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=4096, max_output_tokens=2048, temperature=0.2):
+  def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=700, max_output_tokens=1024, temperature=0.5):
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
       raise ValueError("GEMINI_API_KEY missing.")
@@ -114,6 +122,7 @@ output:""")
         include_thoughts=True,
       ),
       response_mime_type="application/json",
+      response_schema=SCHEMA,
     )
     output_text = ""
     thought_summary = ""
@@ -137,32 +146,25 @@ output:""")
         sys.exit(1)
       raise
     if thought_summary:
-      print("\n" + "-" * 80)
-      print("THOUGHT SUMMARY:")
-      print("-" * 80)
-      print(thought_summary.strip())
-      print("-" * 80 + "\n")
+      print("\n## Thought Summary\n")
+      print(thought_summary.strip() + "\n")
     return output_text
 
 
-def _run_test_with_logging(task_description: str, previous_outcomes: str, execution_result: str, optimizer: SelfReflectionWoCodeOptimizer = None):
+def _run_test_with_logging(task_description: str, previous_outcomes: str, execution_result: str, optimizer: SelfReflectionWoCodeOptimizer | None = None, ideal_response: str | None = None):
   if optimizer is None:
     optimizer = SelfReflectionWoCodeOptimizer()
-  print("=" * 80)
-  print("LLM INPUT (no code):")
-  print("=" * 80)
-  print(f"Task Description: {task_description}")
-  print(f"Execution Result:\n{execution_result}")
-  print(f"Previous Outcomes:\n{previous_outcomes}")
-  print("=" * 80)
+  print(f"## LLM Input\n")
+  print(f"**Task Description**: {task_description}\n")
+  print(f"**Execution Result**:\n```\n{execution_result}\n```\n")
+  print(f"**Previous Outcomes**:\n{previous_outcomes}")
   print()
   result = optimizer.generate_response(task_description, previous_outcomes, execution_result)
-  print("=" * 80)
-  print("LLM OUTPUT:")
-  print("=" * 80)
+  print(f"## LLM Output:\n")
   print(result)
-  print("=" * 80)
   print()
+  if ideal_response:
+    print(f"## Ideal Response:\n\n{ideal_response}\n")
   return result
 
 
@@ -175,7 +177,7 @@ TEST_CASES = [
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "None. This is the first attempt.",
     "execution_result": "(True, '--- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n- $1440 was received from CA State Payroll on 2025-11-18 (Chase Total Checking **1563) categorized as income_salary.\\n- $1340 was received from CA State Payroll on 2025-10-31 (Chase Total Checking **1563) categorized as income_salary.\\nTotal recent income: earned $2780.\\n')",
-    "ideal_response": "Reflection: COMPLETED; salary is already detected and appears correctly categorized.",
+    "ideal_response": "Reflection: COMPLETED; I see two recent transactions from CA State Payroll categorized as income_salary, so salary is already detected and appears correctly categorized.",
   },
   {
     "name": "salary_check_iteration_1b_reflection",
@@ -183,7 +185,7 @@ TEST_CASES = [
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "None. This is the first attempt.",
     "execution_result": "(True, '--- Recent Income (Last 30 Days) ---\\nRecent Income Transactions:\\n- $2500 was received from ADP PAYROLL on 2025-11-20 (Chase Total Checking **1563) categorized as uncategorized.\\n- $2500 was received from Gusto on 2025-10-22 (Chase Total Checking **1563) categorized as uncategorized.\\nTotal recent income: earned $5000.\\n')",
-    "ideal_response": "Reflection: IN_PROGRESS; salary-like uncategorized payroll deposits were found and should be recategorized.",
+    "ideal_response": "Reflection: IN_PROGRESS; I see two recent large transactions from ADP PAYROLL and Gusto that are uncategorized, so salary-like uncategorized payroll deposits were found and should be recategorized.",
   },
   {
     "name": "salary_check_iteration_2b_success_reflection",
@@ -191,7 +193,7 @@ TEST_CASES = [
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: The initial step confirmed that no specific 'Salary' transactions were found, only uncategorized income. The execution result shows two recent income transactions of $2500 each, both categorized as 'uncategorized' and coming from known payroll providers (ADP PAYROLL and Gusto). This strongly suggests these are the salary payments that need to be re-categorized as 'Salary' as per the task description. The task is not fully accomplished because the re-categorization step has not yet been executed. The next logical step is to proceed with fixing the categorization of these identified transactions.",
     "execution_result": "(True, 'Successfully processed categorization request: Categorize all transactions originating from 'ADP PAYROLL' and 'Gusto' as 'Salary'.')",
-    "ideal_response": "Reflection: COMPLETED; salary categorization fix and rule creation are done.",
+    "ideal_response": "Reflection: COMPLETED; I see a success message that ADP PAYROLL and Gusto transactions were categorized as Salary, so the categorization fix and rule creation are done.",
   },
   {
     "name": "salary_check_iteration_2b_fail_reflection",
@@ -199,7 +201,7 @@ TEST_CASES = [
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: The initial step confirmed that no specific 'Salary' transactions were found, only uncategorized income. The execution result shows two recent income transactions of $2500 each, both categorized as 'uncategorized' and coming from known payroll providers (ADP PAYROLL and Gusto). This strongly suggests these are the salary payments that need to be re-categorized as 'Salary' as per the task description. The task is not fully accomplished because the re-categorization step has not yet been executed. The next logical step is to proceed with fixing the categorization of these identified transactions.",
     "execution_result": "(True, 'An unexpected error was encountered.')",
-    "ideal_response": "Reflection: FAILED; unexpected error encountered.",
+    "ideal_response": "Reflection: FAILED; I see an unexpected error in the execution result, so the categorization step failed.",
   },
   {
     "name": "salary_check_iteration_3_reflection",
@@ -207,7 +209,7 @@ TEST_CASES = [
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: The initial step confirmed that no specific 'Salary' transactions were found, only uncategorized income. The execution result shows two recent income transactions of $2500 each, both categorized as 'uncategorized' and coming from known payroll providers (ADP PAYROLL and Gusto). This strongly suggests these are the salary payments that need to be re-categorized as 'Salary' as per the task description. The task is not fully accomplished because the re-categorization step has not yet been executed. The next logical step is to proceed with fixing the categorization of these identified transactions.\nOutcome 2: The previous step identified two likely salary transactions ($2500 each from ADP PAYROLL and Gusto) that were uncategorized. The current execution step, which was intended to fix the categorization, resulted in an unexpected error: 'An unexpected error was encountered.'. This means the core objective of fixing the categorization was not achieved. Therefore, the task is incomplete, and the next step must be to retry the categorization fix, perhaps after logging or investigating the error if more context were available. Since I must provide the next logical step based only on the provided result, the next step should be to attempt the categorization fix again or report failure if retries are exhausted. Given the structure, I will mark it as IN_PROGRESS and assume the next step should be a retry or a different approach to categorization.",
     "execution_result": "(True, 'Successfully processed categorization request: Update transactions from source 'ADP PAYROLL' to category 'Salary'. Also, update transactions from source 'Gusto' to category 'Salary'.')",
-    "ideal_response": "Reflection: COMPLETED; retry succeeded and payroll transactions were categorized as Salary.",
+    "ideal_response": "Reflection: COMPLETED; I see a success message that ADP PAYROLL and Gusto transactions were updated to Salary, so the retry succeeded.",
   },
   # Shelter (batch 2): optional short_description summarizes scenario vs. ideal_response rubric.
   {
@@ -217,7 +219,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "None. This is the first attempt.",
     "execution_result": "(True, '--- Top Spending ---\\nRecent Largest Spending Transactions:\\n- $2000 was paid to Apartments LLC on 2025-11-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $2000 was paid to Apartments LLC on 2025-10-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $2000 was paid to Apartments LLC on 2025-09-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-10-31 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-09-30 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-08-31 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1200 was paid to Community College on 2025-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\n- $1200 was paid to Community College on 2024-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\nTotal recent spending: spent $13350.\\n')",
-    "ideal_response": "Reflection: COMPLETED; rent and mortgage spending are present and categorized as shelter_home.",
+    "ideal_response": "Reflection: COMPLETED; I see consistent payments of $2000 to Apartments LLC and $1650 to Bank of America correctly categorized as shelter_home, so rent and mortgage spending are present and categorized as shelter_home.",
   },
   {
     "name": "shelter_check_iteration_1b_reflection",
@@ -226,7 +228,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "None. This is the first attempt.",
     "execution_result": "(True, '--- Top Spending ---\\nRecent Largest Spending Transactions:\\n- $2000 was paid to Apartments LLC on 2025-11-18 (Chase Total Checking **1563) categorized as meals_dining_out.\\n- $2000 was paid to Apartments LLC on 2025-10-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $2000 was paid to Apartments LLC on 2025-09-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-10-31 (Chase Total Checking **1563) categorized as uncategorized.\\n- $1650 was paid to Bank of America on 2025-09-30 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-08-31 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1200 was paid to Community College on 2025-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\n- $1200 was paid to Community College on 2024-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\nTotal recent spending: spent $13350.\\n')",
-    "ideal_response": "Reflection: IN_PROGRESS; rent and mortgage spending are present but categorized incorrectly as meals_dining_out and uncategorized.",
+    "ideal_response": "Reflection: IN_PROGRESS; I see a $2000 rent payment categorized as meals_dining_out and a $1650 mortgage payment categorized as uncategorized, so rent and mortgage spending are present but categorized incorrectly.",
   },
   {
     "name": "shelter_check_iteration_1c_reflection",
@@ -235,7 +237,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "None. This is the first attempt.",
     "execution_result": "(True, '--- Top Spending ---\\nRecent Largest Spending Transactions:\\n- $2000 was paid to Apartments LLC on 2025-11-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $2000 was paid to Apartments LLC on 2025-10-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $2000 was paid to Apartments LLC on 2025-09-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-10-31 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-09-30 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-08-31 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1200 was paid to Community College on 2025-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\n- $1200 was paid to Community College on 2024-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\n- $50 was paid to Apartments LLC on 2025-11-18 (Chase Total Checking **1563) categorized as bills_service_fees.\\nTotal recent spending: spent $13400.\\n')",
-    "ideal_response": "Reflection: COMPLETED; rent and mortgage spending are present and categorized as shelter_home.",
+    "ideal_response": "Reflection: COMPLETED; I see consistent payments of $2000 to Apartments LLC and $1650 to Bank of America correctly categorized as shelter_home, so rent and mortgage spending are present and categorized as shelter_home.",
   },
   {
     "name": "shelter_check_iteration_1d_reflection",
@@ -244,7 +246,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "None. This is the first attempt.",
     "execution_result": "(True, '--- Top Spending ---\\nRecent Largest Spending Transactions:\\n- $2000 was paid to Apartments LLC on 2025-11-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $2000 was paid to Apartments LLC on 2025-10-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $2000 was paid to Apartments LLC on 2025-09-18 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-10-31 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-09-30 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1650 was paid to Bank of America on 2025-08-31 (Chase Total Checking **1563) categorized as shelter_home.\\n- $1200 was paid to Community College on 2025-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\n- $1200 was paid to Community College on 2024-11-15 (Chase Total Checking **1563) categorized as education_tuition.\\n- $1050 was paid to Apartments LLC on 2025-11-18 (Chase Total Checking **1563) categorized as shelter_home.\\nTotal recent spending: spent $14400.\\n')",
-    "ideal_response": "Reflection: IN_PROGRESS; rent and mortgage spending are present and categorized as shelter_home but there is an unexpected amount categorized as shelter_home.",
+    "ideal_response": "Reflection: IN_PROGRESS; I see two large but different amounts ($2000 and $1050) sent to Apartments LLC on the exact same date (2025-11-18), which violates the expected amount check, so further investigation is needed.",
   },
   {
     "name": "shelter_check_iteration_2b_success_reflection",
@@ -253,7 +255,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "Outcome 1: The task requires checking rent/mortgage spending categorization and fixing incorrect ones. The execution result shows the top spending transactions. One transaction of $2000 to 'Apartments LLC' on 2025-11-18 is incorrectly categorized as 'meals_dining_out'. Other large transactions to 'Apartments LLC' and 'Bank of America' seem related to housing but one is missing categorization ($1650 to Bank of America). Since a clear miscategorization was found ('Apartments LLC' transaction) and the goal is to fix categorization, the process is not complete. A next step is needed to correct the identified miscategorization.",
     "execution_result": "(True, 'Successfully processed categorization request: Categorize transactions of $2000 to 'Apartments LLC' on 2025-11-18 with category meals_dining_out to shelter_home and of $1650 to 'Bank of America' on 2025-10-31 with category uncategorized to shelter_home as 'shelter_home'.')",
-    "ideal_response": "Reflection: COMPLETED; Apartments LLC and Bank of America transactions are categorized correctly as shelter_home.",
+    "ideal_response": "Reflection: COMPLETED; I see a success message confirming that the transactions for Apartments LLC and Bank of America have been successfully categorized as shelter_home, so the categorizations are now correct.",
   },
   {
     "name": "shelter_check_iteration_2b_partial_reflection",
@@ -262,7 +264,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "Outcome 1: The task requires checking rent/mortgage spending categorization and fixing incorrect ones. The execution result shows the top spending transactions. One transaction of $2000 to 'Apartments LLC' on 2025-11-18 is incorrectly categorized as 'meals_dining_out'. Other large transactions to 'Apartments LLC' and 'Bank of America' seem related to housing but one is missing categorization ($1650 to Bank of America). Since a clear miscategorization was found ('Apartments LLC' transaction) and the goal is to fix categorization, the process is not complete. A next step is needed to correct the identified miscategorization.",
     "execution_result": "(True, 'Successfully processed categorization request: Categorize all transactions originating from 'Apartments LLC' as 'shelter_home'.')",
-    "ideal_response": "Reflection: IN_PROGRESS or PARTIALLY_COMPLETED; apartments LLC transaction is categorized correctly, but Bank of America transaction is still uncategorized.",
+    "ideal_response": "Reflection: IN_PROGRESS or PARTIALLY_COMPLETED; I see a success message for 'Apartments LLC' only, but the Bank of America transaction is still uncategorized.",
   },
   {
     "name": "shelter_check_iteration_2b_fail_reflection",
@@ -271,7 +273,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "Outcome 1: The task requires checking rent/mortgage spending categorization and fixing incorrect ones. The execution result shows the top spending transactions. One transaction of $2000 to 'Apartments LLC' on 2025-11-18 is incorrectly categorized as 'meals_dining_out'. Other large transactions to 'Apartments LLC' and 'Bank of America' seem related to housing but one is missing categorization ($1650 to Bank of America). Since a clear miscategorization was found ('Apartments LLC' transaction) and the goal is to fix categorization, the process is not complete. A next step is needed to correct the identified miscategorization.",
     "execution_result": "(True, 'An unexpected error was encountered.')",
-    "ideal_response": "Reflection: FAILED; unexpected error encountered.",
+    "ideal_response": "Reflection: FAILED; I see an unexpected error in the execution result, so the categorization step failed.",
   },
   {
     "name": "shelter_check_iteration_3_reflection",
@@ -280,7 +282,7 @@ TEST_CASES = [
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "Outcome 1: The task requires checking rent/mortgage spending categorization and fixing incorrect ones. The execution result shows the top spending transactions. One transaction of $2000 to 'Apartments LLC' on 2025-11-18 is incorrectly categorized as 'meals_dining_out'. Other large transactions to 'Apartments LLC' and 'Bank of America' seem related to housing but one is missing categorization ($1650 to Bank of America). Since a clear miscategorization was found ('Apartments LLC' transaction) and the goal is to fix categorization, the process is not complete. A next step is needed to correct the identified miscategorization.\nOutcome 2: The execution result indicates an unexpected error occurred during the last step, despite previous steps identifying a clear miscategorization that needed fixing. Since the error prevents the necessary correction, the task cannot proceed successfully.",
     "execution_result": "(True, 'Successfully processed categorization request: Categorize transactions of $2000 to 'Apartments LLC' on 2025-11-18 with category meals_dining_out to shelter_home and of $1650 to 'Bank of America' on 2025-10-31 with category uncategorized to shelter_home as 'shelter_home'.')",
-    "ideal_response": "Reflection: COMPLETED; Apartments LLC and Bank of America transactions are categorized correctly as shelter_home.",
+    "ideal_response": "Reflection: COMPLETED; I see a success message confirming that the transactions for Apartments LLC and Bank of America have been successfully categorized as shelter_home, so the categorizations are now correct.",
   },
 ]
 
@@ -292,8 +294,8 @@ def run_test(test_name_or_index_or_dict, optimizer: SelfReflectionWoCodeOptimize
     tc = next((t for t in TEST_CASES if t["name"] == test_name_or_index_or_dict), None)
   if not tc:
     return None
-  print(f"\n{'='*80}\nRunning test: {tc['name']}\n{'='*80}\n")
-  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], tc["execution_result"], optimizer)
+  print(f"\n# Test: **{tc['name']}**\n")
+  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], tc["execution_result"], optimizer, ideal_response=tc.get("ideal_response"))
 
 
 def run_all_tests_batch(optimizer: SelfReflectionWoCodeOptimizer = None, batch_num: int = 1):
@@ -302,11 +304,9 @@ def run_all_tests_batch(optimizer: SelfReflectionWoCodeOptimizer = None, batch_n
   cases = [tc for tc in TEST_CASES if tc["batch"] == batch_num]
   batch_results = []
   label = "salary" if batch_num == 1 else "shelter" if batch_num == 2 else f"batch {batch_num}"
-  print(f"\n{'#'*80}\nBATCH RUN START (batch {batch_num}: {label})\n{'#'*80}\n")
   for tc in cases:
     result = run_test(tc["name"], optimizer)
     batch_results.append((tc["name"], result))
-  print(f"\n{'#'*80}\nBATCH RUN SUMMARY (batch {batch_num}: {label})\n{'#'*80}")
   for name, result in batch_results:
     status = "unknown"
     try:
@@ -315,7 +315,7 @@ def run_all_tests_batch(optimizer: SelfReflectionWoCodeOptimizer = None, batch_n
     except Exception:
       pass
     print(f"- {name}: next_status={status}")
-  print("#" * 80 + "\n")
+  print()
   return batch_results
 
 
@@ -328,7 +328,7 @@ def main(
   max_output_tokens: int = None,
   model: str = None,
 ):
-  tb = (0 if no_thinking else (thinking_budget if thinking_budget is not None else 4096))
+  tb = (0 if no_thinking else (thinking_budget if thinking_budget is not None else 700))
   kw = {"thinking_budget": tb}
   if max_output_tokens is not None:
     kw["max_output_tokens"] = max_output_tokens
