@@ -112,8 +112,8 @@ output:""")
       ),
     )
 
-    output_text = ""
-    thought_summary = ""
+    output_text: str = ""
+    thought_summary: str = ""
     try:
       for chunk in self.client.models.generate_content_stream(
         model=self.model_name,
@@ -136,11 +136,8 @@ output:""")
       raise
 
     if thought_summary:
-      print("\n" + "-" * 80)
-      print("THOUGHT SUMMARY:")
-      print("-" * 80)
-      print(thought_summary.strip())
-      print("-" * 80 + "\n")
+      print("\n## Thought Summary\n")
+      print(thought_summary.strip() + "\n")
 
     return output_text
 
@@ -198,78 +195,64 @@ def _format_mock_spending_output(
 """
 
 
-def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer = None, mock_execution_result: str = None):
+def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer | None = None, mock_execution_result: str | None = None, ideal_response: str | None = None):
   if optimizer is None:
     optimizer = StrategizerOptimizer()
   mock_output = mock_execution_result
 
-  llm_input = f"""**Task Description**: {task_description}
-
-**Previous Outcomes**:
-
-{previous_outcomes}
-
-output:"""
+  llm_input_display = f"**Task Description**: {task_description}\n\n**Previous Outcomes**:\n\n{previous_outcomes}"
   
-  print("=" * 80)
-  print("LLM INPUT:")
-  print("=" * 80)
-  print(llm_input)
-  print("=" * 80)
+  print(f"## LLM Input\n")
+  print(llm_input_display)
   print()
   
   result = optimizer.generate_response(task_description, previous_outcomes)
   
-  print("=" * 80)
-  print("LLM OUTPUT:")
-  print("=" * 80)
+  print(f"## LLM Output:\n")
   print(result)
-  print("=" * 80)
   print()
   
   code = extract_python_code(result)
   
   if code:
-    print("=" * 80)
-    print("EXECUTING GENERATED CODE:")
-    print("=" * 80)
     try:
       def wrapped_lookup(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] lookup_user_accounts_transactions_income_and_spending_patterns")
-        print(f"  args: {args}")
+        # Suppressed intermediate function call logging to match Markdown style
+        # print(f"\n[FUNCTION CALL] lookup_user_accounts_transactions_income_and_spending_patterns")
+        # print(f"  args: {args}")
         if mock_output is not None:
           res = (True, mock_output)
-          print(f"  [RETURN] (mock) success: {res[0]}")
+          # print(f"  [RETURN] (mock) success: {res[0]}")
         else:
           res = lookup_user_accounts_transactions_income_and_spending_patterns(*args, **kwargs)
-          print(f"  [RETURN] success: {res[0]}")
+          # print(f"  [RETURN] success: {res[0]}")
         out = res[1]
-        print(f"  [RETURN] output: {out[:300]}{'...' if len(out) > 300 else ''}")
+        # print(f"  [RETURN] output: {out[:300]}{'...' if len(out) > 300 else ''}")
         return res
       
       def wrapped_update(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] update_transaction_category_or_create_category_rules")
-        print(f"  args: {args}")
+        # print(f"\n[FUNCTION CALL] update_transaction_category_or_create_category_rules")
+        # print(f"  args: {args}")
         result = update_transaction_category_or_create_category_rules(*args, **kwargs)
-        print(f"  [RETURN] success: {result[0]}")
-        print(f"  [RETURN] output: {result[1]}")
+        # print(f"  [RETURN] success: {result[0]}")
+        # print(f"  [RETURN] output: {result[1]}")
         return result
         
       def wrapped_research(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] research_and_strategize_financial_outcomes")
-        print(f"  args: {args}")
+        # print(f"\n[FUNCTION CALL] research_and_strategize_financial_outcomes")
+        # print(f"  args: {args}")
         result = research_and_strategize_financial_outcomes(*args, **kwargs)
-        print(f"  [RETURN] success: {result[0]}")
-        print(f"  [RETURN] output: {result[1]}")
+        # print(f"  [RETURN] success: {result[0]}")
+        # print(f"  [RETURN] output: {result[1]}")
         return result
       
       def wrapped_create(*args, **kwargs):
-        print(f"\n[FUNCTION CALL] create_budget_or_goal_or_reminder")
-        print(f"  args: {args}")
-        print(f"  kwargs: {kwargs}")
+        # print(f"\n[FUNCTION CALL] create_budget_or_goal_or_reminder")
+        # print(f"  args: {args}")
+        # print(f"  kwargs: {kwargs}")
         result = create_budget_or_goal_or_reminder(*args, **kwargs)
-        print(f"  [RETURN] success: {result[0]}")
-        print(f"  [RETURN] output: {result[1]}")
+        # print(f"  [RETURN] success: {result[0]}")
+        # print(f"  [RETURN] output: {result[1]}")
         return (result[0], result[1])
       
       namespace = {
@@ -282,24 +265,21 @@ output:"""
       exec(code, namespace)
       
       if 'execute_plan' in namespace:
-        print("\n" + "=" * 80)
-        print("Calling execute_plan()...")
-        print("=" * 80)
         result = namespace['execute_plan']()
-        print("\n" + "=" * 80)
-        print("execute_plan() FINAL RESULT:")
-        print("=" * 80)
+        print("\n## Execution Final Result:\n")
+        print("```")
         print(f"  success: {result[0]}")
         print(f"  output: {result[1]}")
-        print("=" * 80)
+        print("```")
       else:
         print("Warning: execute_plan() function not found in generated code")
-        print("=" * 80)
     except Exception as e:
       print(f"Error executing generated code: {str(e)}")
       import traceback
       print(traceback.format_exc())
-      print("=" * 80)
+  
+  if ideal_response:
+    print(f"\n## Ideal Response:\n\n{ideal_response}\n")
   
   return result
 
@@ -354,7 +334,7 @@ TEST_CASES = [
     "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: The initial step confirmed that no specific 'Salary' transactions were found, only uncategorized income. The execution result shows two recent income transactions of $2500 each, both categorized as 'uncategorized' and coming from known payroll providers (ADP PAYROLL and Gusto). This strongly suggests these are the salary payments that need to be re-categorized as 'Salary' as per the task description. The task is not fully accomplished because the re-categorization step has not yet been executed. The next logical step is to proceed with fixing the categorization of these identified transactions.\nOutcome 2: The previous step identified two likely salary transactions ($2500 each from ADP PAYROLL and Gusto) that were uncategorized. The current execution step, which was intended to fix the categorization, resulted in an unexpected error: 'An unexpected error was encountered.'. This means the core objective of fixing the categorization was not achieved. Therefore, the task is incomplete, and the next step must be to retry the categorization fix, perhaps after logging or investigating the error if more context were available. Since I must provide the next logical step based only on the provided result, the next step should be to attempt the categorization fix again or report failure if retries are exhausted. Given the structure, I will mark it as IN_PROGRESS and assume the next step should be a retry or a different approach to categorization.",
-    "ideal_response": "Expected: recategorize ADP PAYROLL and Gusto uncategorized income transactions as Salary (and create/update rule if appropriate).",
+    "ideal_response": "Expected: recategorize ADP PAYROLL or Gusto to isolate the error (or both if safe approach is not chosen).",
     "mock_execution_result": None,
   },
   # shelter (batch 2)
@@ -371,7 +351,7 @@ TEST_CASES = [
     "batch": 2,
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
     "previous_outcomes": "Outcome 1: The task requires checking rent/mortgage spending categorization and fixing incorrect ones. The execution result shows the top spending transactions. One transaction of $2000 to 'Apartments LLC' on 2025-11-18 is incorrectly categorized as 'meals_dining_out'. Other large transactions to 'Apartments LLC' and 'Bank of America' seem related to housing but one is missing categorization ($1650 to Bank of America). Since a clear miscategorization was found ('Apartments LLC' transaction) and the goal is to fix categorization, the process is not complete. A next step is needed to correct the identified miscategorization.",
-    "ideal_response": "Expected: recategorize miscategorized or uncategorized rent or mortgage transactions as shelter_home (and create/update rule if appropriate).",
+    "ideal_response": "Expected: recategorize at least the confirmed miscategorization for Apartments LLC as shelter_home, or attempt all.",
     "mock_execution_result": None,
   },
 ]
@@ -381,12 +361,13 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None)
   if isinstance(test_name_or_index_or_dict, dict):
     if "task_description" in test_name_or_index_or_dict:
       test_name = test_name_or_index_or_dict.get("name", "custom_test")
-      print(f"\n{'='*80}\nRunning test: {test_name}\n{'='*80}\n")
+      print(f"\n# Test: **{test_name}**\n")
       return _run_test_with_logging(
         test_name_or_index_or_dict["task_description"],
         test_name_or_index_or_dict.get("previous_outcomes", ""),
         optimizer,
         mock_execution_result=test_name_or_index_or_dict.get("mock_execution_result"),
+        ideal_response=test_name_or_index_or_dict.get("ideal_response"),
       )
   if isinstance(test_name_or_index_or_dict, int):
     tc = TEST_CASES[test_name_or_index_or_dict] if 0 <= test_name_or_index_or_dict < len(TEST_CASES) else None
@@ -394,8 +375,8 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None)
     tc = next((t for t in TEST_CASES if t["name"] == test_name_or_index_or_dict), None)
   if not tc:
     return None
-  print(f"\n{'='*80}\nRunning test: {tc['name']}\n{'='*80}\n")
-  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], optimizer, mock_execution_result=tc.get("mock_execution_result"))
+  print(f"\n# Test: **{tc['name']}**\n")
+  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], optimizer, mock_execution_result=tc.get("mock_execution_result"), ideal_response=tc.get("ideal_response"))
 
 
 def run_all_tests_batch(optimizer: StrategizerOptimizer = None, batch_num: int = 1):
@@ -404,15 +385,12 @@ def run_all_tests_batch(optimizer: StrategizerOptimizer = None, batch_num: int =
   cases = [tc for tc in TEST_CASES if tc["batch"] == batch_num]
   batch_results = []
   label = "salary" if batch_num == 1 else "shelter" if batch_num == 2 else f"batch {batch_num}"
-  print(f"\n{'#'*80}\nBATCH RUN START (batch {batch_num}: {label})\n{'#'*80}\n")
   for tc in cases:
     result = run_test(tc, optimizer)
     batch_results.append((tc["name"], result))
-  print(f"\n{'#'*80}\nBATCH RUN SUMMARY (batch {batch_num}: {label})\n{'#'*80}")
   for name, result in batch_results:
     success = result[0] if isinstance(result, tuple) and len(result) > 0 else None
     print(f"- {name}: success={success}")
-  print("#" * 80 + "\n")
   return batch_results
 
 
