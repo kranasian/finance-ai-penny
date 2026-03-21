@@ -172,10 +172,36 @@ Recent Income Transactions:
 """
 
 
-def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer = None, mock_income: list = None):
+def _format_mock_spending_output(
+  spending_txns,
+  *,
+  header: str = "Recent Spending Patterns (Last 30 Days)",
+  transactions_heading: str = "Recent Spending Transactions:",
+):
+  """Format a list of spending transaction dicts into the lookup result string.
+
+  Args:
+    spending_txns: Rows with merchant, amount, date, account, category.
+    header: Inner title for the top banner; rendered as ``--- {header} ---``.
+    transactions_heading: Subheading above the transaction lines.
+  """
+  lines = []
+  total = 0
+  for t in spending_txns:
+    lines.append(f"- ${t['amount']} was paid to {t['merchant']} on {t['date']} ({t['account']}) categorized as {t['category']}.")
+    total += t["amount"]
+  body = "\n".join(lines) + f"\nTotal recent spending: spent ${total}."
+  banner = f"--- {header} ---"
+  return f"""{banner}
+{transactions_heading}
+{body}
+"""
+
+
+def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer = None, mock_execution_result: str = None):
   if optimizer is None:
     optimizer = StrategizerOptimizer()
-  mock_output = _format_mock_lookup_output(mock_income) if mock_income else None
+  mock_output = mock_execution_result
 
   llm_input = f"""**Task Description**: {task_description}
 
@@ -278,49 +304,75 @@ output:"""
   return result
 
 
-# Mock income data per test case: list of dicts with merchant, amount, date, account, category.
-MOCK_INCOME_ITERATION_1A = [
+# Mock lookup outputs for tests that set mock_execution_result (formatted like API output strings).
+MOCK_INCOME_ITERATION_1A = _format_mock_lookup_output([
   {"merchant": "CA State Payroll", "amount": 1440, "date": "2025-11-18", "account": "Chase Total Checking **1563", "category": "income_salary"},
   {"merchant": "CA State Payroll", "amount": 1340, "date": "2025-10-31", "account": "Chase Total Checking **1563", "category": "income_salary"},
-]
-MOCK_INCOME_ITERATION_1B = [
+])
+MOCK_INCOME_ITERATION_1B = _format_mock_lookup_output([
   {"merchant": "ADP PAYROLL", "amount": 2500, "date": "2025-11-20", "account": "Chase Total Checking **1563", "category": "uncategorized"},
   {"merchant": "Gusto", "amount": 2500, "date": "2025-10-22", "account": "Chase Total Checking **1563", "category": "uncategorized"},
-]
-MOCK_INCOME_ITERATION_3 = [
-  {"merchant": "ADP PAYROLL", "amount": 2500, "date": "2025-11-20", "account": "Chase Total Checking **1563", "category": "uncategorized"},
-  {"merchant": "Gusto", "amount": 2500, "date": "2025-10-22", "account": "Chase Total Checking **1563", "category": "uncategorized"},
-  {"merchant": "Savings Interest", "amount": 3, "date": "2025-11-01", "account": "Chase Savings **3052", "category": "income_interest"},
-]
+])
+MOCK_SHELTER_ITERATION_1A = _format_mock_spending_output([
+  {"merchant": "Apartments LLC", "amount": 2000, "date": "2025-11-18", "account": "Chase Total Checking **1563", "category": "shelter_home"},
+  {"merchant": "Apartments LLC", "amount": 2000, "date": "2025-10-18", "account": "Chase Total Checking **1563", "category": "shelter_home"},
+  {"merchant": "Apartments LLC", "amount": 2000, "date": "2025-09-18", "account": "Chase Total Checking **1563", "category": "shelter_home"},
+  {"merchant": "Bank of America", "amount": 1650, "date": "2025-10-31", "account": "Chase Total Checking **1563", "category": "shelter_home"},
+  {"merchant": "Bank of America", "amount": 1650, "date": "2025-09-30", "account": "Chase Total Checking **1563", "category": "shelter_home"},
+  {"merchant": "Bank of America", "amount": 1650, "date": "2025-08-31", "account": "Chase Total Checking **1563", "category": "shelter_home"},
+  {"merchant": "Community College", "amount": 1200, "date": "2025-11-15", "account": "Chase Total Checking **1563", "category": "education_tuition"},
+  {"merchant": "Community College", "amount": 1200, "date": "2024-11-15", "account": "Chase Total Checking **1563", "category": "education_tuition"},
+], header="Top Spending", transactions_heading="Recent Largest Spending Transactions:")
 
 TEST_CASES = [
   {
     "name": "salary_check_iteration_1a",
+    "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "None. This is the first attempt.",
     "ideal_response": "Expected: lookup finding total income and whether there are salary categories already mapped.",
-    "mock_income": MOCK_INCOME_ITERATION_1A,
+    "mock_execution_result": MOCK_INCOME_ITERATION_1A,
   },
   {
     "name": "salary_check_iteration_1b",
+    "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "None. This is the first attempt.",
     "ideal_response": "Expected: lookup finding total income and whether there are only uncategorized income transactions.",
-    "mock_income": MOCK_INCOME_ITERATION_1B,
+    "mock_execution_result": MOCK_INCOME_ITERATION_1B,
   },
   {
     "name": "salary_check_iteration_2b",
+    "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: The initial step confirmed that no specific 'Salary' transactions were found, only uncategorized income. The execution result shows two recent income transactions of $2500 each, both categorized as 'uncategorized' and coming from known payroll providers (ADP PAYROLL and Gusto). This strongly suggests these are the salary payments that need to be re-categorized as 'Salary' as per the task description. The task is not fully accomplished because the re-categorization step has not yet been executed. The next logical step is to proceed with fixing the categorization of these identified transactions.",
     "ideal_response": "Expected: recategorize ADP PAYROLL and Gusto uncategorized income transactions as Salary (and create/update rule if appropriate).",
-    "mock_income": None,
+    "mock_execution_result": None,
   },
   {
     "name": "salary_check_iteration_3",
+    "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": "Outcome 1: The initial step confirmed that no specific 'Salary' transactions were found, only uncategorized income. The execution result shows two recent income transactions of $2500 each, both categorized as 'uncategorized' and coming from known payroll providers (ADP PAYROLL and Gusto). This strongly suggests these are the salary payments that need to be re-categorized as 'Salary' as per the task description. The task is not fully accomplished because the re-categorization step has not yet been executed. The next logical step is to proceed with fixing the categorization of these identified transactions.\nOutcome 2: The previous step identified two likely salary transactions ($2500 each from ADP PAYROLL and Gusto) that were uncategorized. The current execution step, which was intended to fix the categorization, resulted in an unexpected error: 'An unexpected error was encountered.'. This means the core objective of fixing the categorization was not achieved. Therefore, the task is incomplete, and the next step must be to retry the categorization fix, perhaps after logging or investigating the error if more context were available. Since I must provide the next logical step based only on the provided result, the next step should be to attempt the categorization fix again or report failure if retries are exhausted. Given the structure, I will mark it as IN_PROGRESS and assume the next step should be a retry or a different approach to categorization.",
     "ideal_response": "Expected: recategorize ADP PAYROLL and Gusto uncategorized income transactions as Salary (and create/update rule if appropriate).",
-    "mock_income": None,
+    "mock_execution_result": None,
+  },
+  # shelter (batch 2)
+  {
+    "name": "shelter_check_iteration_1a",
+    "batch": 2,
+    "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
+    "previous_outcomes": "None. This is the first attempt.",
+    "ideal_response": "Expected: lookup rent or mortgage spending and whether they're categorized correctly as shelter_home.",
+    "mock_execution_result": MOCK_SHELTER_ITERATION_1A,
+  },
+  {
+    "name": "shelter_check_iteration_2b",
+    "batch": 2,
+    "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
+    "previous_outcomes": "Outcome 1: The task requires checking rent/mortgage spending categorization and fixing incorrect ones. The execution result shows the top spending transactions. One transaction of $2000 to 'Apartments LLC' on 2025-11-18 is incorrectly categorized as 'meals_dining_out'. Other large transactions to 'Apartments LLC' and 'Bank of America' seem related to housing but one is missing categorization ($1650 to Bank of America). Since a clear miscategorization was found ('Apartments LLC' transaction) and the goal is to fix categorization, the process is not complete. A next step is needed to correct the identified miscategorization.",
+    "ideal_response": "Expected: recategorize miscategorized or uncategorized rent or mortgage transactions as shelter_home (and create/update rule if appropriate).",
+    "mock_execution_result": None,
   },
 ]
 
@@ -334,7 +386,7 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None)
         test_name_or_index_or_dict["task_description"],
         test_name_or_index_or_dict.get("previous_outcomes", ""),
         optimizer,
-        mock_income=test_name_or_index_or_dict.get("mock_income"),
+        mock_execution_result=test_name_or_index_or_dict.get("mock_execution_result"),
       )
   if isinstance(test_name_or_index_or_dict, int):
     tc = TEST_CASES[test_name_or_index_or_dict] if 0 <= test_name_or_index_or_dict < len(TEST_CASES) else None
@@ -343,18 +395,20 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None)
   if not tc:
     return None
   print(f"\n{'='*80}\nRunning test: {tc['name']}\n{'='*80}\n")
-  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], optimizer, mock_income=tc.get("mock_income"))
+  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], optimizer, mock_execution_result=tc.get("mock_execution_result"))
 
 
-def run_all_tests_batch(optimizer: StrategizerOptimizer = None):
+def run_all_tests_batch(optimizer: StrategizerOptimizer = None, batch_num: int = 1):
   if optimizer is None:
     optimizer = StrategizerOptimizer()
+  cases = [tc for tc in TEST_CASES if tc["batch"] == batch_num]
   batch_results = []
-  print(f"\n{'#'*80}\nBATCH RUN START\n{'#'*80}\n")
-  for i, tc in enumerate(TEST_CASES):
-    result = run_test(i, optimizer)
+  label = "salary" if batch_num == 1 else "shelter" if batch_num == 2 else f"batch {batch_num}"
+  print(f"\n{'#'*80}\nBATCH RUN START (batch {batch_num}: {label})\n{'#'*80}\n")
+  for tc in cases:
+    result = run_test(tc, optimizer)
     batch_results.append((tc["name"], result))
-  print(f"\n{'#'*80}\nBATCH RUN SUMMARY\n{'#'*80}")
+  print(f"\n{'#'*80}\nBATCH RUN SUMMARY (batch {batch_num}: {label})\n{'#'*80}")
   for name, result in batch_results:
     success = result[0] if isinstance(result, tuple) and len(result) > 0 else None
     print(f"- {name}: success={success}")
@@ -362,7 +416,15 @@ def run_all_tests_batch(optimizer: StrategizerOptimizer = None):
   return batch_results
 
 
-def main(test: str = None, run_batch: bool = False, no_thinking: bool = False, thinking_budget: int = None, max_output_tokens: int = None, model: str = None):
+def main(
+  test: str = None,
+  run_batch: bool = False,
+  batch_num: int = 1,
+  no_thinking: bool = False,
+  thinking_budget: int = None,
+  max_output_tokens: int = None,
+  model: str = None,
+):
   tb = 0 if no_thinking else (thinking_budget if thinking_budget is not None else 4096)
   kw = {"thinking_budget": tb}
   if max_output_tokens is not None:
@@ -372,12 +434,13 @@ def main(test: str = None, run_batch: bool = False, no_thinking: bool = False, t
   optimizer = StrategizerOptimizer(**kw)
 
   if run_batch:
-    run_all_tests_batch(optimizer)
+    run_all_tests_batch(optimizer, batch_num=batch_num)
     return
 
   if test is not None:
     if test.strip().lower() == "all":
-      run_all_tests_batch(optimizer)
+      run_all_tests_batch(optimizer, batch_num=1)
+      run_all_tests_batch(optimizer, batch_num=2)
       return
     test_val = int(test) if test.isdigit() else test
     run_test(test_val, optimizer)
@@ -385,7 +448,7 @@ def main(test: str = None, run_batch: bool = False, no_thinking: bool = False, t
 
   print("Available test cases:")
   for i, tc in enumerate(TEST_CASES):
-    print(f"  {i}: {tc['name']}")
+    print(f"  {i}: {tc['name']} (batch {tc['batch']})")
 
 if __name__ == "__main__":
   import argparse
@@ -395,6 +458,26 @@ if __name__ == "__main__":
   parser.add_argument("--thinking-budget", type=int, default=None)
   parser.add_argument("--max-output-tokens", type=int, default=None)
   parser.add_argument("--model", type=str, default=None)
-  parser.add_argument("--run-batch", action="store_true", help="Run all test cases as a batch with summary.")
+  parser.add_argument(
+    "--batch",
+    type=int,
+    nargs="?",
+    const=1,
+    default=None,
+    metavar="N",
+    help="Run test cases in group N: 1=salary, 2=shelter (omit N to use 1).",
+  )
   args = parser.parse_args()
-  main(test=args.test, run_batch=args.run_batch, no_thinking=args.no_thinking, thinking_budget=args.thinking_budget, max_output_tokens=args.max_output_tokens, model=args.model)
+  if args.batch is not None and args.batch not in (1, 2):
+    parser.error("batch N must be 1 (salary) or 2 (shelter)")
+  batch_num = 1 if args.batch is None else args.batch
+  run_batch = args.batch is not None
+  main(
+    test=args.test,
+    run_batch=run_batch,
+    batch_num=batch_num,
+    no_thinking=args.no_thinking,
+    thinking_budget=args.thinking_budget,
+    max_output_tokens=args.max_output_tokens,
+    model=args.model,
+  )
