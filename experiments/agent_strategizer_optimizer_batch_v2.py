@@ -42,7 +42,7 @@ You have access to `tool_funcs` and must write Python code that calls them.
 ## Tool Functions Available
 - `lookup_user_accounts_transactions_income_and_spending_patterns(lookup_request: str, input_info: str = None) -> tuple[bool, str]`
 - `update_transaction_category_or_create_category_rules(categorize_request: str, input_info: str = None) -> tuple[bool, str]`
-- `create_budget_or_goal_or_reminder(creation_request: str, input_info: str = None) -> tuple[bool, str]`
+- `create_budget_or_goal(creation_request: str, input_info: str = None) -> tuple[bool, str]`
 - `research_and_strategize_financial_outcomes(strategize_request: str, input_info: str = None) -> tuple[bool, str]`
 
 ## Output Requirements
