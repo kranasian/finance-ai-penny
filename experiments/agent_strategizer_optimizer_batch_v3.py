@@ -47,8 +47,7 @@ You have access to `tool_funcs` and must write Python code that calls them.
 - `research_and_strategize_financial_outcomes(strategize_request: str, input_info: str = None) -> tuple[bool, str]`
 
 ## Output Requirements
-- First provide concise reasoning, including what changed vs the most recent failed attempt (if any).
-- Then output Python code in a single ```python``` block defining:
+- Output Python code in a single ```python``` block defining:
 
 ```python
 def execute_plan() -> tuple[bool, str]:
@@ -63,7 +62,6 @@ def execute_plan() -> tuple[bool, str]:
 - Avoid unnecessary branching/wrapping if a direct return from tool output is sufficient.
 - Prefer a single tool call per turn unless a second call is essential.
 """
-
 
 class StrategizerOptimizer:
   """Handles all Gemini API interactions for the proactive Strategizer agent"""
@@ -90,14 +88,35 @@ class StrategizerOptimizer:
     self.system_prompt = STRATEGIZER_SYSTEM_PROMPT
 
   
-  def generate_response(self, task_description: str, previous_outcomes: str) -> str:
-    request_text = types.Part.from_text(text=f"""**Task Description**: {task_description}
+  def generate_response(
+    self,
+    task_description: str,
+    previous_outcomes: dict[int | str, str] | list[str] | str | None,
+    latest_result_summary: str | None = None,
+    latest_outcome_reflection: str | None = None,
+  ) -> str:
+    previous_outcomes_block = _format_previous_outcomes(previous_outcomes)
+    body = f"""# Task Description
 
-**Previous Outcomes**:
+{task_description}
 
-{previous_outcomes}
+## Previous Outcomes
 
-output:""")
+{previous_outcomes_block}
+"""
+    if latest_result_summary is not None or latest_outcome_reflection is not None:
+      lrs = latest_result_summary if latest_result_summary is not None else ""
+      lor = latest_outcome_reflection if latest_outcome_reflection is not None else ""
+      body += f"""
+## Most Recent Attempt Result
+
+{lrs}
+
+## Outcome & What to do Next
+
+{lor}
+"""
+    request_text = types.Part.from_text(text=body)
     
     contents = [types.Content(role="user", parts=[request_text])]
     
@@ -213,18 +232,73 @@ def _format_mock_spending_output(
 """
 
 
-def _run_test_with_logging(task_description: str, previous_outcomes: str, optimizer: StrategizerOptimizer | None = None, mock_execution_result: str | None = None, ideal_response: str | None = None):
+def _format_previous_outcomes(previous_outcomes: dict[int | str, str] | list[str] | str | None) -> str:
+  if previous_outcomes is None:
+    return "None. This is the first attempt."
+  if isinstance(previous_outcomes, str):
+    return f"1. **Outcome #1**: {previous_outcomes}"
+  if isinstance(previous_outcomes, dict):
+    numbered_rows = []
+    for key in sorted(previous_outcomes, key=lambda x: int(x) if str(x).isdigit() else str(x)):
+      value = previous_outcomes[key]
+      if isinstance(value, str) and value.strip():
+        label_num = int(key) if str(key).isdigit() else key
+        numbered_rows.append(f"{label_num}. **Outcome #{label_num}**: {value.strip()}")
+    if numbered_rows:
+      return "\n".join(numbered_rows)
+    return "None. This is the first attempt."
+  clean_outcomes = [item.strip() for item in previous_outcomes if isinstance(item, str) and item.strip()]
+  if not clean_outcomes:
+    return "None. This is the first attempt."
+  return "\n".join(
+    f"{idx}. **Outcome #{idx}**: {outcome}" for idx, outcome in enumerate(clean_outcomes, start=1)
+  )
+
+
+def _run_test_with_logging(
+  task_description: str,
+  previous_outcomes: dict[int | str, str] | list[str] | str | None,
+  optimizer: StrategizerOptimizer | None = None,
+  mock_execution_result: str | None = None,
+  ideal_response: str | None = None,
+  latest_result_summary: str | None = None,
+  latest_outcome_reflection: str | None = None,
+):
   if optimizer is None:
     optimizer = StrategizerOptimizer()
   mock_output = mock_execution_result
+  previous_outcomes_block = _format_previous_outcomes(previous_outcomes)
 
-  llm_input_display = f"**Task Description**: {task_description}\n\n**Previous Outcomes**:\n\n{previous_outcomes}"
+  llm_input_display = f"""# Task Description
+
+{task_description}
+
+## Previous Outcomes
+
+{previous_outcomes_block}
+"""
+  if latest_result_summary is not None or latest_outcome_reflection is not None:
+    lrs = latest_result_summary if latest_result_summary is not None else ""
+    lor = latest_outcome_reflection if latest_outcome_reflection is not None else ""
+    llm_input_display += f"""
+## Most Recent Attempt Result
+
+{lrs}
+
+## Outcome & What to do Next
+
+{lor}"""
   
   print(f"## LLM Input\n")
   print(llm_input_display)
   print()
   
-  result = optimizer.generate_response(task_description, previous_outcomes)
+  result = optimizer.generate_response(
+    task_description,
+    previous_outcomes,
+    latest_result_summary=latest_result_summary,
+    latest_outcome_reflection=latest_outcome_reflection,
+  )
   
   print(f"## LLM Output:\n")
   print(result)
@@ -265,12 +339,10 @@ def _run_test_with_logging(task_description: str, previous_outcomes: str, optimi
         return result
       
       def wrapped_create(*args, **kwargs):
-        # print(f"\n[FUNCTION CALL] create_budget_or_goal")
+        # print(f"\n[FUNCTION CALL] create_budget_or_goal_or_reminder")
         # print(f"  args: {args}")
         # print(f"  kwargs: {kwargs}")
-        creation_request = args[0] if len(args) >= 1 else kwargs.get("creation_request", "")
-        input_info = args[1] if len(args) >= 2 else kwargs.get("input_info")
-        result = create_budget_or_goal(creation_request=creation_request, input_info=input_info)
+        result = create_budget_or_goal(*args, **kwargs)
         # print(f"  [RETURN] success: {result[0]}")
         # print(f"  [RETURN] output: {result[1]}")
         return (result[0], result[1])
@@ -279,7 +351,7 @@ def _run_test_with_logging(task_description: str, previous_outcomes: str, optimi
         'lookup_user_accounts_transactions_income_and_spending_patterns': wrapped_lookup,
         'update_transaction_category_or_create_category_rules': wrapped_update,
         'research_and_strategize_financial_outcomes': wrapped_research,
-        'create_budget_or_goal': wrapped_create,
+        'create_budget_or_goal_or_reminder': wrapped_create,
       }
       
       exec(code, namespace)
@@ -329,7 +401,9 @@ TEST_CASES = [
     "name": "salary_check_iteration_1a",
     "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
-    "previous_outcomes": "None. This is the first attempt.",
+    "previous_outcomes": None,
+    "latest_result_summary": None,
+    "latest_outcome_reflection": None,
     "ideal_response": "Expected: lookup finding total income and whether there are salary categories already mapped.",
     "mock_execution_result": MOCK_INCOME_ITERATION_1A,
   },
@@ -337,7 +411,9 @@ TEST_CASES = [
     "name": "salary_check_iteration_1b",
     "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
-    "previous_outcomes": "None. This is the first attempt.",
+    "previous_outcomes": None,
+    "latest_result_summary": None,
+    "latest_outcome_reflection": None,
     "ideal_response": "Expected: lookup finding total income and whether there are only uncategorized income transactions.",
     "mock_execution_result": MOCK_INCOME_ITERATION_1B,
   },
@@ -345,7 +421,9 @@ TEST_CASES = [
     "name": "salary_check_iteration_2b",
     "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
-    "previous_outcomes": "Outcome 1: The initial check found two transactions that strongly appear to be salary payments ($2500 twice from payroll sources). The task requires checking if the salary looks expected and fixing categorization if necessary. Since they are uncategorized, the categorization fixing step needs to be executed next. The objective is not fully met yet.",
+    "previous_outcomes": None,
+    "latest_result_summary": "Two income transactions for $2500 each were found from ADP PAYROLL and Gusto, both categorized as 'uncategorized'.",
+    "latest_outcome_reflection": "The execution successfully listed recent income transactions, confirming the presence of two deposits ($2500 from ADP PAYROLL and $2500 from Gusto) that appear to be salary but are currently uncategorized. The task requires fixing the categorization if they are salary. Since the categorization fix has not yet occurred, the status must remain IN_PROGRESS to pursue the required correction.",
     "ideal_response": "Expected: recategorize ADP PAYROLL and Gusto uncategorized income transactions as Salary (and create/update rule if appropriate).",
     "mock_execution_result": None,
   },
@@ -353,8 +431,11 @@ TEST_CASES = [
     "name": "salary_check_iteration_3",
     "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
-    "previous_outcomes": "Outcome 1: The initial check found two transactions that strongly appear to be salary payments ($2500 twice from payroll sources). The task requires checking if the salary looks expected and fixing categorization if necessary. Since they are uncategorized, the categorization fixing step needs to be executed next. The objective is not fully met yet.\n"
-        + "Outcome 2: The attempt to fix the categorization of the two identified $2500 income transactions resulted in an explicit error. The next action should be to re-attempt the categorization or investigate the cause of the reported error.",
+    "previous_outcomes": [
+      "The execution successfully listed recent income transactions, confirming the presence of two deposits ($2500 from ADP PAYROLL and $2500 from Gusto) that appear to be salary but are currently uncategorized. The task requires fixing the categorization if they are salary. Since the categorization fix has not yet occurred, the status must remain IN_PROGRESS to pursue the required correction.",
+    ],
+    "latest_result_summary": "The execution returned an explicit failure message: 'An unexpected error was encountered.'",
+    "latest_outcome_reflection": "The previous step successfully identified two potential salary transactions ($2500 from ADP PAYROLL and $2500 from Gusto) that needed categorization. However, the current execution step failed with a generic error message, preventing any further progress towards fixing the categorization or confirming the salary expectation. Therefore, the status is FAILED.",
     "ideal_response": "Expected: recategorize ADP PAYROLL or Gusto to isolate the error (or both if safe approach is not chosen).",
     "mock_execution_result": None,
   },
@@ -363,7 +444,9 @@ TEST_CASES = [
     "name": "shelter_check_iteration_1a",
     "batch": 2,
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
-    "previous_outcomes": "None. This is the first attempt.",
+    "previous_outcomes": None,
+    "latest_result_summary": None,
+    "latest_outcome_reflection": None,
     "ideal_response": "Expected: lookup rent or mortgage spending and whether they're categorized correctly as shelter_home.",
     "mock_execution_result": MOCK_SHELTER_ITERATION_1A,
   },
@@ -371,7 +454,9 @@ TEST_CASES = [
     "name": "shelter_check_iteration_2b",
     "batch": 2,
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
-    "previous_outcomes": "Outcome 1: The primary goal of checking and fixing the largest spending categorization was partially met; one transaction was identified for correction. The categorization for the $2000 payment to Apartments LLC must be fixed to 'shelter_home'. Since the categorization fix was not executed, the status is IN_PROGRESS.",
+    "previous_outcomes": None,
+    "latest_result_summary": "The analysis identified several large transactions. A $2000 payment to 'Apartments LLC' on 2025-11-18 is miscategorized as 'meals_dining_out' when it should likely be 'shelter_home'. Additionally, a $1650 payment to 'Bank of America' on 2025-10-31 is 'uncategorized'. The task requires fixing these categorizations.",
+    "latest_outcome_reflection": "The task requires checking amounts and fixing categorizations for rent/mortgage spending. The execution result successfully listed the top spending and revealed miscategorizations: a $2000 payment to Apartments LLC on 2025-11-18 is incorrectly labeled 'meals_dining_out', and a $1650 payment to Bank of America on 2025-10-31 is 'uncategorized'. Since these required fixes have not yet been applied, the workflow must continue to the remediation step. Rubric 0 does not apply as there are no two differing large housing payments on the same date.",
     "ideal_response": "Expected: recategorize at least the confirmed miscategorization for Apartments LLC as shelter_home, or attempt all.",
     "mock_execution_result": None,
   },
@@ -385,10 +470,12 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None)
       print(f"\n# Test: **{test_name}**\n")
       return _run_test_with_logging(
         test_name_or_index_or_dict["task_description"],
-        test_name_or_index_or_dict.get("previous_outcomes", ""),
+        test_name_or_index_or_dict.get("previous_outcomes"),
         optimizer,
         mock_execution_result=test_name_or_index_or_dict.get("mock_execution_result"),
         ideal_response=test_name_or_index_or_dict.get("ideal_response"),
+        latest_result_summary=test_name_or_index_or_dict.get("latest_result_summary"),
+        latest_outcome_reflection=test_name_or_index_or_dict.get("latest_outcome_reflection"),
       )
   if isinstance(test_name_or_index_or_dict, int):
     tc = TEST_CASES[test_name_or_index_or_dict] if 0 <= test_name_or_index_or_dict < len(TEST_CASES) else None
@@ -397,7 +484,15 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer = None)
   if not tc:
     return None
   print(f"\n# Test: **{tc['name']}**\n")
-  return _run_test_with_logging(tc["task_description"], tc["previous_outcomes"], optimizer, mock_execution_result=tc.get("mock_execution_result"), ideal_response=tc.get("ideal_response"))
+  return _run_test_with_logging(
+    tc["task_description"],
+    tc.get("previous_outcomes"),
+    optimizer,
+    mock_execution_result=tc.get("mock_execution_result"),
+    ideal_response=tc.get("ideal_response"),
+    latest_result_summary=tc.get("latest_result_summary"),
+    latest_outcome_reflection=tc.get("latest_outcome_reflection"),
+  )
 
 
 def run_all_tests_batch(optimizer: StrategizerOptimizer = None, batch_num: int = 1):
