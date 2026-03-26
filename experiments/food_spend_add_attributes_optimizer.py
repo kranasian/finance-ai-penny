@@ -7,27 +7,6 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SCHEMA = types.Schema(
-  type=types.Type.ARRAY,
-  items=types.Schema(
-    type=types.Type.OBJECT,
-    properties={
-      "id": types.Schema(type=types.Type.NUMBER),
-      "primary": types.Schema(
-        type=types.Type.ARRAY,
-        items=types.Schema(type=types.Type.STRING),
-        description="List containing at least one of: Fast food, Restaurant, Beverage, Grocery, Dessert. Borderline places can have multiple (e.g., both Restaurant and Beverage)."
-      ),
-      "secondary": types.Schema(
-        type=types.Type.ARRAY,
-        items=types.Schema(type=types.Type.STRING),
-        description="List of 2-5 HIGH-VALUE business categories or precise descriptors. MUST NOT contain: food, dish, cuisine, snack, meal, heat, eatery, entree."
-      ),
-    },
-    required=["id", "primary", "secondary"]
-  )
-)
-
 SYSTEM_PROMPT = """Task: Transform Food Establishment JSON to Attribute JSON utilizing standard business taxonomy.
 
 Mapping Rules:
@@ -35,27 +14,21 @@ Mapping Rules:
 2. `primary`: List [1+ items]. Options: "Fast food", "Restaurant", "Beverage", "Grocery", "Dessert".
    - Inference: "Tea/Coffee" -> "Beverage". "Market/Mart" -> "Grocery". "Fast-casual" -> "Fast food".
    - IF borderline (e.g., cafe with bakery), INCLUDE ALL relevant (e.g., "Restaurant", "Beverage").
-3. `secondary`: List [3-7 items]. Extract highly specific, high-value Google Places/Yelp-style category tags.
+3. `secondary`: List [3-7 items]. Extract highly specific, high-value category tags.
+   - Tags MUST be understandable independently (e.g., "Convenience Store" instead of "Convenience").
+   - Tags MUST define the establishment type or specialty (e.g., "Organic Market" instead of "Market", "Diner" instead of "Shop").
+   - Tags MUST be based ONLY on the provided Name and Description. Do not use external knowledge.
    - For Fast food & Restaurants: Extract specific Cuisine (e.g. "Mexican", "Filipino"), key recognizable items (e.g. "Burgers", "Tacos"), or Dining Style.
-   - For Beverage: Extract specific Types (e.g., "Coffee Shop", "Boba", "Juice Bar").
-   - For Grocery: Extract specialty (e.g., "Japanese Market", "Organic").
-   - For Dessert: Extract specific type (e.g., "Frozen Yogurt", "Donut Shop").
-   - Sparse Descriptions: If info is sparse, infer high-value descriptive characteristics (e.g., flavor profiles like "Spicy") without generic nouns.
-   - CRITICAL NEGATIVE CONSTRAINTS: Tags MUST NOT contain the following words (even as substrings):
-     "food", "dish", "cuisine", "snack", "meal", "eatery", "appetizer", "entree", "heat", "place".
-   - ONLY use standard singular nouns for items (e.g. "Burger"), flavor descriptors, or established category names (e.g. "Coffee Shop").
-
-Definitions:
-- `primary`: Select one or more from ["Fast food", "Restaurant", "Beverage", "Grocery"].
-- `secondary`: Extract 3-7 specific tags (Cuisine, Dish, Style, or Type) from the Name and Description.
+   - For Beverage: Extract specific Types (e.g., "Coffee Shop", "Boba Shop", "Juice Bar").
+   - For Grocery: Extract specialty (e.g., "Japanese Market", "Organic Grocer").
+   - For Dessert: Extract specific type (e.g., "Frozen Yogurt Shop", "Donut Shop").
 
 Constraints:
-- Use singular nouns for `secondary` tags.
-- STRICTLY EXCLUDE standalone generic terms: "Food", "Drink", "Fare", "Meal", "Dish", "Beverage", "Cuisine", "Restaurant", "Store".
-- Allow compound terms (e.g., "Frozen meal", "Health food").
-- Infer attributes from the Name if relevant.
+- Use singular nouns for `secondary` tags where possible, or established compound nouns.
+- STRICTLY EXCLUDE standalone generic terms that do not define the establishment: "Food", "Drink", "Fare", "Meal", "Dish", "Beverage", "Cuisine", "Restaurant", "Store", "Shop", "Place", "Eatery", "Snack", "Item", "Product", "Chain", "Grocer", "Retailer", "Service", "Establishment", "Hot Food", "Comfort Food", "Natural Food", "Plant-based", "Everyday Item", "Household Item", "Household Goods".
+- Acceptable tags must be descriptive and specific: "Health Food Store" (Acceptable), "Food" (Unacceptable). "Coffee Shop" (Acceptable), "Shop" (Unacceptable). "Convenience Store" (Acceptable), "Store" (Unacceptable).
 - MUST NOT repeat `primary` categories in `secondary`.
-- MANDATORY: Ensure at least 3 `secondary` tags. If specific details are missing, infer broad categories (e.g., "Chain", "Retail", "Shop", "Dining", "Asian", "European").
+- MANDATORY: Ensure at least 3 `secondary` tags. If information is sparse, combine available descriptors into compound tags (e.g. "Gourmet Gift Shop", "Fruit Basket Delivery").
 - Output JSON only."""
 
 class FoodSpendAddAttributesOptimizer:
@@ -90,9 +63,6 @@ class FoodSpendAddAttributesOptimizer:
     
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
-    
-    # Output Schema - array of result objects
-    self.output_schema = SCHEMA
   
   def generate(self, establishments: list) -> list:
     """
@@ -130,7 +100,6 @@ output: """
         thinking_budget=self.thinking_budget,
         include_thoughts=True
       ),
-      response_schema=self.output_schema,
     )
 
     # Generate response
