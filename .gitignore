@@ -4,3 +4,5 @@ __pycache__/*
 *.db
 penny/tool_funcs/__pycache__/*
 penny/tools/__pycache__/*
+.venv
+venv
