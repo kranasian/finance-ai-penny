@@ -47,7 +47,7 @@ You have access to `tool_funcs` and must write Python code that calls them.
 - `research_and_strategize_financial_outcomes(strategize_request: str, input_info: str = None) -> tuple[bool, str]`
 
 ## Output Requirements
-- Output Python code in a single ```python``` block defining:
+- Output Python code only in a single ```python``` block defining:
 
 ```python
 def execute_plan() -> tuple[bool, str]:
@@ -98,24 +98,25 @@ class StrategizerOptimizer:
     previous_outcomes_block = _format_previous_outcomes(previous_outcomes)
     body = f"""# Task Description
 
-{task_description}
+{task_description}"""
+    if previous_outcomes_block.strip():
+      body += f"""
 
 ## Previous Outcomes
 
-{previous_outcomes_block}
-"""
+{previous_outcomes_block}"""
     if latest_result_summary is not None or latest_outcome_reflection is not None:
       lrs = latest_result_summary if latest_result_summary is not None else ""
       lor = latest_outcome_reflection if latest_outcome_reflection is not None else ""
       body += f"""
+
 ## Most Recent Attempt Result
 
 {lrs}
 
 ## Outcome & What to do Next
 
-{lor}
-"""
+{lor}"""
     request_text = types.Part.from_text(text=body)
     
     contents = [types.Content(role="user", parts=[request_text])]
@@ -166,11 +167,11 @@ class StrategizerOptimizer:
       ot = um.candidates_token_count or 0
       th = um.thoughts_token_count or 0
       tt = um.total_token_count or 0
-    print(
-      f"[STRATEGIZER_METRICS] latency_s={latency_s:.3f} prompt_token_count={pt} "
-      f"candidates_token_count={ot} thoughts_token_count={th} total_token_count={tt}",
-      flush=True,
-    )
+    # print(
+    #   f"[STRATEGIZER_METRICS] latency_s={latency_s:.3f} prompt_token_count={pt} "
+    #   f"candidates_token_count={ot} thoughts_token_count={th} total_token_count={tt}",
+    #   flush=True,
+    # )
 
     if thought_summary:
       print("\n## Thought Summary\n")
@@ -234,7 +235,7 @@ def _format_mock_spending_output(
 
 def _format_previous_outcomes(previous_outcomes: dict[int | str, str] | list[str] | str | None) -> str:
   if previous_outcomes is None:
-    return "None. This is the first attempt."
+    return ""
   if isinstance(previous_outcomes, str):
     return f"1. **Outcome #1**: {previous_outcomes}"
   if isinstance(previous_outcomes, dict):
@@ -246,10 +247,10 @@ def _format_previous_outcomes(previous_outcomes: dict[int | str, str] | list[str
         numbered_rows.append(f"{label_num}. **Outcome #{label_num}**: {value.strip()}")
     if numbered_rows:
       return "\n".join(numbered_rows)
-    return "None. This is the first attempt."
+    return ""
   clean_outcomes = [item.strip() for item in previous_outcomes if isinstance(item, str) and item.strip()]
   if not clean_outcomes:
-    return "None. This is the first attempt."
+    return ""
   return "\n".join(
     f"{idx}. **Outcome #{idx}**: {outcome}" for idx, outcome in enumerate(clean_outcomes, start=1)
   )
@@ -271,16 +272,18 @@ def _run_test_with_logging(
 
   llm_input_display = f"""# Task Description
 
-{task_description}
+{task_description}"""
+  if previous_outcomes_block.strip():
+    llm_input_display += f"""
 
 ## Previous Outcomes
 
-{previous_outcomes_block}
-"""
+{previous_outcomes_block}"""
   if latest_result_summary is not None or latest_outcome_reflection is not None:
     lrs = latest_result_summary if latest_result_summary is not None else ""
     lor = latest_outcome_reflection if latest_outcome_reflection is not None else ""
     llm_input_display += f"""
+
 ## Most Recent Attempt Result
 
 {lrs}
@@ -421,9 +424,11 @@ TEST_CASES = [
     "name": "salary_check_iteration_2b",
     "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
-    "previous_outcomes": None,
+    "previous_outcomes": [
+      "The execution successfully listed recent income transactions, confirming the presence of two deposits ($2500 from ADP PAYROLL, transaction_id 50111; $2500 from Gusto, transaction_id 50112) that appear to be salary but are currently uncategorized. The task requires fixing the categorization if they are salary. Since the categorization fix has not yet occurred, the status must remain IN_PROGRESS to pursue the required correction.",
+    ],
     "latest_result_summary": "Two income transactions for $2500 each were found from ADP PAYROLL and Gusto, both categorized as 'uncategorized'.",
-    "latest_outcome_reflection": "The execution successfully listed recent income transactions, confirming the presence of two deposits ($2500 from ADP PAYROLL and $2500 from Gusto) that appear to be salary but are currently uncategorized. The task requires fixing the categorization if they are salary. Since the categorization fix has not yet occurred, the status must remain IN_PROGRESS to pursue the required correction.",
+    "latest_outcome_reflection": "Prior outcome already identified transaction_id 50111 (ADP PAYROLL) and 50112 (Gusto) as uncategorized salary-like deposits; recategorize as Salary (rules as appropriate).",
     "ideal_response": "Expected: recategorize ADP PAYROLL and Gusto uncategorized income transactions as Salary (and create/update rule if appropriate).",
     "mock_execution_result": None,
   },
@@ -432,10 +437,10 @@ TEST_CASES = [
     "batch": 1,
     "task_description": "Check if there's salary detected for this user and whether it looks as expected. If we can't find it, look at the list of amounts coming in and check if there are salary transactions mixed up over there. Fix the categorization of these if they are indeed Salary.",
     "previous_outcomes": [
-      "The execution successfully listed recent income transactions, confirming the presence of two deposits ($2500 from ADP PAYROLL and $2500 from Gusto) that appear to be salary but are currently uncategorized. The task requires fixing the categorization if they are salary. Since the categorization fix has not yet occurred, the status must remain IN_PROGRESS to pursue the required correction.",
+      "The execution successfully listed recent income transactions, confirming the presence of two deposits ($2500 from ADP PAYROLL, transaction_id 50111; $2500 from Gusto, transaction_id 50112) that appear to be salary but are currently uncategorized. The task requires fixing the categorization if they are salary. Since the categorization fix has not yet occurred, the status must remain IN_PROGRESS to pursue the required correction.",
     ],
     "latest_result_summary": "The execution returned an explicit failure message: 'An unexpected error was encountered.'",
-    "latest_outcome_reflection": "The previous step successfully identified two potential salary transactions ($2500 from ADP PAYROLL and $2500 from Gusto) that needed categorization. However, the current execution step failed with a generic error message, preventing any further progress towards fixing the categorization or confirming the salary expectation. Therefore, the status is FAILED.",
+    "latest_outcome_reflection": "The previous step successfully identified two potential salary transactions ($2500 from ADP PAYROLL, transaction_id 50111; $2500 from Gusto, transaction_id 50112) that needed categorization. However, the current execution step failed with a generic error message, preventing any further progress towards fixing the categorization or confirming the salary expectation. Therefore, the status is FAILED.",
     "ideal_response": "Expected: recategorize ADP PAYROLL or Gusto to isolate the error (or both if safe approach is not chosen).",
     "mock_execution_result": None,
   },
@@ -454,9 +459,11 @@ TEST_CASES = [
     "name": "shelter_check_iteration_2b",
     "batch": 2,
     "task_description": "Look into the user's rent or mortgage spending and make sure it's categorized correctly as shelter_home. Check if amount is expected, and if it isn't transactions might be in uncategorized. Look at the largest spending to see if it is indeed rent or mortgage and fix the categorization.",
-    "previous_outcomes": None,
+    "previous_outcomes": [
+      "The execution result listed top spending and revealed miscategorizations: a $2000 payment to Apartments LLC on 2025-11-18 incorrectly labeled 'meals_dining_out' (transaction_id 60201), and a $1650 payment to Bank of America on 2025-10-31 'uncategorized' (transaction_id 60204). Fixes not yet applied; workflow IN_PROGRESS. Rubric 0 does not apply (no two differing large housing payments on the same date).",
+    ],
     "latest_result_summary": "The analysis identified several large transactions. A $2000 payment to 'Apartments LLC' on 2025-11-18 is miscategorized as 'meals_dining_out' when it should likely be 'shelter_home'. Additionally, a $1650 payment to 'Bank of America' on 2025-10-31 is 'uncategorized'. The task requires fixing these categorizations.",
-    "latest_outcome_reflection": "The task requires checking amounts and fixing categorizations for rent/mortgage spending. The execution result successfully listed the top spending and revealed miscategorizations: a $2000 payment to Apartments LLC on 2025-11-18 is incorrectly labeled 'meals_dining_out', and a $1650 payment to Bank of America on 2025-10-31 is 'uncategorized'. Since these required fixes have not yet been applied, the workflow must continue to the remediation step. Rubric 0 does not apply as there are no two differing large housing payments on the same date.",
+    "latest_outcome_reflection": "Prior outcome already captured the miscategorized rows with transaction_id 60201 ($2000 to Apartments LLC on 2025-11-18 as meals_dining_out) and 60204 ($1650 to Bank of America on 2025-10-31 uncategorized). Remediation to shelter_home is still required; rubric 0 does not apply (no two differing large housing payments on the same date).",
     "ideal_response": "Expected: recategorize at least the confirmed miscategorization for Apartments LLC as shelter_home, or attempt all.",
     "mock_execution_result": None,
   },
