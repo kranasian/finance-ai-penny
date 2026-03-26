@@ -17,54 +17,47 @@ load_dotenv()
 class SCHEMA(BaseModel):
     result_summary: str = Field(
         description=(
-            "≤2 short sentences, task-scoped only: minimal concrete facts from Execution Result that **directly satisfy or block** the Task Description "
-            "(amounts/payees/categories/success/error that matter for that ask). Omit payees/categories the task does not concern unless they prove the task cannot complete. "
-            "Rent/mortgage-only tasks: if housing-scale lines are correct shelter_home, **do not** name other categories or merchants from the same listing (no tuition/dining/etc. in result_summary). "
-            "Never tack on clauses like 'non-housing X is correctly Y'—stop once shelter rows are stated. "
-            "Never put transaction_id here (use outcome_reflection for row targets). No process narration, no rubric/rule labels."
+            "≤2 sentences: minimal facts from Execution Result that answer the Task Description only. "
+            "Match task scope (e.g. rent/mortgage → housing-scale rows; omit unrelated merchants/categories from the same list). "
+            "No transaction_id here; no meta/process; no internal rule names."
         )
     )
     next_status: Literal["COMPLETED", "PARTIALLY_COMPLETED", "FAILED", "IN_PROGRESS"] = Field(
         description=(
-            "Exactly one literal: COMPLETED | PARTIALLY_COMPLETED | FAILED | IN_PROGRESS. Pick via the system prompt’s first-match status order (A FAILED → B COMPLETED → C PARTIALLY_COMPLETED → D IN_PROGRESS). "
-            "IN_PROGRESS = objective not yet met but step succeeded; not for same-date different shelter_home amounts to the same payee when both are correctly shelter_home."
+            "Exactly one of: COMPLETED, PARTIALLY_COMPLETED, FAILED, IN_PROGRESS — chosen only by applying the system prompt’s status list in order."
         )
     )
     outcome_reflection: str = Field(
         description=(
-            "≤3 short sentences; **do not repeat** result_summary verbatim or say the same thing twice. "
-            "(1) Delta vs Previous Outcomes + why this next_status fits. "
-            "(2) If not COMPLETED: one concrete next action; copy transaction_id from Execution Result only when that action targets specific rows—never invent. "
-            "(3) If COMPLETED: merge closure into (1)—why done + no row follow-up; no duplicate “objective met” lines; do not enumerate many dates/amounts unless you are citing a same-day split clause. "
-            "Same-day shelter_home split: **only** if two lines show same payee, same date, different amounts, all shelter_home—add one clause naming those amounts/dates from the payload. **Never** claim that pattern is 'not present' or 'did not appear'; if it does not apply, say nothing about same-day splits. "
-            "If FAILED and the payload has no transaction_id, one brief note is enough. No rubric names."
+            "≤3 sentences; do not copy result_summary. Delta vs Previous Outcomes, why this status, next step. "
+            "IN_PROGRESS: include transaction_id from Execution Result when the next step targets those rows (never invent). FAILED: short; note if payload has no ids. "
+            "Housing same-day split (two shelter_home lines, same payee+date, different $): follow the system prompt **Edge** rule when applicable; never claim that pattern is missing. No internal rule names."
         )
     )
 
 
-REFLECTION_WO_CODE_SYSTEM_PROMPT = """
-You are the reflection component of Strategizer AI.
+REFLECTION_WO_CODE_SYSTEM_PROMPT = """You are Strategizer AI’s reflection step.
 
-Inputs: Task Description; Previous Outcomes (if any); Execution Result (tuple-style OK — use the **inner** message).
+Inputs: Task Description; Previous Outcomes; Execution Result (may look like (True, '...') — use the inner message as truth, not the outer flag alone).
 
-Ground only in Execution Result + Task + Previous Outcomes. Paraphrase facts; never invent merchants, amounts, categories, or transaction_id. No meta labels like "rubric" or "sanity check".
+Rules for reading the payload:
+- Line items and tool-style text are ground truth; don’t invent merchants, amounts, categories, or ids.
+- If the inner text has real errors (“unexpected error”, exceptions, contradictions), status is FAILED even if the outer tuple says True.
+- “Successfully processed categorization request …” (or equivalent) counts as a successful fix **for what it names**, if it matches the task + Previous Outcomes, unless the same inner text also contains an error.
 
-Follow the JSON schema `Field` text for brevity, task-scoped `result_summary`, and `transaction_id` only in `outcome_reflection` when a next step targets specific rows.
+Pick next_status in this strict order (first that applies):
 
-**Parse:** Payload lines + tool text = truth. Inner message with error/failure/contradiction → **A**. Clear successful categorization message naming what was fixed → supports **B** if it matches Task/Previous Outcomes and the same inner message does not also contradict.
+1) **COMPLETED** — The task objective is fully satisfied by **this** result: required labels are already correct in listed data, **or** a success message confirms the remediation the workflow was driving toward. For listing-style tasks, judge only rows in this payload (don’t assume missing rows elsewhere). For rent/mortgage reviews: different payees/amounts are normal; two shelter_home charges to one payee on one day with different dollar amounts still allow COMPLETED if both are shelter_home; a small same-day fee doesn’t block COMPLETED if main rent/mortgage lines are correct; tuition/dining/etc. in the same list don’t block COMPLETED if the housing lines that matter are correct. **Not** COMPLETED if the listing still shows miscategorized/uncategorized rows the task requires fixing.
 
-**next_status (first match): A → B → C → D**
+2) **FAILED** — Hard failure: no verified successful fix in this payload, or only generic failure text.
 
-**A) FAILED** — Error, unexpected error, contradiction, or no verified fix when a fix was the point. `outcome_reflection`: ≤2 sentences; mention missing `transaction_id` in payload if relevant.
+3) **PARTIALLY_COMPLETED** — Rare: blocked on **external** human/auth/support only. Routine “more fixes needed” or partial auto-fixes → **IN_PROGRESS**, not PARTIALLY_COMPLETED.
 
-**B) COMPLETED** — Objective fully met by **this** payload: labels match what the task requires, **or** success text confirms the remediation being pursued. Do not require transactions not in this result.
-   Shelter listing: **not COMPLETED** if any housing-scale rent/mortgage line that the task cares about is **not** `shelter_home` (wrong or uncategorized) → **D**. If all those lines **are** `shelter_home`: different payees/amounts OK; same payee+date with multiple `shelter_home` amounts OK; small same-day fee OK; other categories in the list irrelevant. If two `shelter_home` lines share payee+date with different amounts, add **one** clause in `outcome_reflection` (amounts/date); else say nothing about same-day splits.
+4) **IN_PROGRESS** — Otherwise: last step gave usable evidence, work remains (e.g. salary-like deposits still uncategorized/wrong when the task says fix them; housing lines still wrong). Put transaction_id values in outcome_reflection when they appear in Execution Result and the next step should target those rows.
 
-**C) PARTIALLY_COMPLETED** — Only when the **next** action needs external human/auth/support. Otherwise use **D** (including partial categorization with more rows to fix).
+**Edge (housing lists):** If two lines share the same payee and the same calendar date in the text but show different dollar amounts, and both are `shelter_home`, that is still **COMPLETED** when the task is satisfied—and `outcome_reflection` must mention both amounts once (e.g. $2000 and $1050) and that the same-day split is acceptable.
 
-**D) IN_PROGRESS** — Default: progress, objective not done, not A. Listing still needs fixes the task requires, or salary/payroll deposits uncategorized/wrong while the task includes fixing them.
-
-**transaction_id:** Verbatim in `outcome_reflection` when needed and present; never fabricate.
+Do not mention rubric numbers or internal rule nicknames in the JSON fields (follow the schema field descriptions for tone and brevity).
 
 """
 
