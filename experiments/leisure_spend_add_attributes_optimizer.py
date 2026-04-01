@@ -16,12 +16,12 @@ SCHEMA = types.Schema(
       "primary": types.Schema(
         type=types.Type.ARRAY,
         items=types.Schema(type=types.Type.STRING),
-        description="List containing at least one of: Event, Venue, Digital, Adult, Hobby, Media, Travel, Lodging. Borderline places can have multiple."
+        description="List containing at least one of: Logistics, Shows, Attractions, Sports, Nightlife, Relaxation, Movies, Apps, Gaming, Literature, Crafts and Hobbies, Gear."
       ),
       "secondary": types.Schema(
         type=types.Type.ARRAY,
         items=types.Schema(type=types.Type.STRING),
-        description="List of 2-5 HIGH-VALUE business categories or precise descriptors. MUST NOT contain: entertainment, recreation, leisure, activity, fun, travel, vacation."
+        description="List of 3-7 HIGH-VALUE business categories or precise descriptors. Tags must define the establishment (e.g., 'Streaming Subscription' not just 'Subscription')."
       ),
     },
     required=["id", "primary", "secondary"]
@@ -32,35 +32,43 @@ SYSTEM_PROMPT = """Task: Transform Leisure Establishment JSON to Attribute JSON 
 
 Mapping Rules:
 1. Copy `id`.
-2. `primary`: List [1+ items]. Options: "Event", "Venue", "Digital", "Adult", "Hobby", "Media", "Travel", "Lodging".
-   - Inference: "Concert/Game" -> "Event". "Theater/Park" -> "Venue". "Streaming/App" -> "Digital". "Bar/Casino" -> "Adult". "Crafts/Sports" -> "Hobby". "Book/Movie" -> "Media". "Flight/Train" -> "Travel". "Hotel/Resort" -> "Lodging".
-   - IF borderline (e.g., music festival), INCLUDE ALL relevant (e.g., "Event", "Venue", "Media").
-3. `secondary`: List [3-7 items]. Extract highly specific, high-value Google Places/Yelp-style category tags.
-   - For Event: Extract specific Type (e.g. "Concert", "Sports Game", "Festival").
-   - For Venue: Extract specific Type (e.g. "Theme Park", "Museum", "Arcade").
-   - For Digital: Extract specific Service (e.g. "Streaming", "Video Game", "Subscription").
-   - For Adult: Extract specific Activity (e.g. "Bar", "Nightclub", "Gambling").
-   - For Hobby: Extract specific Activity (e.g. "Rock Climbing", "Knitting", "Painting").
-   - For Media: Extract specific Genre/Format (e.g. "Sci-Fi", "Anime", "Novel").
-   - For Travel: Extract specific Mode (e.g. "Airline", "Train", "Cruise").
-   - For Lodging: Extract specific Type (e.g. "Hotel", "Resort", "Vacation Rental").
-   - Sparse Descriptions: If info is sparse, infer high-value descriptive characteristics without generic nouns.
-   - CRITICAL NEGATIVE CONSTRAINTS: Tags MUST NOT contain the following words (even as substrings):
-     "entertainment", "leisure", "recreation", "activity", "fun", "place", "establishment", "service", "company".
-   - ONLY use standard singular nouns for items, or established category names.
-   - STANDALONE ENFORCEMENT: If a tag is a generic single word (e.g., "Ticket", "Rental", "Pass", "Admission", "Card", "Fee", "Subscription", "Apartment", "Reservation"), YOU MUST prepend a specific descriptor (e.g., "Airline ticket", "Car rental", "Day pass", "Music subscription", "Vacation apartment").
+2. `primary`: List [1+ items]. MANDATORY: Every output must have at least one primary attribute. Options:
+   - Logistics: Functional infrastructure and travel essentials (eg. flights, car rentals, trains, hotels, Airbnbs, travel insurance, passports, visas).
+   - Shows: Ticketed live performances and scheduled events (eg. concerts, festivals, theater, live performances).
+   - Attractions: Entry to points of interest or curated experiences (eg. zoos, museums, theme parks, guided city tours, scuba charters).
+   - Sports: Physical participation and active recreation venues (eg. bowling alleys, ski resorts, gyms, golf courses).
+   - Nightlife: Adult-oriented social consumption and evening entertainment (eg. bars, nightclubs, liquor stores, cannabis dispensaries, lounges).
+   - Relaxation: Physical rejuvenation and mental calm (eg. day spas, massage therapy centers, saunas, hot springs).
+   - Movies: The film-viewing experience across all platforms. Includes cinema tickets, theater concessions, and digital video streaming services.
+   - Apps: Recurring fees or one-time purchases for non-gaming, non-movie, and non-literature digital services. Includes music streaming, productivity tools, and utility applications.
+   - Gaming: Digital and interactive software, hardware, or services (eg. video game purchases, online multiplayer subscriptions, in-game content).
+   - Literature: Purchase or subscription of written content (eg. physical bookstores, e-book subscriptions, newsstands, magazines).
+   - Crafts and Hobbies: Materials and retailers for personal projects and skill-based interests (eg. art supply stores, musical instrument shops, photography equipment).
+   - Gear: Durable physical goods for specific leisure pursuits (eg. camping equipment, luggage, specialized technical apparel).
+
+3. `secondary`: List [3-7 items]. Extract highly specific, high-value category tags.
+
+   ### CRITICAL TAG RULES:
+   - RULE 1: SOURCE MATERIAL ONLY. Tags MUST be solely based on Name and Description provided. Do not use external knowledge.
+   - RULE 2: DEFINE THE ESTABLISHMENT. Tags are only valid if they define what the establishment IS or DOES.
+   - RULE 3: ABSOLUTELY NO STANDALONE GENERIC TERMS. Standalone generic words are STRICTLY FORBIDDEN. You MUST prepend a specific descriptor to these words:
+     "Rental", "Pass", "Admission", "Card", "Fee", "Reservation", "Stay", "Booking", "Ticket", "Venue", "Travel", "Arena", "Concession", "Content", "Online", "Digital", "Service", "Subscription", "Round-trip".
+     - BAD: "Ticket", "Food", "Travel"
+     - GOOD: "Concert Ticket", "Travel Insurance"
+   - RULE 4: ABSOLUTELY NO PRIMARY REUSE. Secondary tags MUST NOT contain any of the primary attribute names (e.g., if "Sports" is a primary attribute, the word "Sports" cannot appear in any secondary tag). Secondary attributes should not include any of the primary attribute options.
+     - FORBIDDEN WORDS in secondary: Logistics, Shows, Attractions, Sports, Nightlife, Relaxation, Movies, Apps, Gaming, Literature, Crafts, Hobbies, Gear.
+   - RULE 5: P2P PAYMENTS. For person-to-person payments (e.g., Venmo), only focus on the purpose (e.g., "Dinner", "Gift").
+   - RULE 6: SPECIFICITY. eg. prefer "Basketball Game" over "Game".
 
 Definitions:
-- `primary`: Select one or more from ["Event", "Venue", "Digital", "Adult", "Hobby", "Media", "Travel", "Lodging"].
+- `primary`: Select one or more from the primary categories list.
 - `secondary`: Extract 3-7 specific tags (Genre, Activity, Product, or Type) from the Name and Description.
 
 Constraints:
-- Use singular nouns for `secondary` tags.
-- STRICTLY EXCLUDE standalone generic terms: "Entertainment", "Leisure", "Fun", "Activity", "Place", "Service", "App".
+- Use singular nouns for `secondary` tags where appropriate.
 - Allow compound terms (e.g., "Video game", "Theme park").
-- Infer attributes from the Name if relevant.
 - MUST NOT repeat `primary` categories in `secondary`.
-- MANDATORY: Ensure at least 3 `secondary` tags. If specific details are missing, infer broad categories (e.g., "Outdoor", "Indoor", "Social", "Solo").
+- MANDATORY: Ensure at least 3 `secondary` tags, and at least 1 `primary` tag.
 - Output JSON only."""
 
 class LeisureSpendAttributesOptimizer:
@@ -223,13 +231,10 @@ TEST_CASES = [
       }
     ],
     "ideal_response": """[
-  {"id": 101, "primary": ["Digital"], "secondary": ["Video Streaming", "Movie", "TV Series", "Subscription"]},
-  {"id": 102, "primary": ["Venue"], "secondary": ["Cinema", "Movie"]},
-  {"id": 103, "primary": ["Adult"], "secondary": ["Wine", "Beer", "Spirit", "Alcohol"]}
-]
-Key validations:
-- Specific attributes for digital vs physical venues
-- Adult category correctly identified"""
+  {"id": 101, "primary": ["Movies"], "secondary": ["Video Streaming", "TV Series", "Digital Subscription"]},
+  {"id": 102, "primary": ["Movies"], "secondary": ["Cinema", "Film Screening", "Movie Concession"]},
+  {"id": 103, "primary": ["Nightlife"], "secondary": ["Wine Shop", "Beer Retailer", "Spirit Store", "Alcohol Retail"]}
+]"""
   },
   {
     "name": "Test 2: Basic entertainment types",
@@ -251,13 +256,10 @@ Key validations:
       }
     ],
     "ideal_response": """[
-  {"id": 201, "primary": ["Hobby"], "secondary": ["Arts & Crafts", "Framing", "Decor", "DIY"]},
-  {"id": 202, "primary": ["Venue"], "secondary": ["Theme Park", "Amusement Park", "Ride", "Attraction"]},
-  {"id": 203, "primary": ["Media", "Hobby"], "secondary": ["Book", "Magazine", "Reading", "Literature"]}
-]
-Key validations:
-- Distinction between hobby supplies and media
-- Venue identification for theme parks"""
+  {"id": 201, "primary": ["Crafts and Hobbies"], "secondary": ["Art Supplies", "Custom Framing", "Seasonal Decor", "DIY Materials"]},
+  {"id": 202, "primary": ["Attractions"], "secondary": ["Theme Park", "Amusement Park", "Amusement Ride", "Tourist Attraction"]},
+  {"id": 203, "primary": ["Literature"], "secondary": ["Bookstore", "Magazine Periodical", "Reading Material", "Gift Shop"]}
+]"""
   },
   {
     "name": "Test 3: Multiple Establishments",
@@ -279,13 +281,10 @@ Key validations:
       }
     ],
     "ideal_response": """[
-  {"id": 301, "primary": ["Event"], "secondary": ["Concert", "Sporting Event", "Ticket", "Live Music"]},
-  {"id": 302, "primary": ["Digital"], "secondary": ["Video Game", "Software", "Gaming", "Esports"]},
-  {"id": 303, "primary": ["Event"], "secondary": ["Music Festival", "Live Music", "Concert", "Festival"]}
-]
-Key validations:
-- Event ticketing vs the event itself
-- Digital gaming correctly categorized"""
+  {"id": 301, "primary": ["Shows", "Sports"], "secondary": ["Concert Ticket", "Sports Ticket", "Event Platform", "Live Performance"]},
+  {"id": 302, "primary": ["Gaming"], "secondary": ["Video Game", "Digital Software", "Gaming Store", "PC Gaming"]},
+  {"id": 303, "primary": ["Shows"], "secondary": ["Music Festival", "Live Music", "Festival Pass", "Concert Event"]}
+]"""
   },
   {
     "name": "Test 4: Travel and Lodging",
@@ -312,14 +311,11 @@ Key validations:
       }
     ],
     "ideal_response": """[
-  {"id": 401, "primary": ["Travel"], "secondary": ["Airline", "Flight", "Air Travel", "Transportation"]},
-  {"id": 402, "primary": ["Lodging"], "secondary": ["Hotel", "Accommodation", "Stay", "Hospitality"]},
-  {"id": 403, "primary": ["Travel", "Lodging"], "secondary": ["Travel Agency", "Booking", "Flight", "Hotel"]},
-  {"id": 404, "primary": ["Travel", "Lodging"], "secondary": ["Cruise", "Vacation", "Sea Travel", "Ship"]}
-]
-Key validations:
-- Travel and Lodging categories correctly identified
-- Overlap handled for travel agencies and cruises"""
+  {"id": 401, "primary": ["Logistics"], "secondary": ["Airline Flight", "Air Travel", "Flight Booking", "Transportation"]},
+  {"id": 402, "primary": ["Logistics"], "secondary": ["Hotel Room", "Travel Accommodation", "Overnight Stay", "Hospitality"]},
+  {"id": 403, "primary": ["Logistics"], "secondary": ["Travel Agency", "Online Booking", "Flight Ticket", "Hotel Reservation"]},
+  {"id": 404, "primary": ["Logistics", "Attractions"], "secondary": ["Cruise Ship", "Sea Travel", "Ocean Voyage", "Guided Excursion"]}
+]"""
   }
 ]
 
