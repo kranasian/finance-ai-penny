@@ -139,62 +139,171 @@ TEST_CASES = [
   {
     "batch": 1,
     "name": "salary_adp_gusto_uncategorized",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"ADP PAYROLL\",\n    \"transactions\": [\n      \"2025-11-20  $2500  uncategorized\",\n      \"2025-10-20  $2500  income_salary\"\n    ]\n  }\n]",
-    "output": "{\"salary_ids\":[1],\"excluded_ids\":[],\"notes\":\"ADP PAYROLL identified as a standard payroll processor with consistent salary history.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "ADP PAYROLL",
+    "transactions": [
+      "2025-11-20  $2500  uncategorized",
+      "2025-10-20  $2500  income_salary"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[1],"excluded_ids":[],"notes":"ADP PAYROLL identified as a standard payroll processor with consistent salary history."}""",
   },
   {
     "batch": 1,
     "name": "salary_exclude_interest",
-    "input": "[\n  {\n    \"transaction_id\": 601,\n    \"account_id\": 1,\n    \"date\": \"2025-11-01\",\n    \"merchant\": \"CHASE SAVINGS INTEREST\",\n    \"amount\": -4.12,\n    \"category\": \"income_interest\"\n  },\n  {\n    \"transaction_id\": 602,\n    \"account_id\": 1,\n    \"date\": \"2025-11-15\",\n    \"merchant\": \"ACME CORP PAYROLL\",\n    \"amount\": -3200.0,\n    \"category\": \"uncategorized\"\n  }\n]",
-    "output": "{\"salary_ids\":[2],\"excluded_ids\":[1],\"notes\":\"Interest income is excluded; employer payroll deposit is included.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "CHASE SAVINGS INTEREST",
+    "transactions": [
+       "2025-11-01  $4.12  income_interest"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "ACME CORP PAYROLL",
+    "transactions": [
+       "2025-11-15  $3200.0  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[2],"excluded_ids":[1],"notes":"Interest income is excluded; employer payroll deposit is included."}""",
   },
   {
     "batch": 1,
     "name": "no_salary_zelle_p2p",
-    "input": "[\n  {\n    \"transaction_id\": 702,\n    \"account_id\": 1,\n    \"date\": \"2025-11-15\",\n    \"merchant\": \"RANDOM ZELLE\",\n    \"amount\": -800.0,\n    \"category\": \"uncategorized\"\n  }\n]",
-    "output": "{\"salary_ids\":[],\"excluded_ids\":[1],\"notes\":\"P2P transfer lacks payroll signals and is excluded.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "RANDOM ZELLE",
+    "transactions": [
+      "2025-11-15  $800.0  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[],"excluded_ids":[1],"notes":"P2P transfer lacks payroll signals and is excluded."}""",
   },
   {
     "batch": 1,
     "name": "salary_state_payroll_mislabeled_shopping",
-    "input": "[\n  {\n    \"transaction_id\": 101,\n    \"account_id\": 1,\n    \"date\": \"2025-11-01\",\n    \"merchant\": \"STATE PAYROLL\",\n    \"amount\": -3000.0,\n    \"category\": \"income_salary\"\n  },\n  {\n    \"transaction_id\": 102,\n    \"account_id\": 1,\n    \"date\": \"2025-11-15\",\n    \"merchant\": \"STATE PAYROLL\",\n    \"amount\": -3000.0,\n    \"category\": \"shopping_clothing\"\n  }\n]",
-    "output": "{\"salary_ids\":[1],\"excluded_ids\":[],\"notes\":\"State payroll deposits are salary despite one incorrect category label.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "STATE PAYROLL",
+    "transactions": [
+      "2025-11-01  $3000.0  income_salary",
+      "2025-11-15  $3000.0  shopping_clothing"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[1],"excluded_ids":[],"notes":"State payroll deposits are salary despite one incorrect category label."}""",
   },
   {
     "batch": 2,
     "name": "salary_adp_miscategorized_transfer",
-    "input": "[\n  {\n    \"transaction_id\": 201,\n    \"account_id\": 2,\n    \"date\": \"2025-10-01\",\n    \"merchant\": \"ADP PAYROLL\",\n    \"amount\": -2400.0,\n    \"category\": \"transfers\"\n  }\n]",
-    "output": "{\"salary_ids\":[1],\"excluded_ids\":[],\"notes\":\"ADP payroll signal overrides transfer mislabeling.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "ADP PAYROLL",
+    "transactions": [
+      "2025-10-01  $2400.0  transfers"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[1],"excluded_ids":[],"notes":"ADP payroll signal overrides transfer mislabeling."}""",
   },
   {
     "batch": 2,
     "name": "salary_mixed_amazon_gusto",
-    "input": "[\n  {\n    \"transaction_id\": 301,\n    \"account_id\": 3,\n    \"date\": \"2025-11-02\",\n    \"merchant\": \"AMAZON MKTPLACE\",\n    \"amount\": 1200.0,\n    \"category\": \"shopping_gadgets\"\n  },\n  {\n    \"transaction_id\": 302,\n    \"account_id\": 3,\n    \"date\": \"2025-11-05\",\n    \"merchant\": \"GUSTO PAYROLL\",\n    \"amount\": -2800.0,\n    \"category\": \"uncategorized\"\n  }\n]",
-    "output": "{\"salary_ids\":[2],\"excluded_ids\":[1],\"notes\":\"Retail spend is excluded; Gusto payroll is included.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "AMAZON MKTPLACE",
+    "transactions": [
+      "2025-11-02  $1200.0  shopping_gadgets"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "GUSTO PAYROLL",
+    "transactions": [
+      "2025-11-05  $2800.0  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[2],"excluded_ids":[1],"notes":"Retail spend is excluded; Gusto payroll is included."}""",
   },
   {
     "batch": 2,
     "name": "salary_ca_state_payroll_vs_p2p",
-    "input": "[\n  {\n    \"transaction_id\": 801,\n    \"account_id\": 4,\n    \"date\": \"2025-11-08\",\n    \"merchant\": \"CA ST PAYROLL\",\n    \"amount\": -4100.0,\n    \"category\": \"uncategorized\"\n  },\n  {\n    \"transaction_id\": 802,\n    \"account_id\": 4,\n    \"date\": \"2025-11-09\",\n    \"merchant\": \"CHASE QUICKPAY\",\n    \"amount\": -2000.0,\n    \"category\": \"uncategorized\"\n  }\n]",
-    "output": "{\"salary_ids\":[1],\"excluded_ids\":[2],\"notes\":\"State payroll is included; informal quickpay transfer is excluded.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "CA ST PAYROLL",
+    "transactions": [
+      "2025-11-08  $4100.0  uncategorized"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "CHASE QUICKPAY",
+    "transactions": [
+      "2025-11-09  $2000.0  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[1],"excluded_ids":[2],"notes":"State payroll is included; informal quickpay transfer is excluded."}""",
   },
   {
     "batch": 2,
     "name": "salary_exclude_irs_refund_vs_adp",
-    "input": "[\n  {\n    \"transaction_id\": 901,\n    \"account_id\": 5,\n    \"date\": \"2025-04-10\",\n    \"merchant\": \"IRS TREAS TAX REFUND\",\n    \"amount\": -2400.0,\n    \"category\": \"uncategorized\"\n  },\n  {\n    \"transaction_id\": 902,\n    \"account_id\": 5,\n    \"date\": \"2025-04-12\",\n    \"merchant\": \"ADP PAYROLL\",\n    \"amount\": -3100.0,\n    \"category\": \"uncategorized\"\n  }\n]",
-    "output": "{\"salary_ids\":[2],\"excluded_ids\":[1],\"notes\":\"Tax refund is excluded while ADP payroll is included.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "IRS TREAS TAX REFUND",
+    "transactions": [
+      "2025-04-10  $2400.0  uncategorized"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "ADP PAYROLL",
+    "transactions": [
+      "2025-04-12  $3100.0  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[2],"excluded_ids":[1],"notes":"Tax refund is excluded while ADP payroll is included."}""",
   },
   {
     "batch": 3,
     "name": "salary_rippling_w2",
-    "input": "[\n  {\n    \"transaction_id\": 1001,\n    \"account_id\": 6,\n    \"date\": \"2025-12-01\",\n    \"merchant\": \"RIPPLING PAYROLL\",\n    \"amount\": -5200.0,\n    \"category\": \"uncategorized\"\n  },\n  {\n    \"transaction_id\": 1002,\n    \"account_id\": 6,\n    \"date\": \"2025-12-03\",\n    \"merchant\": \"DOORDASH DRIVER PAY\",\n    \"amount\": -180.0,\n    \"category\": \"income_sidegig\"\n  }\n]",
-    "output": "{\"salary_ids\":[1],\"excluded_ids\":[2],\"notes\":\"Rippling payroll is salary; gig payout is excluded.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "RIPPLING PAYROLL",
+    "transactions": [
+      "2025-12-01  $5200.0  uncategorized"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "DOORDASH DRIVER PAY",
+    "transactions": [
+      "2025-12-03  $180.0  income_sidegig"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[1],"excluded_ids":[2],"notes":"Rippling payroll is salary; gig payout is excluded."}""",
   },
   {
     "batch": 3,
     "name": "empty_income_candidates",
-    "input": "[]",
-    "output": "{\"salary_ids\":[],\"excluded_ids\":[],\"notes\":\"No income candidates were supplied for payroll classification.\"}",
+    "input": """[]""",
+    "output": """{"salary_ids":[],"excluded_ids":[],"notes":"No income candidates were supplied for payroll classification."}""",
   },
 ]
 

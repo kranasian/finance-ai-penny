@@ -99,56 +99,153 @@ TEST_CASES = [
   {
     "batch": 1,
     "name": "clear_landlord_and_mortgage",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"LANDLORD LLC RENT\",\n    \"transactions\": [\n      \"2026-01-01  $1850  uncategorized\",\n      \"2026-02-01  $1850  uncategorized\"\n    ]\n  },\n  {\n    \"id\": 2,\n    \"name\": \"ROCKET MORTGAGE\",\n    \"transactions\": [\n      \"2026-01-03  $2200  uncategorized\",\n      \"2026-02-03  $2200  uncategorized\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[1,2],\"excluded_ids\":[],\"notes\":\"Landlord and mortgage servicer names clearly indicate shelter payments.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "LANDLORD LLC RENT",
+    "transactions": [
+      "2026-01-01  $1850  uncategorized",
+      "2026-02-01  $1850  uncategorized"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "ROCKET MORTGAGE",
+    "transactions": [
+      "2026-01-03  $2200  uncategorized",
+      "2026-02-03  $2200  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[1,2],"excluded_ids":[],"notes":"Landlord and mortgage servicer names clearly indicate shelter payments."}""",
   },
   {
     "batch": 1,
     "name": "exclude_travel_lodging",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"MARRIOTT HOTEL\",\n    \"transactions\": [\n      \"2026-02-07  $620  travel_lodging\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[],\"excluded_ids\":[1],\"notes\":\"Hotel lodging is travel-related and excluded from rent or mortgage.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "MARRIOTT HOTEL",
+    "transactions": [
+      "2026-02-07  $620  travel_lodging"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[],"excluded_ids":[1],"notes":"Hotel lodging is travel-related and excluded from rent or mortgage."}""",
   },
   {
     "batch": 1,
     "name": "no_keyword_fallback_positive",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"ACH DEBIT 8891\",\n    \"transactions\": [\n      \"2026-01-10  $2100  uncategorized\",\n      \"2026-02-10  $2105  uncategorized\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[1],\"excluded_ids\":[],\"notes\":\"Large consistent recurring debit suggests a likely housing payment.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "ACH DEBIT 8891",
+    "transactions": [
+      "2026-01-10  $2100  uncategorized",
+      "2026-02-10  $2105  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[1],"excluded_ids":[],"notes":"Large consistent recurring debit suggests a likely housing payment."}""",
   },
   {
     "batch": 1,
     "name": "no_keyword_fallback_negative",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"WIRE OUT 5531\",\n    \"transactions\": [\n      \"2026-01-12  $2100  uncategorized\",\n      \"2026-02-12  $2098  uncategorized\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[],\"excluded_ids\":[1],\"notes\":\"Recurring wire activity lacks direct housing evidence and is excluded conservatively.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "WIRE OUT 5531",
+    "transactions": [
+      "2026-01-12  $2100  uncategorized",
+      "2026-02-12  $2098  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[],"excluded_ids":[1],"notes":"Recurring wire activity lacks direct housing evidence and is excluded conservatively."}""",
   },
   {
     "batch": 2,
     "name": "mixed_split_case",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"MR COOPER MORTGAGE\",\n    \"transactions\": [\n      \"2026-03-01  $2400  uncategorized\"\n    ]\n  },\n  {\n    \"id\": 2,\n    \"name\": \"AIRBNB\",\n    \"transactions\": [\n      \"2026-03-05  $700  travel_vacations\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[1],\"excluded_ids\":[2],\"notes\":\"Mortgage servicer payment is included while temporary lodging is excluded.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "MR COOPER MORTGAGE",
+    "transactions": [
+      "2026-03-01  $2400  uncategorized"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "AIRBNB",
+    "transactions": [
+      "2026-03-05  $700  travel_vacations"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[1],"excluded_ids":[2],"notes":"Mortgage servicer payment is included while temporary lodging is excluded."}""",
   },
   {
     "batch": 2,
     "name": "empty_candidates",
-    "input": "[]",
-    "output": "{\"shelter_ids\":[],\"excluded_ids\":[],\"notes\":\"No candidate groups were provided for classification.\"}",
+    "input": """[]""",
+    "output": """{"shelter_ids":[],"excluded_ids":[],"notes":"No candidate groups were provided for classification."}""",
   },
   {
     "batch": 2,
     "name": "hoa_and_property_tax_mixed",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"SUNSET HOA DUES\",\n    \"transactions\": [\n      \"2026-03-01  $425  uncategorized\"\n    ]\n  },\n  {\n    \"id\": 2,\n    \"name\": \"COUNTY PROPERTY TAX\",\n    \"transactions\": [\n      \"2026-03-15  $980  uncategorized\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[1],\"excluded_ids\":[2],\"notes\":\"HOA payment is shelter-related while property tax is excluded in this workflow.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "SUNSET HOA DUES",
+    "transactions": [
+      "2026-03-01  $425  uncategorized"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "COUNTY PROPERTY TAX",
+    "transactions": [
+      "2026-03-15  $980  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[1],"excluded_ids":[2],"notes":"HOA payment is shelter-related while property tax is excluded in this workflow."}""",
   },
   {
     "batch": 3,
     "name": "escrow_and_utility_split",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"HOME LOAN ESCROW\",\n    \"transactions\": [\n      \"2026-02-01  $1950  uncategorized\"\n    ]\n  },\n  {\n    \"id\": 2,\n    \"name\": \"CITY WATER BILL\",\n    \"transactions\": [\n      \"2026-02-14  $145  bills_utilities\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[1],\"excluded_ids\":[2],\"notes\":\"Escrow-linked mortgage payment is included; utility bill is excluded.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "HOME LOAN ESCROW",
+    "transactions": [
+      "2026-02-01  $1950  uncategorized"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "CITY WATER BILL",
+    "transactions": [
+      "2026-02-14  $145  bills_utilities"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[1],"excluded_ids":[2],"notes":"Escrow-linked mortgage payment is included; utility bill is excluded."}""",
   },
   {
     "batch": 3,
     "name": "ambiguous_recurring_transfer_exclude",
-    "input": "[\n  {\n    \"id\": 1,\n    \"name\": \"INT TRANSFER 1001\",\n    \"transactions\": [\n      \"2026-01-09  $2000  uncategorized\",\n      \"2026-02-09  $2000  uncategorized\"\n    ]\n  }\n]",
-    "output": "{\"shelter_ids\":[],\"excluded_ids\":[1],\"notes\":\"Recurring internal transfer lacks housing-specific signals and is excluded.\"}",
+    "input": """[
+  {
+    "id": 1,
+    "name": "INT TRANSFER 1001",
+    "transactions": [
+      "2026-01-09  $2000  uncategorized",
+      "2026-02-09  $2000  uncategorized"
+    ]
+  }
+]""",
+    "output": """{"shelter_ids":[],"excluded_ids":[1],"notes":"Recurring internal transfer lacks housing-specific signals and is excluded."}""",
   },
 ]
 
