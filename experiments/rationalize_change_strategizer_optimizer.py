@@ -19,19 +19,18 @@ load_dotenv()
 SYSTEM_PROMPT = """You are RationalizeChange, a financial reasoning agent.
 
 ## Your job
-Explain **what changed** vs the **benchmark implied by the insight**—for types ending in `_vs_forecast`, that benchmark is the **forecast / plan**, not an automatic month-over-month or week-over-week comparison. Say **why** actuals landed where they did (merchants, categories, timing) using the data. If the insight text *also* mentions a prior period, treat that as extra color, not a redefinition of the type label. If the provided transactions and insight are enough to justify a concise answer, **do not** call `lookup_transactions` or `rationalize`; **`return True, "<concise dashboard explanation>"`** directly from `execute_plan`. If you **do** call `lookup_transactions`, then **`return rationalize(USER_MESSAGE, lookup_info)`** with `lookup_info` set to that call’s return value—**call `rationalize` only after a lookup**, never when you skipped lookup.
+Using the **caller-supplied Task Description** (see below), explain **what changed** vs the **benchmark implied by the insight**—for types ending in `_vs_forecast`, that benchmark is the **forecast / plan**, not an automatic month-over-month or week-over-week comparison. Say **why** actuals landed where they did (merchants, categories, timing) using the data. If the insight text *also* mentions a prior period, treat that as extra color, not a redefinition of the type label. If the provided transactions and insight are enough to justify a concise answer, **do not** call `lookup_transactions` or `rationalize`; **`return True, "<concise dashboard explanation>"`** directly from `execute_plan`. If you **do** call `lookup_transactions`, then **`return rationalize(USER_MESSAGE, lookup_info)`** with `lookup_info` set to that call’s return value—**call `rationalize` only after a lookup**, never when you skipped lookup.
 
 **Both-period check before lookup:** Always weigh the **previous-period** excerpt together with the recent one. Natural-language insight labels (e.g. “Travel,” “Entertainment”) align loosely with official slugs (`travel_flights`, `travel_lodging`, `entertainment_*`, etc.). If **high-ticket travel, lodging, flights, or events in the prior period** contrast with a **lighter** recent period in a way that already explains leisure/travel vs forecast, **skip** `lookup_transactions` and **`return True, "<explanation>"`** without calling `rationalize`—**do not** call lookup only because insight dollar totals exceed the sum of visible recent bullets or because `+K transactions` hides detail.
 
 **Reconciliation rule:** Reconcile insight amounts with excerpts when you can, using **both** periods. Use `lookup_transactions` (official `in_category` slugs only) only when, after that, the insight’s **stated category or roll-up spend is still implausible or unexplained** relative to what the excerpts imply—not merely because every dollar in the insight must foot to listed lines.
 
 ## Inputs you receive
-1. **Task Description** — Fixed template chosen in code from `insight_type` only (`RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE` / `rationalize_task_description_for_insight_type`); no LLM, no other inputs.
+1. **Task Description** — **Predetermined by the caller** that invokes this LLM; you receive it verbatim and do not author or replace it. Follow it exactly—its wording defines the benchmark window and rules (e.g. month-to-date vs week-to-date actuals vs forecast) and how to use tools.
 2. **Insight** — Natural-language summary of the shift (e.g. category totals vs forecast).
-3. **Insight Type** — Structured label; values like `month_spend_vs_forecast` / `week_spend_vs_forecast` mean **actual spend in that window vs forecast**, not “vs the previous month/week” unless the insight wording explicitly says so.
-4. **Top Transactions — recent insight period (date range)** — The header includes the range in parentheses. One bullet per line: `- On 2025-10-25, $25.00 Whole Foods (meals_groceries).` Lists are **ordered by amount descending, then by date descending** (largest spend first; same amount → more recent date first). The list is a **global** top-N by amount, not per category—heavy category spend can be missing if it is split across many charges each smaller than the Nth-largest transaction. When the period has **more than N** charges, the excerpt may end with a line `+K transactions` meaning **K additional** rows in that window are omitted (not shown as bullets).
-5. **Top Transactions — previous period (date range)** — Same bullet format, **same sort order** (amount ↓, then date ↓), and the same optional `+K transactions` tail when applicable; **supplementary context** (e.g. habitual mix), not the forecast benchmark for `*_vs_forecast` types.
-6. **Previous Outcomes** (optional) — Numbered outcomes from earlier turns; do not repeat failed patterns; use them to decide the next lookup or final answer.
+3. **Top Transactions — recent insight period (date range)** — The header includes the range in parentheses. One bullet per line: `- On 2025-10-25, $25 at Whole Foods as meals_groceries.` Lists are **ordered by amount descending, then by date descending** (largest spend first; same amount → more recent date first). The list is a **global** top-N by amount, not per category—heavy category spend can be missing if it is split across many charges each smaller than the Nth-largest transaction. When the period has **more than N** charges, the excerpt may end with a line `+K transactions` meaning **K additional** rows in that window are omitted (not shown as bullets).
+4. **Top Transactions — previous period (date range)** — Same bullet format, **same sort order** (amount ↓, then date ↓), and the same optional `+K transactions` tail when applicable; **supplementary context** (e.g. habitual mix), not the forecast benchmark for `*_vs_forecast` types.
+5. **Previous Outcomes** (optional) — Numbered outcomes from earlier turns; do not repeat failed patterns; use them to decide the next lookup or final answer.
 
 ## Official categories (for `lookup_transactions(..., in_category=[...])`)
 
@@ -50,7 +49,7 @@ donations_gifts, uncategorized, transfers, miscellaneous
 
 ## Tools available
 - `lookup_transactions(start: date, end: date, name_contains: str = "", amount_larger_than: int | None = None, amount_less_than: int | None = None, in_category: list[str] | None = None) -> str`  
-  Returns host text (not model-written): one opening sentence with the **date range** in prose and **only** non-default filters (`name_contains`, amount bounds, `in_category` when set). Then a blank line, `Transactions:`, a blank line, then `- On …` lines (if any), optional `+N more`, and optional `Total: $…`. If nothing matched, say so under `Transactions:` (e.g. no rows). Use `datetime.date` for `start`/`end`. Bounds are inclusive. Only official slugs in `in_category`.
+  Returns host text (not model-written): one opening sentence with the **date range** in prose and **only** non-default filters (`name_contains`, amount bounds, `in_category` when set). Then a blank line, `Transactions:`, a blank line, then `- On YYYY-MM-DD, $N at Merchant as category_slug.` lines (whole-dollar **N**), optional `+K transactions`, and optional `Total: $…`. If nothing matched, say so under `Transactions:` (e.g. no rows). Use `datetime.date` for `start`/`end`. Bounds are inclusive. Only official slugs in `in_category`.
 - `rationalize(input_info: str, lookup_info: str) -> tuple[bool, str]`  
   **Only call after `lookup_transactions`.** Pass **`USER_MESSAGE`** as `input_info` (injected `str`; never paste the prompt into code). Pass **`lookup_info`** as the **exact** string returned from the preceding `lookup_transactions` call.
 
@@ -115,7 +114,6 @@ class StrategizerOptimizer:
     self,
     task_description: str,
     insight: str,
-    insight_type: str,
     top_transactions_recent_period: str,
     top_transactions_previous_period: str,
     recent_insight_date_range: str = "—",
@@ -131,7 +129,6 @@ class StrategizerOptimizer:
       body = _format_rationalize_change_prompt(
         task_description,
         insight,
-        insight_type,
         top_transactions_recent_period,
         top_transactions_previous_period,
         recent_insight_date_range=recent_insight_date_range,
@@ -232,7 +229,6 @@ Produce a single ```python``` block defining `execute_plan() -> tuple[bool, str]
     "",
     "",
     "",
-    "",
     prompt_override=body,
     system_prompt_override=RATIONALIZE_MERGE_SYSTEM_PROMPT,
     print_thought_summary=False,
@@ -253,7 +249,7 @@ Produce a single ```python``` block defining `execute_plan() -> tuple[bool, str]
   return success, out
 
 
-# Task Description is chosen only from `insight_type` (host code or tests). Same string for every row with that type.
+# Canonical Task Description text keyed by `insight_type`—for the **LLM caller** to pass into the user message (same string for every row with that type). Tests may embed it under `# Task Description` directly.
 RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE = {
   "month_spend_vs_forecast": (
     "Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible "
@@ -277,7 +273,7 @@ RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE = {
 
 
 def rationalize_task_description_for_insight_type(insight_type: str) -> str:
-  """Return Task Description for `insight_type`. The only allowed source of variation between templates is the type key."""
+  """Return Task Description text for `insight_type` so the **LLM caller** can supply it in the RationalizeChange user message."""
   try:
     return RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE[insight_type]
   except KeyError as e:
@@ -312,7 +308,6 @@ def _format_previous_outcomes(previous_outcomes: dict[int | str, str] | list[str
 def _format_rationalize_change_prompt(
   task_description: str,
   insight: str,
-  insight_type: str,
   top_transactions_recent_period: str,
   top_transactions_previous_period: str,
   *,
@@ -328,10 +323,6 @@ def _format_rationalize_change_prompt(
 # Insight
 
 {insight}
-
-# Insight Type
-
-`{insight_type}`
 
 # Top Transactions — recent insight period ({recent_insight_date_range})
 
@@ -367,36 +358,32 @@ Explain **month-to-date actual spend vs forecast**: how the user's spending diff
 
 Entertainment is significantly below forecast this month at $309. Travel & Vacations is significantly below forecast at $47. Leisure is thus significantly below forecast this month at $356. The prior month’s excerpt shows much larger lodging, flights, and events than March’s top lines do for travel and entertainment.
 
-# Insight Type
-
-`month_spend_vs_forecast`
-
 # Top Transactions — recent insight period (2026-03-01 to 2026-03-31)
 
-- On 2026-03-30, $142.10 Whole Foods (meals_groceries).
-- On 2026-03-25, $62.00 Shell Gas (transportation_gas).
-- On 2026-03-08, $58.00 Thai Garden (meals_dining_out).
-- On 2026-03-28, $48.00 AMC Theaters (entertainment_movies).
-- On 2026-03-10, $35.00 City Parking (transportation_parking).
-- On 2026-03-18, $23.50 Uber (transportation_rideshare).
-- On 2026-03-05, $19.20 CVS (health_pharmacy).
-- On 2026-03-02, $15.99 Netflix (entertainment_streaming).
-- On 2026-03-15, $10.99 Spotify (entertainment_streaming).
-- On 2026-03-22, $0.00 Delta Air (travel_flights).
+- On 2026-03-30, $142 at Whole Foods as meals_groceries.
+- On 2026-03-25, $62 at Shell Gas as transportation_gas.
+- On 2026-03-08, $58 at Thai Garden as meals_dining_out.
+- On 2026-03-28, $48 at AMC Theaters as entertainment_movies.
+- On 2026-03-10, $35 at City Parking as transportation_parking.
+- On 2026-03-18, $24 at Uber as transportation_rideshare.
+- On 2026-03-05, $19 at CVS as health_pharmacy.
+- On 2026-03-02, $16 at Netflix as entertainment_streaming.
+- On 2026-03-15, $11 at Spotify as entertainment_streaming.
+- On 2026-03-22, $0 at Delta Air as travel_flights.
 +38 transactions
 
 # Top Transactions — previous period (2026-02-01 to 2026-02-28)
 
-- On 2026-02-12, $890.00 Marriott (travel_lodging).
-- On 2026-02-22, $412.00 Delta Air (travel_flights).
-- On 2026-02-28, $220.00 StubHub (entertainment_events).
-- On 2026-02-03, $180.00 Concert Hall (entertainment_events).
-- On 2026-02-15, $128.00 Whole Foods (meals_groceries).
-- On 2026-02-20, $64.00 AMC Theaters (entertainment_movies).
-- On 2026-02-05, $55.00 Shell Gas (transportation_gas).
-- On 2026-02-10, $31.00 Uber (transportation_rideshare).
-- On 2026-02-08, $15.99 Netflix (entertainment_streaming).
-- On 2026-02-01, $10.99 Spotify (entertainment_streaming).
+- On 2026-02-12, $890 at Marriott as travel_lodging.
+- On 2026-02-22, $412 at Delta Air as travel_flights.
+- On 2026-02-28, $220 at StubHub as entertainment_events.
+- On 2026-02-03, $180 at Concert Hall as entertainment_events.
+- On 2026-02-15, $128 at Whole Foods as meals_groceries.
+- On 2026-02-20, $64 at AMC Theaters as entertainment_movies.
+- On 2026-02-05, $55 at Shell Gas as transportation_gas.
+- On 2026-02-10, $31 at Uber as transportation_rideshare.
+- On 2026-02-08, $16 at Netflix as entertainment_streaming.
+- On 2026-02-01, $11 at Spotify as entertainment_streaming.
 +31 transactions
 
 """,
@@ -409,17 +396,17 @@ Entertainment is significantly below forecast this month at $309. Travel & Vacat
 
 Transactions:
 
-- On 2026-03-30, $46.00 Amazon (shopping_clothing).
-- On 2026-03-29, $46.00 Target (shopping_gadgets).
-- On 2026-03-28, $46.00 Best Buy (shopping_kids).
-- On 2026-03-27, $46.00 Costco (shopping_pets).
-- On 2026-03-26, $46.00 Walmart (shopping_clothing).
-- On 2026-03-25, $46.00 Etsy (shopping_gadgets).
-- On 2026-03-24, $46.00 Apple Store (shopping_kids).
-- On 2026-03-23, $46.00 Nordstrom (shopping_pets).
-- On 2026-03-22, $46.00 Home Depot (shopping_clothing).
-- On 2026-03-21, $46.00 Kohl's (shopping_gadgets).
-+10 more
+- On 2026-03-30, $46 at Amazon as shopping_clothing.
+- On 2026-03-29, $46 at Target as shopping_gadgets.
+- On 2026-03-28, $46 at Best Buy as shopping_kids.
+- On 2026-03-27, $46 at Costco as shopping_pets.
+- On 2026-03-26, $46 at Walmart as shopping_clothing.
+- On 2026-03-25, $46 at Etsy as shopping_gadgets.
+- On 2026-03-24, $46 at Apple Store as shopping_kids.
+- On 2026-03-23, $46 at Nordstrom as shopping_pets.
+- On 2026-03-22, $46 at Home Depot as shopping_clothing.
+- On 2026-03-21, $46 at Kohl's as shopping_gadgets.
++10 transactions
 Total: $920
 """,
     "input": """# Task Description
@@ -430,41 +417,37 @@ Explain **month-to-date actual spend vs forecast**: how the user's spending diff
 
 Shopping is significantly above forecast this month at $920 vs ~$200 expected for shopping.
 
-# Insight Type
-
-`month_spend_vs_forecast`
-
 # Top Transactions — recent insight period (2026-03-01 to 2026-03-31)
 
-- On 2026-03-28, $118.40 Whole Foods (meals_groceries).
-- On 2026-03-20, $67.10 Trader Joe's (meals_groceries).
-- On 2026-03-25, $62.00 Peak Fitness (health_gym).
-- On 2026-03-23, $58.00 Smile Dental (health_dental).
-- On 2026-03-15, $55.00 City Parking (transportation_parking).
-- On 2026-03-19, $54.00 Urban Pet (pets_supplies).
-- On 2026-03-17, $53.00 Downtown Dry Clean (services_laundry).
-- On 2026-03-14, $52.00 Ace Hardware (home_improvement).
-- On 2026-03-11, $51.00 Campus Books (education_books).
-- On 2026-03-12, $48.00 Thai Garden (meals_dining_out).
+- On 2026-03-28, $118 at Whole Foods as meals_groceries.
+- On 2026-03-20, $67 at Trader Joe's as meals_groceries.
+- On 2026-03-25, $62 at Peak Fitness as health_gym.
+- On 2026-03-23, $58 at Smile Dental as health_dental.
+- On 2026-03-15, $55 at City Parking as transportation_parking.
+- On 2026-03-19, $54 at Urban Pet as pets_supplies.
+- On 2026-03-17, $53 at Downtown Dry Clean as services_laundry.
+- On 2026-03-14, $52 at Ace Hardware as home_improvement.
+- On 2026-03-11, $51 at Campus Books as education_books.
+- On 2026-03-12, $48 at Thai Garden as meals_dining_out.
 +54 transactions
 
 # Top Transactions — previous period (2026-02-01 to 2026-02-28)
 
-- On 2026-02-25, $105.00 Whole Foods (meals_groceries).
-- On 2026-02-14, $72.00 Trader Joe's (meals_groceries).
-- On 2026-02-05, $44.00 Thai Garden (meals_dining_out).
-- On 2026-02-08, $40.00 City Parking (transportation_parking).
-- On 2026-02-27, $38.90 Shell Gas (transportation_gas).
-- On 2026-02-18, $28.00 Uber (transportation_rideshare).
-- On 2026-02-20, $21.00 CVS (health_pharmacy).
-- On 2026-02-02, $19.00 Walgreens (health_pharmacy).
-- On 2026-02-22, $18.50 Starbucks (meals_coffee).
-- On 2026-02-10, $15.99 Netflix (entertainment_streaming).
+- On 2026-02-25, $105 at Whole Foods as meals_groceries.
+- On 2026-02-14, $72 at Trader Joe's as meals_groceries.
+- On 2026-02-05, $44 at Thai Garden as meals_dining_out.
+- On 2026-02-08, $40 at City Parking as transportation_parking.
+- On 2026-02-27, $39 at Shell Gas as transportation_gas.
+- On 2026-02-18, $28 at Uber as transportation_rideshare.
+- On 2026-02-20, $21 at CVS as health_pharmacy.
+- On 2026-02-02, $19 at Walgreens as health_pharmacy.
+- On 2026-02-22, $19 at Starbucks as meals_coffee.
+- On 2026-02-10, $16 at Netflix as entertainment_streaming.
 +42 transactions
 
 """,
     "output": (
-      "Expected: execute_plan calls lookup once; output reflects many sub-floor $46 official shopping charges totaling $920 (consistent with $48.00 10th-place global top txn)."
+      "Expected: execute_plan calls lookup once; output reflects many sub-floor $46 official shopping charges totaling $920 (consistent with $48 10th-place global top txn)."
     ),
   },
   {
@@ -484,26 +467,22 @@ Explain **week-to-date actual spend vs forecast**: how the user's spending diffe
 
 Dining out is significantly above your weekly forecast at about $180 vs ~$45 planned. Prior turn: lookup_transactions returned no extra rows for the same 7-day window; answer from the top transactions below only—do not repeat that lookup.
 
-# Insight Type
-
-`week_spend_vs_forecast`
-
 # Top Transactions — recent insight period (2026-03-25 to 2026-03-31)
 
-- On 2026-03-27, $95.00 Whole Foods (meals_groceries).
-- On 2026-03-31, $62.00 Olive Garden (meals_dining_out).
-- On 2026-03-29, $44.00 DoorDash (meals_dining_out).
-- On 2026-03-30, $18.50 Chipotle (meals_dining_out).
-- On 2026-03-28, $12.00 Starbucks (meals_coffee).
+- On 2026-03-27, $95 at Whole Foods as meals_groceries.
+- On 2026-03-31, $62 at Olive Garden as meals_dining_out.
+- On 2026-03-29, $44 at DoorDash as meals_dining_out.
+- On 2026-03-30, $19 at Chipotle as meals_dining_out.
+- On 2026-03-28, $12 at Starbucks as meals_coffee.
 +11 transactions
 
 # Top Transactions — previous period (2026-03-18 to 2026-03-24)
 
-- On 2026-03-21, $72.00 Trader Joe's (meals_groceries).
-- On 2026-03-20, $22.00 CVS (health_pharmacy).
-- On 2026-03-24, $14.00 Chipotle (meals_dining_out).
-- On 2026-03-22, $8.00 Starbucks (meals_coffee).
-- On 2026-03-23, $0.00 Home cooking transfer (internal).
+- On 2026-03-21, $72 at Trader Joe's as meals_groceries.
+- On 2026-03-20, $22 at CVS as health_pharmacy.
+- On 2026-03-24, $14 at Chipotle as meals_dining_out.
+- On 2026-03-22, $8 at Starbucks as meals_coffee.
+- On 2026-03-23, $0 at Home cooking transfer as internal.
 +14 transactions
 
 """,
@@ -526,36 +505,32 @@ Explain **month-to-date actual spend vs forecast**: how the user's spending diff
 
 Salary is significantly down this month at $1481.  Income is thus down this month to $1481. February’s excerpt shows two full payroll deposits versus a single March deposit in the top lines.
 
-# Insight Type
-
-`month_spend_vs_forecast`
-
 # Top Transactions — recent insight period (2026-03-01 to 2026-03-31)
 
-- On 2026-03-14, $1481.00 Acme Corp Payroll (income_salary).
-- On 2026-03-28, $118.40 Whole Foods (meals_groceries).
-- On 2026-03-20, $67.10 Trader Joe's (meals_groceries).
-- On 2026-03-25, $62.00 Shell Gas (transportation_gas).
-- On 2026-03-08, $58.00 Thai Garden (meals_dining_out).
-- On 2026-03-10, $35.00 City Parking (transportation_parking).
-- On 2026-03-18, $23.50 Uber (transportation_rideshare).
-- On 2026-03-05, $19.20 CVS (health_pharmacy).
-- On 2026-03-02, $15.99 Netflix (entertainment_streaming).
-- On 2026-03-15, $10.99 Spotify (entertainment_streaming).
+- On 2026-03-14, $1481 at Acme Corp Payroll as income_salary.
+- On 2026-03-28, $118 at Whole Foods as meals_groceries.
+- On 2026-03-20, $67 at Trader Joe's as meals_groceries.
+- On 2026-03-25, $62 at Shell Gas as transportation_gas.
+- On 2026-03-08, $58 at Thai Garden as meals_dining_out.
+- On 2026-03-10, $35 at City Parking as transportation_parking.
+- On 2026-03-18, $24 at Uber as transportation_rideshare.
+- On 2026-03-05, $19 at CVS as health_pharmacy.
+- On 2026-03-02, $16 at Netflix as entertainment_streaming.
+- On 2026-03-15, $11 at Spotify as entertainment_streaming.
 +33 transactions
 
 # Top Transactions — previous period (2026-02-01 to 2026-02-28)
 
-- On 2026-02-27, $1650.00 Acme Corp Payroll (income_salary).
-- On 2026-02-13, $1650.00 Acme Corp Payroll (income_salary).
-- On 2026-02-12, $890.00 Marriott (travel_lodging).
-- On 2026-02-25, $105.00 Whole Foods (meals_groceries).
-- On 2026-02-14, $72.00 Trader Joe's (meals_groceries).
-- On 2026-02-05, $44.00 Thai Garden (meals_dining_out).
-- On 2026-02-08, $40.00 City Parking (transportation_parking).
-- On 2026-02-26, $38.90 Shell Gas (transportation_gas).
-- On 2026-02-18, $28.00 Uber (transportation_rideshare).
-- On 2026-02-20, $21.00 CVS (health_pharmacy).
+- On 2026-02-27, $1650 at Acme Corp Payroll as income_salary.
+- On 2026-02-13, $1650 at Acme Corp Payroll as income_salary.
+- On 2026-02-12, $890 at Marriott as travel_lodging.
+- On 2026-02-25, $105 at Whole Foods as meals_groceries.
+- On 2026-02-14, $72 at Trader Joe's as meals_groceries.
+- On 2026-02-05, $44 at Thai Garden as meals_dining_out.
+- On 2026-02-08, $40 at City Parking as transportation_parking.
+- On 2026-02-26, $39 at Shell Gas as transportation_gas.
+- On 2026-02-18, $28 at Uber as transportation_rideshare.
+- On 2026-02-20, $21 at CVS as health_pharmacy.
 +36 transactions
 
 """,
@@ -580,36 +555,32 @@ Explain **month-to-date actual spend vs forecast**: how the user's spending diff
 
 Clothing is significantly down this month at $124. Kids is significantly down this month at $0. Gadgets is significantly down this month at $0. Shopping is thus significantly down this month to $124.
 
-# Insight Type
-
-`month_spend_vs_forecast`
-
 # Top Transactions — recent insight period (2026-03-01 to 2026-03-25)
 
-- On 2026-03-21, $228.00 Eataly (meals_groceries).
-- On 2026-03-23, $156.00 Shell V-Power (transportation_gas).
-- On 2026-03-11, $132.00 Carbone (meals_dining_out).
-- On 2026-03-08, $52.00 Target (shopping_clothing).
-- On 2026-03-12, $45.00 Kohl's (shopping_clothing).
-- On 2026-03-05, $27.00 TJ Maxx (shopping_clothing).
-- On 2026-03-18, $88.00 Garage Parking (transportation_parking).
-- On 2026-03-14, $54.00 Uber (transportation_rideshare).
-- On 2026-03-03, $42.00 CVS (health_pharmacy).
-- On 2026-03-02, $15.99 Netflix (entertainment_streaming).
+- On 2026-03-21, $228 at Eataly as meals_groceries.
+- On 2026-03-23, $156 at Shell V-Power as transportation_gas.
+- On 2026-03-11, $132 at Carbone as meals_dining_out.
+- On 2026-03-08, $52 at Target as shopping_clothing.
+- On 2026-03-12, $45 at Kohl's as shopping_clothing.
+- On 2026-03-05, $27 at TJ Maxx as shopping_clothing.
+- On 2026-03-18, $88 at Garage Parking as transportation_parking.
+- On 2026-03-14, $54 at Uber as transportation_rideshare.
+- On 2026-03-03, $42 at CVS as health_pharmacy.
+- On 2026-03-02, $16 at Netflix as entertainment_streaming.
 +41 transactions
 
 # Top Transactions — previous period (2026-02-01 to 2026-02-25)
 
-- On 2026-02-19, $2199.00 Apple Fifth Avenue (shopping_gadgets).
-- On 2026-02-24, $890.00 Saks Fifth Avenue (shopping_clothing).
-- On 2026-02-11, $625.00 Bonpoint Madison (shopping_kids).
-- On 2026-02-22, $385.00 Whole Foods 365 (meals_groceries).
-- On 2026-02-16, $298.00 Equinox (health_gym).
-- On 2026-02-08, $245.00 Eleven Madison Park (meals_dining_out).
-- On 2026-02-20, $165.00 Hotel Valet (transportation_parking).
-- On 2026-02-04, $112.00 Shell V-Power (transportation_gas).
-- On 2026-02-13, $95.00 Uber Black (transportation_rideshare).
-- On 2026-02-01, $48.00 CVS (health_pharmacy).
+- On 2026-02-19, $2199 at Apple Fifth Avenue as shopping_gadgets.
+- On 2026-02-24, $890 at Saks Fifth Avenue as shopping_clothing.
+- On 2026-02-11, $625 at Bonpoint Madison as shopping_kids.
+- On 2026-02-22, $385 at Whole Foods 365 as meals_groceries.
+- On 2026-02-16, $298 at Equinox as health_gym.
+- On 2026-02-08, $245 at Eleven Madison Park as meals_dining_out.
+- On 2026-02-20, $165 at Hotel Valet as transportation_parking.
+- On 2026-02-04, $112 at Shell V-Power as transportation_gas.
+- On 2026-02-13, $95 at Uber Black as transportation_rideshare.
+- On 2026-02-01, $48 at CVS as health_pharmacy.
 +38 transactions
 
 """,
@@ -635,7 +606,6 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer | None 
     print(prompt_body)
     print()
     llm_out = optimizer.generate_response(
-      "",
       "",
       "",
       "",
