@@ -28,19 +28,30 @@ Take a list of bank account details and simplify/rename each account based on it
 - **purpose_name**: Deduce the core purpose of the account based on its name and details. It should be concise and descriptive.
   - Examples: Checking, Savings, Credit Card, Mortgage, Brokerage, Auto Loan, Student Loan, Home Equity, Line of Credit, Money Market.
   - If the purpose is not explicitly mentioned (e.g., "Chase Secure Banking"), deduce it from the product context (e.g., "Checking").
-- **crisp_name**: Combine a specific product identifier or sub-brand with the purpose (e.g., "360 Checking", "Venture Rewards Credit Card", "Secure Checking"). Avoid repeating the bank name here if it's already in the bank_added_name.
-- **bank_added_name**: Combine the bank name with the purpose (e.g., "Capital One Checking", "Chase Credit Card", "Chase Checking").
+- **crisp_name**: Combine the full product name with the `purpose_name`. 
+  - It MUST include the `purpose_name` word for word.
+  - If the product name is the same as the `purpose_name`, `crisp_name` should be identical to `purpose_name`. Do NOT add "Standard".
+  - Example: If purpose is "Brokerage" and product is "Individual Brokerage", `crisp_name` must be "Individual Brokerage".
+  - **CRITICAL**: Do NOT include the bank name in `crisp_name` unless it is part of the specific product sub-brand (e.g., "360" or "Venture").
+- **bank_added_name**: Strictly the bank name followed by the `purpose_name`.
+  - It MUST include the `purpose_name` word for word.
+  - It MUST NOT include any product names (e.g., "360", "Venture", "Sapphire", "Secure", "First", "Auto Finance", "Conventional Fixed").
+  - Example: If bank is "Chase" and purpose is "Checking", `bank_added_name` must be "Chase Checking".
+  - Example: If bank is "Ally Bank" and purpose is "Auto Loan", `bank_added_name` must be "Ally Bank Auto Loan".
 
-#### 3. Rules
+#### 3. Constraints
+- The word "Account" is strictly forbidden in any part of the output. If the input contains "Brokerage Account", the output must just be "Brokerage".
+- Ignore any masked account numbers (e.g., "Checking ...1234").
 - Always maintain the original `id`.
 - If `bank_name` is null, try to infer it from `account_name` or `long_account_name`.
 - For Credit Cards, ensure "Credit Card" is the `purpose_name` if not explicitly stated but implied by product names (e.g., "Venture", "Sapphire", "Platinum").
 - If the account name is generic like "Secure Banking" or "First Banking", deduce the purpose (usually "Checking" for these Chase products).
 - Keep names professional and easy to read.
 - If multiple accounts have the same purpose, use the product details to differentiate them in `crisp_name`.
-
-#### 4. Output Format
-Return a JSON array of objects, each containing `id`, `purpose_name`, `crisp_name`, and `bank_added_name`.
+- **CRITICAL**: Double check that `crisp_name` and `bank_added_name` contain the `purpose_name` word for word.
+- **CRITICAL**: If the `purpose_name` is "Brokerage", the `crisp_name` must be "Brokerage" or include the word "Brokerage".
+- **CRITICAL**: The `bank_added_name` must be exactly `[Bank Name] [purpose_name]`. No other words allowed.
+- **CRITICAL**: Ensure `crisp_name` does not start with the bank name if the bank name is already in `bank_added_name`.
 """
 
 class AccountNameVerbalizerOptimizer:
@@ -81,30 +92,60 @@ class AccountNameVerbalizerOptimizer:
             max_output_tokens=self.max_output_tokens,
             safety_settings=self.safety_settings,
             system_instruction=[types.Part.from_text(text=self.system_prompt)],
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=self.thinking_budget,
+                include_thoughts=True
+            ),
             response_schema=self.output_schema,
             response_mime_type="application/json"
         )
 
-        response = self.client.models.generate_content(
+        # Generate response using streaming to extract thoughts
+        output_text = ""
+        thought_summary = ""
+        
+        for chunk in self.client.models.generate_content_stream(
             model=self.model_name,
             contents=contents,
             config=generate_content_config,
-        )
+        ):
+            # Extract text content (non-thought parts)
+            if chunk.text is not None:
+                output_text += chunk.text
+            
+            # Extract thought summary from chunk
+            if hasattr(chunk, 'candidates') and chunk.candidates:
+                for candidate in chunk.candidates:
+                    if hasattr(candidate, 'content') and candidate.content:
+                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'thought') and part.thought:
+                                    if hasattr(part, 'text') and part.text:
+                                        if thought_summary:
+                                            thought_summary += part.text
+                                        else:
+                                            thought_summary = part.text
         
-        if not response.text:
+        if thought_summary:
+            print(f"{'='*80}")
+            print("THOUGHT SUMMARY:")
+            print(thought_summary.strip())
+            print("="*80)
+            
+        if not output_text:
             raise ValueError("Empty response from model.")
             
         try:
-            return json.loads(response.text)
+            return json.loads(output_text)
         except json.JSONDecodeError:
-            text = response.text.strip()
+            text = output_text.strip()
             if text.startswith("```json"):
                 text = text[7:-3].strip()
             elif text.startswith("```"):
                 text = text[3:-3].strip()
             return json.loads(text)
 
-def test_optimizer():
+def test_optimizer(batch_index=None):
     optimizer = AccountNameVerbalizerOptimizer()
     
     test_cases = [
@@ -135,8 +176,15 @@ def test_optimizer():
         ]
     ]
     
-    for i, accounts in enumerate(test_cases):
-        print(f"\n--- Test Case {i+1} ---")
+    if batch_index is not None:
+        cases_to_run = [test_cases[batch_index]]
+        start_idx = batch_index + 1
+    else:
+        cases_to_run = test_cases
+        start_idx = 1
+
+    for i, accounts in enumerate(cases_to_run):
+        print(f"\n--- Test Case {start_idx + i} ---")
         print("Input:")
         print(json.dumps(accounts, indent=2))
         try:
@@ -147,4 +195,6 @@ def test_optimizer():
             print(f"Error: {e}")
 
 if __name__ == "__main__":
-    test_optimizer()
+    import sys
+    batch = int(sys.argv[1]) if len(sys.argv) > 1 else None
+    test_optimizer(batch)
