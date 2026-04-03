@@ -138,8 +138,8 @@ Re-categorize all transactions from 'Starbucks' where each charge was $50 or les
 
 # Transactions
 
-- $12.50 Starbucks transaction on November 10, 2025 (ID 1, Account 20).
-- $4.75 Starbucks transaction on November 12, 2025 (ID 2, Account 20).""",
+- $12.50 Starbucks on 2025-11-10 (ID 1, Account 20).
+- $4.75 Starbucks on 2025-11-12 (ID 2, Account 20).""",
     "output": {
       "rules_satisfied": True,
       "notes": "Every Starbucks transaction and charge shown meets the $50 cap and 2025-11-01 date cutoff.",
@@ -153,8 +153,7 @@ Re-categorize all transactions from 'Costco' where each charge was at least $100
 
 # Transactions
 
-- $90.00 Costco transaction on October 15, 2025 (ID 10, Account 20).
-- $220.00 Costco transaction on October 20, 2025 (ID 11, Account 20).""",
+- $25.00 AMAZON on 2025-10-25 (ID 71, Account 20).""",
     "output": {
       "rules_satisfied": False,
       "notes": "Not every Costco transaction has a charge of at least $100 as the groceries rule requires.",
@@ -168,7 +167,7 @@ Re-categorize transactions as 'income_salary' where the name includes 'payroll' 
 
 # Transactions
 
-- $1440.00 CA State Payroll transaction on November 18, 2025 (ID 21, Account 20).
+- $1440.00 CA State Payroll transaction on 2025-11-18 (ID 21, Account 20).
 - Amount not given, ACME Corp transaction on November 20, 2025 (ID 22, Account 20).""",
     "output": {
       "rules_satisfied": False,
@@ -182,7 +181,7 @@ Re-categorize transactions as 'income_salary' where the name includes 'payroll' 
 
 # Transactions
 
-- $2000.00 Apartments LLC transaction on November 18, 2025 (ID 31, Account 20).""",
+- $2000.00 Apartments LLC on 2025-11-18 (ID 31, Account 20).""",
     "output": {
       "rules_satisfied": False,
       "notes": "Malformed input: missing verifiable filters.",
@@ -196,7 +195,7 @@ Categorize transaction_id 41 and transaction_id 42 as 'meals_dining_out'; for ea
 
 # Transactions
 
-- $5.00 Starbucks transaction on November 5, 2025 (ID 41, Account 20).
+- $5.00 Starbucks on 2025-11-05 (ID 41, Account 20).
 - $6.00 Starbucks Coffee transaction on November 6, 2025 (ID 42, Account 20).""",
     "output": {
       "rules_satisfied": False,
@@ -211,8 +210,8 @@ Re-categorize all transactions from 'Whole Foods' as 'groceries' where the trans
 
 # Transactions
 
-- $45.00 Whole Foods transaction on November 26, 2025 (ID 51, Account 20).
-- $12.00 Whole Foods transaction on November 25, 2025 (ID 52, Account 20).""",
+- $45.00 Whole Foods on 2025-11-26 (ID 51, Account 20).
+- $12.00 Whole Foods on 2025-11-25 (ID 52, Account 20).""",
     "output": {
       "rules_satisfied": False,
       "notes": "A matching Whole Foods charge is not on transaction date 2025-11-26 as required.",
@@ -226,8 +225,8 @@ Categorize the Netflix subscription charges (transaction_id 61 and 62) as 'subsc
 
 # Transactions
 
-- $15.99 Netflix transaction on November 3, 2025 (ID 61, Account 20).
-- $16.99 Netflix transaction on December 3, 2025 (ID 62, Account 20).""",
+- $15.99 Netflix on 2025-11-03 (ID 61, Account 20).
+- $16.99 Netflix on 2025-12-03 (ID 62, Account 20).""",
     "output": {
       "rules_satisfied": False,
       "notes": "Netflix charge ID 62 is $16.99, not exactly $15.99 as required for every row.",
@@ -241,8 +240,8 @@ Re-categorize all transactions from 'Amazon' as 'shopping_clothing' where each c
 
 # Transactions
 
-- $25.00 AMAZON transaction on November 2, 2025 (ID 71, Account 20).
-- $30.00 Amazon transaction on November 4, 2025 (ID 72, Account 21).""",
+- $25.00 AMAZON on 2025-11-02 (ID 71, Account 20).
+- $30.00 Amazon on 2025-11-04 (ID 72, Account 21).""",
     "output": {
       "rules_satisfied": False,
       "notes": "One Amazon charge posts to an account other than 20, conflicting with account_id equal to 20.",
@@ -256,8 +255,8 @@ Re-categorize the Amazon marketplace transactions (transaction_id 81 and 82) as 
 
 # Transactions
 
-- $12.00 AMAZON MARKETPLACE transaction on November 1, 2025 (ID 81, Account 20).
-- $9.00 Amazon.com transaction on November 2, 2025 (ID 82, Account 20).""",
+- $12.00 AMAZON MARKETPLACE on 2025-11-01 (ID 81, Account 20).
+- $9.00 Amazon.com on 2025-11-02 (ID 82, Account 20).""",
     "output": {
       "rules_satisfied": True,
       "notes": "Both marketplace transactions meet case-insensitive name matching and the other rules.",
@@ -271,8 +270,8 @@ Re-categorize all 'Shell' fuel transactions as 'transport_car_fuel' where the ch
 
 # Transactions
 
-- $40.00 Shell transaction on November 15, 2025 (ID 91, Account 20).
-- $35.00 Shell transaction on December 1, 2025 (ID 92, Account 20).""",
+- $40.00 Shell on 2025-11-15 (ID 91, Account 20).
+- $35.00 Shell on 2025-12-01 (ID 92, Account 20).""",
     "output": {
       "rules_satisfied": False,
       "notes": "One Shell fuel charge has a charge date outside 2025-11-01 through 2025-11-30.",
@@ -286,8 +285,8 @@ Re-categorize all 'Costco' transactions as 'groceries' where each charge amount 
 
 # Transactions
 
-- $75.00 Costco transaction on November 8, 2025 (ID 101, Account 20).
-- $250.00 Costco transaction on November 9, 2025 (ID 102, Account 20).""",
+- $75.00 Costco on 2025-11-08 (ID 101, Account 20).
+- $250.00 Costco on 2025-11-09 (ID 102, Account 20).""",
     "output": {
       "rules_satisfied": False,
       "notes": "One Costco charge amount is outside the $50–$200 inclusive groceries range.",
@@ -315,8 +314,8 @@ Re-categorize these trips as 'transport_public_transit' where the name contains 
 
 # Transactions
 
-- $18.00 Uber *TRIP transaction on November 10, 2025 (ID 201, Account 20).
-- $22.00 (payee not given) transaction on November 12, 2025 (ID 202, Account 20).""",
+- $18.00 Uber *TRIP on 2025-11-10 (ID 201, Account 20).
+- $22.00 on 2025-11-12 (ID 202, Account 20).""",
     "output": {
       "rules_satisfied": False,
       "notes": "Cannot evaluate: one trip has no name for the Uber substring and date rules.",
@@ -330,8 +329,8 @@ Re-categorize these housing payments as 'shelter_home' where the name contains '
 
 # Transactions
 
-- $2100.00 RentCo Apartments transaction on November 1, 2025 (ID 301, Account 99).
-- $2100.00 RentCo Apartments transaction on December 1, 2025 (ID 302, Account not given).""",
+- $2100.00 RentCo Apartments on 2025-11-01 (ID 301, Account 99).
+- $2100.00 RentCo Apartments on 2025-12-01 (ID 302, Account not given).""",
     "output": {
       "rules_satisfied": False,
       "notes": "Cannot evaluate: one housing payment has no account though the rules require account 99.",
@@ -345,9 +344,9 @@ Re-categorize all transactions from 'Starbucks' where each charge was $50 or les
 
 # Transactions
 
-- $10.00 Starbucks transaction on November 5, 2025 (ID 401, Account 1).
-- $20.00 Starbucks transaction on November 6, 2025 (ID 402, Account 1).
-- $15.00 Starbucks transaction on November 7, 2025 (ID 403, Account 1).
+- $10.00 Starbucks on 2025-11-05 (ID 401, Account 1).
+- $20.00 Starbucks on 2025-11-06 (ID 402, Account 1).
+- $15.00 Starbucks on 2025-11-07 (ID 403, Account 1).
 (+2 more transactions.)""",
     "output": {
       "rules_satisfied": True,
