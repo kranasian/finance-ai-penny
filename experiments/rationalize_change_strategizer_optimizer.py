@@ -10,7 +10,8 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
   sys.path.insert(0, parent_dir)
 
-from penny.tool_funcs.lookup_user_accounts_transactions_income_and_spending_patterns import lookup_user_accounts_transactions_income_and_spending_patterns
+from penny.tool_funcs.lookup_transactions import lookup_transactions
+from penny.tool_funcs.rationalize import rationalize
 
 # Load environment variables
 load_dotenv()
@@ -18,24 +19,42 @@ load_dotenv()
 SYSTEM_PROMPT = """You are RationalizeChange, a financial reasoning agent.
 
 ## Your job
-Explain **what changed** vs the **benchmark implied by the insight**—for types ending in `_vs_forecast`, that benchmark is the **forecast / plan**, not an automatic month-over-month or week-over-week comparison. Say **why** actuals landed where they did (merchants, categories, timing) using the data. If the insight text *also* mentions a prior period, treat that as extra color, not a redefinition of the type label. If the provided transactions and insight are enough to justify a concise answer, produce that answer in the tool outcome or return it as the `execute_plan` output string without calling the tool. If information is insufficient or ambiguous, call the lookup tool once with a **specific** question (merchants, categories, date window, or accounts) before concluding.
+Explain **what changed** vs the **benchmark implied by the insight**—for types ending in `_vs_forecast`, that benchmark is the **forecast / plan**, not an automatic month-over-month or week-over-week comparison. Say **why** actuals landed where they did (merchants, categories, timing) using the data. If the insight text *also* mentions a prior period, treat that as extra color, not a redefinition of the type label. If the provided transactions and insight are enough to justify a concise answer, **do not** call `lookup_transactions` or `rationalize`; **`return True, "<concise dashboard explanation>"`** directly from `execute_plan`. If you **do** call `lookup_transactions`, then **`return rationalize(USER_MESSAGE, lookup_info)`** with `lookup_info` set to that call’s return value—**call `rationalize` only after a lookup**, never when you skipped lookup.
 
-**Reconciliation rule:** The Task Description already requires reconciling insight amounts with excerpts when possible. If the insight names a category/roll-up whose **stated spend still cannot be explained** from the visible bullets after that attempt, call lookup before a final answer—not a guess from missing data.
+**Both-period check before lookup:** Always weigh the **previous-period** excerpt together with the recent one. Natural-language insight labels (e.g. “Travel,” “Entertainment”) align loosely with official slugs (`travel_flights`, `travel_lodging`, `entertainment_*`, etc.). If **high-ticket travel, lodging, flights, or events in the prior period** contrast with a **lighter** recent period in a way that already explains leisure/travel vs forecast, **skip** `lookup_transactions` and **`return True, "<explanation>"`** without calling `rationalize`—**do not** call lookup only because insight dollar totals exceed the sum of visible recent bullets or because `+K transactions` hides detail.
+
+**Reconciliation rule:** Reconcile insight amounts with excerpts when you can, using **both** periods. Use `lookup_transactions` (official `in_category` slugs only) only when, after that, the insight’s **stated category or roll-up spend is still implausible or unexplained** relative to what the excerpts imply—not merely because every dollar in the insight must foot to listed lines.
 
 ## Inputs you receive
 1. **Task Description** — Fixed template chosen in code from `insight_type` only (`RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE` / `rationalize_task_description_for_insight_type`); no LLM, no other inputs.
 2. **Insight** — Natural-language summary of the shift (e.g. category totals vs forecast).
-3. **Insight type** — Structured label; values like `month_spend_vs_forecast` / `week_spend_vs_forecast` mean **actual spend in that window vs forecast**, not “vs the previous month/week” unless the insight wording explicitly says so.
-4. **Top transactions in recent period** — One bullet per line: `- On 2025-10-25, $25.00 Whole Foods (meals_groceries).` Lists are **ordered by amount descending, then by date descending** (largest spend first; same amount → more recent date first). The list is a **global** top-N by amount, not per category—heavy category spend can be missing if it is split across many charges each smaller than the Nth-largest transaction.
-5. **Top transactions in previous period** — Same bullet format and **same sort order** (amount ↓, then date ↓); **supplementary context** (e.g. habitual mix), not the forecast benchmark for `*_vs_forecast` types.
+3. **Insight Type** — Structured label; values like `month_spend_vs_forecast` / `week_spend_vs_forecast` mean **actual spend in that window vs forecast**, not “vs the previous month/week” unless the insight wording explicitly says so.
+4. **Top Transactions — recent insight period (date range)** — The header includes the range in parentheses. One bullet per line: `- On 2025-10-25, $25.00 Whole Foods (meals_groceries).` Lists are **ordered by amount descending, then by date descending** (largest spend first; same amount → more recent date first). The list is a **global** top-N by amount, not per category—heavy category spend can be missing if it is split across many charges each smaller than the Nth-largest transaction. When the period has **more than N** charges, the excerpt may end with a line `+K transactions` meaning **K additional** rows in that window are omitted (not shown as bullets).
+5. **Top Transactions — previous period (date range)** — Same bullet format, **same sort order** (amount ↓, then date ↓), and the same optional `+K transactions` tail when applicable; **supplementary context** (e.g. habitual mix), not the forecast benchmark for `*_vs_forecast` types.
 6. **Previous Outcomes** (optional) — Numbered outcomes from earlier turns; do not repeat failed patterns; use them to decide the next lookup or final answer.
-7. **Most Recent Attempt Result** (optional) — Same as the strategist loop: the latest tool or execution result from the prior attempt.
-8. **Outcome & What to do Next** (optional) — Guidance for this turn. Honor it when it conflicts with repeating a useless step.
 
-## Tool available (only this one)
-- `lookup_user_accounts_transactions_income_and_spending_patterns(lookup_request: str, input_info: str = None) -> tuple[bool, str]`
+## Official categories (for `lookup_transactions(..., in_category=[...])`)
 
-Use it to fetch missing context (e.g. full category history, merchant drill-down, income vs spending split). Do not invent transactions or amounts.
+<OFFICIAL_CATEGORIES>
+income: income_salary, income_sidegig, income_business, income_interest
+meals: meals_groceries, meals_dining_out, meals_delivered_food
+leisure: leisure_entertainment, leisure_travel
+bills: bills_connectivity, bills_insurance, bills_tax, bills_service_fees
+shelter: shelter_home, shelter_utilities, shelter_upkeep
+education: education_kids_activities, education_tuition
+shopping: shopping_clothing, shopping_gadgets, shopping_kids, shopping_pets
+transportation: transportation_public, transportation_car
+health: health_medical_pharmacy, health_gym_wellness, health_personal_care
+donations_gifts, uncategorized, transfers, miscellaneous
+</OFFICIAL_CATEGORIES>
+
+## Tools available
+- `lookup_transactions(start: date, end: date, name_contains: str = "", amount_larger_than: int | None = None, amount_less_than: int | None = None, in_category: list[str] | None = None) -> str`  
+  Returns host text (not model-written): one opening sentence with the **date range** in prose and **only** non-default filters (`name_contains`, amount bounds, `in_category` when set). Then a blank line, `Transactions:`, a blank line, then `- On …` lines (if any), optional `+N more`, and optional `Total: $…`. If nothing matched, say so under `Transactions:` (e.g. no rows). Use `datetime.date` for `start`/`end`. Bounds are inclusive. Only official slugs in `in_category`.
+- `rationalize(input_info: str, lookup_info: str) -> tuple[bool, str]`  
+  **Only call after `lookup_transactions`.** Pass **`USER_MESSAGE`** as `input_info` (injected `str`; never paste the prompt into code). Pass **`lookup_info`** as the **exact** string returned from the preceding `lookup_transactions` call.
+
+Do not invent transactions or amounts.
 
 ## Output
 Output **Python only** in a single ```python``` block that defines:
@@ -46,15 +65,31 @@ def execute_plan() -> tuple[bool, str]:
     return success, output
 ```
 
-- `output` should be a clear, user-facing rationalization (what changed + likely cause), or the lookup result if the step is to gather data for a follow-up turn.
-- **CRITICAL**: Call tools by bare name (no module prefix).
-- Prefer a **compact** `execute_plan` (target ≤ ~15 lines): one lookup when needed, otherwise return `(True, "<explanation>")` directly.
+- **`execute_plan` return:** `(True, user_facing_string)` for success. If you **did not** call `lookup_transactions`, **`return True, "<explanation>"`** and **do not** call `rationalize`. If you **did** call `lookup_transactions`, **`return rationalize(USER_MESSAGE, lookup_info)`** with `lookup_info` from that call.
+- **CRITICAL**: Call tools by bare name (no module prefix). **`USER_MESSAGE`** is injected—never paste the full user text into code as a string literal.
+- Prefer a **compact** `execute_plan` (target ≤ ~20 lines): either direct `return True, "…"` or `lookup_transactions` then `return rationalize(USER_MESSAGE, lookup_info)`.
 - Avoid comments inside the generated code unless necessary.
 """
 
+# Second-stage merge: after `lookup_transactions`, model emits `execute_plan` (Python); host injects USER_MESSAGE + LOOKUP_INFO.
+RATIONALIZE_MERGE_SYSTEM_PROMPT = """You are RationalizeMerge. The user message includes (1) the full user turn and (2) supplemental text from `lookup_transactions`.
+
+Output **Python only** in a single ```python``` block that defines:
+
+```python
+def execute_plan() -> tuple[bool, str]:
+    ...
+    return success, output
+```
+
+- `output` is the concise dashboard-facing rationalization: a normal string (plain language inside the quotes), not code fences.
+- When `execute_plan` runs, the host defines **`USER_MESSAGE`** (full user turn) and **`LOOKUP_INFO`** (lookup text) as `str`. Use those names; **do not** paste the full user text into the source as a multi-line string literal.
+- Ground claims only in `USER_MESSAGE` and `LOOKUP_INFO`. Do not invent merchants, amounts, or dates.
+- Keep `execute_plan` compact (target ≤ ~20 lines). No tools—prose only in the return value."""
+
 
 class StrategizerOptimizer:
-  """Gemini API wrapper for the RationalizeChange agent (execute_plan + lookup tool)."""
+  """Gemini API wrapper for the RationalizeChange agent (execute_plan; optional lookup_transactions + rationalize)."""
 
   def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=700, max_output_tokens=700):
     api_key = os.getenv('GEMINI_API_KEY')
@@ -83,10 +118,12 @@ class StrategizerOptimizer:
     insight_type: str,
     top_transactions_recent_period: str,
     top_transactions_previous_period: str,
+    recent_insight_date_range: str = "—",
+    previous_insight_date_range: str = "—",
     previous_outcomes: dict[int | str, str] | list[str] | str | None = None,
-    latest_result_summary: str | None = None,
-    latest_outcome_reflection: str | None = None,
     prompt_override: str | None = None,
+    system_prompt_override: str | None = None,
+    print_thought_summary: bool = True,
   ) -> str:
     if prompt_override is not None:
       body = prompt_override
@@ -97,20 +134,24 @@ class StrategizerOptimizer:
         insight_type,
         top_transactions_recent_period,
         top_transactions_previous_period,
+        recent_insight_date_range=recent_insight_date_range,
+        previous_insight_date_range=previous_insight_date_range,
         previous_outcomes=previous_outcomes,
-        latest_result_summary=latest_result_summary,
-        latest_outcome_reflection=latest_outcome_reflection,
       )
     request_text = types.Part.from_text(text=body)
 
     contents = [types.Content(role="user", parts=[request_text])]
+
+    system_instruction_text = (
+      system_prompt_override if system_prompt_override is not None else self.system_prompt
+    )
 
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
-      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      system_instruction=[types.Part.from_text(text=system_instruction_text)],
       thinking_config=types.ThinkingConfig(
         thinking_budget=self.thinking_budget,
         include_thoughts=True,
@@ -142,7 +183,7 @@ class StrategizerOptimizer:
         sys.exit(1)
       raise
 
-    if thought_summary:
+    if thought_summary and print_thought_summary:
       print("\n## Thought Summary\n")
       print(thought_summary.strip() + "\n")
 
@@ -160,23 +201,77 @@ def extract_python_code(text: str) -> str:
   return text.strip()
 
 
+def generate_rationalization_text(
+  input_info: str,
+  lookup_info: str,
+  *,
+  model_name: str | None = None,
+  thinking_budget: int | None = None,
+  max_output_tokens: int | None = None,
+) -> tuple[bool, str]:
+  """Run RationalizeMerge: Gemini emits ``execute_plan`` in a Python block; host runs it with ``USER_MESSAGE`` and ``LOOKUP_INFO``."""
+  body = f"""# Context (user message)
+
+{input_info}
+
+# Supplemental lookup (from lookup_transactions)
+
+{lookup_info}
+
+Produce a single ```python``` block defining `execute_plan() -> tuple[bool, str]`. At execution time the host sets `USER_MESSAGE` and `LOOKUP_INFO` to the two sections above—reference them inside `execute_plan`, do not embed the full context as a source literal."""
+  opt_kw: dict = {}
+  if model_name is not None:
+    opt_kw["model_name"] = model_name
+  if thinking_budget is not None:
+    opt_kw["thinking_budget"] = thinking_budget
+  if max_output_tokens is not None:
+    opt_kw["max_output_tokens"] = max_output_tokens
+  optimizer = StrategizerOptimizer(**opt_kw)
+  llm_out = optimizer.generate_response(
+    "",
+    "",
+    "",
+    "",
+    "",
+    prompt_override=body,
+    system_prompt_override=RATIONALIZE_MERGE_SYSTEM_PROMPT,
+    print_thought_summary=False,
+  )
+  code = extract_python_code(llm_out)
+  if not code or "execute_plan" not in code:
+    raise ValueError("RationalizeMerge output must include a ```python``` block defining execute_plan.")
+  namespace: dict = {"USER_MESSAGE": input_info, "LOOKUP_INFO": lookup_info}
+  exec(code, namespace)
+  if "execute_plan" not in namespace or not callable(namespace["execute_plan"]):
+    raise ValueError("RationalizeMerge code must define a callable execute_plan.")
+  result = namespace["execute_plan"]()
+  if not isinstance(result, tuple) or len(result) != 2:
+    raise ValueError("execute_plan must return tuple[bool, str].")
+  success, out = result[0], result[1]
+  if not isinstance(success, bool) or not isinstance(out, str):
+    raise ValueError("execute_plan must return tuple[bool, str].")
+  return success, out
+
+
 # Task Description is chosen only from `insight_type` (host code or tests). Same string for every row with that type.
 RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE = {
   "month_spend_vs_forecast": (
     "Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible "
     "drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period "
     "transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise "
-    "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; if a "
-    "named category or roll-up is missing from the excerpts or the numbers do not line up, call lookup once with a narrow "
-    "request, then give the final explanation."
+    "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when "
+    "they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, "
+    "in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return "
+    "True and a concise explanation string directly—do not call rationalize."
   ),
   "week_spend_vs_forecast": (
     "Explain **week-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible "
     "drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period "
     "transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise "
-    "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; if a "
-    "named category or roll-up is missing from the excerpts or the numbers do not line up, call lookup once with a narrow "
-    "request, then give the final explanation."
+    "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when "
+    "they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, "
+    "in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return "
+    "True and a concise explanation string directly—do not call rationalize."
   ),
 }
 
@@ -221,9 +316,9 @@ def _format_rationalize_change_prompt(
   top_transactions_recent_period: str,
   top_transactions_previous_period: str,
   *,
+  recent_insight_date_range: str = "—",
+  previous_insight_date_range: str = "—",
   previous_outcomes: dict[int | str, str] | list[str] | str | None = None,
-  latest_result_summary: str | None = None,
-  latest_outcome_reflection: str | None = None,
 ) -> str:
   previous_outcomes_block = _format_previous_outcomes(previous_outcomes)
   body = f"""# Task Description
@@ -234,19 +329,15 @@ def _format_rationalize_change_prompt(
 
 {insight}
 
-# Insight type
+# Insight Type
 
 `{insight_type}`
 
-# Top transactions — recent period
-
-Sort: amount descending, then date descending.
+# Top Transactions — recent insight period ({recent_insight_date_range})
 
 {top_transactions_recent_period}
 
-# Top transactions — previous period
-
-Sort: amount descending, then date descending.
+# Top Transactions — previous period ({previous_insight_date_range})
 
 {top_transactions_previous_period}"""
   if previous_outcomes_block.strip():
@@ -255,138 +346,34 @@ Sort: amount descending, then date descending.
 ## Previous Outcomes
 
 {previous_outcomes_block}"""
-  if latest_result_summary is not None or latest_outcome_reflection is not None:
-    lrs = latest_result_summary if latest_result_summary is not None else ""
-    lor = latest_outcome_reflection if latest_outcome_reflection is not None else ""
-    body += f"""
-
-## Most Recent Attempt Result
-
-{lrs}
-
-## Outcome & What to do Next
-
-{lor}"""
   return body
 
 
-def _run_test_with_logging(
-  task_description: str,
-  insight: str,
-  insight_type: str,
-  top_transactions_recent_period: str,
-  top_transactions_previous_period: str,
-  optimizer: StrategizerOptimizer | None = None,
-  mock_execution_result: str | None = None,
-  output: str | None = None,
-  previous_outcomes: dict[int | str, str] | list[str] | str | None = None,
-  latest_result_summary: str | None = None,
-  latest_outcome_reflection: str | None = None,
-  prompt_override: str | None = None,
-):
-  if optimizer is None:
-    optimizer = StrategizerOptimizer()
-  mock_output = mock_execution_result
-  execution_result = None
+TEST_CASES = [
+  {
+    "batch": 1,
+    "name": "rationalize_leisure_down_sufficient_context",
+    "mock_lookup_transactions": """From 2026-03-01 through 2026-03-31, with categories leisure_entertainment and leisure_travel.
 
-  if prompt_override is not None:
-    llm_input_display = prompt_override
-  else:
-    llm_input_display = _format_rationalize_change_prompt(
-      task_description,
-      insight,
-      insight_type,
-      top_transactions_recent_period,
-      top_transactions_previous_period,
-      previous_outcomes=previous_outcomes,
-      latest_result_summary=latest_result_summary,
-      latest_outcome_reflection=latest_outcome_reflection,
-    )
+Transactions:
 
-  print("## LLM Input\n")
-  print(llm_input_display)
-  print()
+No matching transactions.
+""",
+    "input": """# Task Description
 
-  llm_out = optimizer.generate_response(
-    task_description,
-    insight,
-    insight_type,
-    top_transactions_recent_period,
-    top_transactions_previous_period,
-    previous_outcomes=previous_outcomes,
-    latest_result_summary=latest_result_summary,
-    latest_outcome_reflection=latest_outcome_reflection,
-    prompt_override=prompt_override,
-  )
+Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
 
-  print("## LLM Output:\n")
-  print(llm_out)
-  print()
+# Insight
 
-  code = extract_python_code(llm_out)
+Entertainment is significantly below forecast this month at $309. Travel & Vacations is significantly below forecast at $47. Leisure is thus significantly below forecast this month at $356. The prior month’s excerpt shows much larger lodging, flights, and events than March’s top lines do for travel and entertainment.
 
-  if code:
-    try:
-      def wrapped_lookup(*args, **kwargs):
-        if mock_output is not None:
-          return True, mock_output
-        return lookup_user_accounts_transactions_income_and_spending_patterns(*args, **kwargs)
+# Insight Type
 
-      namespace = {
-        "lookup_user_accounts_transactions_income_and_spending_patterns": wrapped_lookup,
-      }
+`month_spend_vs_forecast`
 
-      exec(code, namespace)
+# Top Transactions — recent insight period (2026-03-01 to 2026-03-31)
 
-      if "execute_plan" in namespace:
-        execution_result = namespace["execute_plan"]()
-        print("\n## Execution Final Result:\n")
-        print("```")
-        print(f"  success: {execution_result[0]}")
-        print(f"  output: {execution_result[1]}")
-        print("```")
-      else:
-        print("Warning: execute_plan() function not found in generated code")
-    except Exception as e:
-      print(f"Error executing generated code: {str(e)}")
-      import traceback
-      print(traceback.format_exc())
-
-  if output:
-    print(f"\n## Output:\n\n{output}\n")
-
-  return execution_result
-
-
-MOCK_LOOKUP_SHOPPING_RECONCILE = """--- Shopping category — current month detail (lookup; forecast reconciliation) ---
-Twenty shopping_* charges at $46.00 each (total $920); each is below the global top-10 floor ($48.00) so none appear in the excerpt. Sort: amount desc, date desc.
-- On 2026-03-30, $46.00 Amazon (shopping_online).
-- On 2026-03-29, $46.00 Target (shopping_general).
-- On 2026-03-28, $46.00 Best Buy (shopping_electronics).
-- On 2026-03-27, $46.00 Costco (shopping_warehouse).
-- On 2026-03-26, $46.00 Walmart (shopping_general).
-- On 2026-03-25, $46.00 Etsy (shopping_online).
-- On 2026-03-24, $46.00 Apple Store (shopping_electronics).
-- On 2026-03-23, $46.00 Nordstrom (shopping_clothing).
-- On 2026-03-22, $46.00 Home Depot (shopping_home).
-- On 2026-03-21, $46.00 Kohl's (shopping_general).
-- On 2026-03-20, $46.00 Amazon (shopping_online).
-- On 2026-03-19, $46.00 Target (shopping_general).
-- On 2026-03-18, $46.00 Best Buy (shopping_electronics).
-- On 2026-03-17, $46.00 Costco (shopping_warehouse).
-- On 2026-03-16, $46.00 Walmart (shopping_general).
-- On 2026-03-15, $46.00 Etsy (shopping_online).
-- On 2026-03-14, $46.00 Apple Store (shopping_electronics).
-- On 2026-03-13, $46.00 Nordstrom (shopping_clothing).
-- On 2026-03-12, $46.00 Home Depot (shopping_home).
-- On 2026-03-11, $46.00 Kohl's (shopping_general).
-Category subtotal (current month shopping_*): $920. Monthly shopping forecast ~$200.
-"""
-
-
-def _sample_recent_txns_leisure_down():
-  """Top-style list: amount descending, then date descending."""
-  return """- On 2026-03-30, $142.10 Whole Foods (meals_groceries).
+- On 2026-03-30, $142.10 Whole Foods (meals_groceries).
 - On 2026-03-25, $62.00 Shell Gas (transportation_gas).
 - On 2026-03-08, $58.00 Thai Garden (meals_dining_out).
 - On 2026-03-28, $48.00 AMC Theaters (entertainment_movies).
@@ -395,12 +382,12 @@ def _sample_recent_txns_leisure_down():
 - On 2026-03-05, $19.20 CVS (health_pharmacy).
 - On 2026-03-02, $15.99 Netflix (entertainment_streaming).
 - On 2026-03-15, $10.99 Spotify (entertainment_streaming).
-- On 2026-03-22, $0.00 Delta Air (travel_flights)."""
+- On 2026-03-22, $0.00 Delta Air (travel_flights).
++38 transactions
 
+# Top Transactions — previous period (2026-02-01 to 2026-02-28)
 
-def _sample_prev_txns_leisure_down():
-  """Top-style list: amount descending, then date descending."""
-  return """- On 2026-02-12, $890.00 Marriott (travel_lodging).
+- On 2026-02-12, $890.00 Marriott (travel_lodging).
 - On 2026-02-22, $412.00 Delta Air (travel_flights).
 - On 2026-02-28, $220.00 StubHub (entertainment_events).
 - On 2026-02-03, $180.00 Concert Hall (entertainment_events).
@@ -409,12 +396,47 @@ def _sample_prev_txns_leisure_down():
 - On 2026-02-05, $55.00 Shell Gas (transportation_gas).
 - On 2026-02-10, $31.00 Uber (transportation_rideshare).
 - On 2026-02-08, $15.99 Netflix (entertainment_streaming).
-- On 2026-02-01, $10.99 Spotify (entertainment_streaming)."""
+- On 2026-02-01, $10.99 Spotify (entertainment_streaming).
++31 transactions
 
+""",
+    "output": "Expected: execute_plan returns (True, explanation) without lookup—large travel/event lines in the previous-period list explain leisure below forecast vs lighter entertainment/travel in the recent list.",
+  },
+  {
+    "batch": 1,
+    "name": "rationalize_shopping_up_requires_lookup",
+    "mock_lookup_transactions": """From 2026-03-01 through 2026-03-31, with categories shopping_clothing, shopping_gadgets, shopping_kids, and shopping_pets.
 
-def _sample_recent_txns_shopping_mismatch():
-  """Top-10 by amount (global); no shopping_* lines because shopping is many $46 txs below $48 floor. Amount desc, date desc."""
-  return """- On 2026-03-28, $118.40 Whole Foods (meals_groceries).
+Transactions:
+
+- On 2026-03-30, $46.00 Amazon (shopping_clothing).
+- On 2026-03-29, $46.00 Target (shopping_gadgets).
+- On 2026-03-28, $46.00 Best Buy (shopping_kids).
+- On 2026-03-27, $46.00 Costco (shopping_pets).
+- On 2026-03-26, $46.00 Walmart (shopping_clothing).
+- On 2026-03-25, $46.00 Etsy (shopping_gadgets).
+- On 2026-03-24, $46.00 Apple Store (shopping_kids).
+- On 2026-03-23, $46.00 Nordstrom (shopping_pets).
+- On 2026-03-22, $46.00 Home Depot (shopping_clothing).
+- On 2026-03-21, $46.00 Kohl's (shopping_gadgets).
++10 more
+Total: $920
+""",
+    "input": """# Task Description
+
+Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+
+# Insight
+
+Shopping is significantly above forecast this month at $920 vs ~$200 expected for shopping.
+
+# Insight Type
+
+`month_spend_vs_forecast`
+
+# Top Transactions — recent insight period (2026-03-01 to 2026-03-31)
+
+- On 2026-03-28, $118.40 Whole Foods (meals_groceries).
 - On 2026-03-20, $67.10 Trader Joe's (meals_groceries).
 - On 2026-03-25, $62.00 Peak Fitness (health_gym).
 - On 2026-03-23, $58.00 Smile Dental (health_dental).
@@ -423,12 +445,12 @@ def _sample_recent_txns_shopping_mismatch():
 - On 2026-03-17, $53.00 Downtown Dry Clean (services_laundry).
 - On 2026-03-14, $52.00 Ace Hardware (home_improvement).
 - On 2026-03-11, $51.00 Campus Books (education_books).
-- On 2026-03-12, $48.00 Thai Garden (meals_dining_out)."""
+- On 2026-03-12, $48.00 Thai Garden (meals_dining_out).
++54 transactions
 
+# Top Transactions — previous period (2026-02-01 to 2026-02-28)
 
-def _sample_prev_txns_shopping_mismatch():
-  """Amount desc, then date desc."""
-  return """- On 2026-02-25, $105.00 Whole Foods (meals_groceries).
+- On 2026-02-25, $105.00 Whole Foods (meals_groceries).
 - On 2026-02-14, $72.00 Trader Joe's (meals_groceries).
 - On 2026-02-05, $44.00 Thai Garden (meals_dining_out).
 - On 2026-02-08, $40.00 City Parking (transportation_parking).
@@ -437,157 +459,228 @@ def _sample_prev_txns_shopping_mismatch():
 - On 2026-02-20, $21.00 CVS (health_pharmacy).
 - On 2026-02-02, $19.00 Walgreens (health_pharmacy).
 - On 2026-02-22, $18.50 Starbucks (meals_coffee).
-- On 2026-02-10, $15.99 Netflix (entertainment_streaming)."""
+- On 2026-02-10, $15.99 Netflix (entertainment_streaming).
++42 transactions
 
-
-TEST_CASES = [
-  {
-    "batch": 1,
-    "name": "rationalize_leisure_down_sufficient_context",
-    "insight_type": "month_spend_vs_forecast",
-    "task_description": (
-      "Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible "
-      "drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period "
-      "transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise "
-      "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; if a "
-      "named category or roll-up is missing from the excerpts or the numbers do not line up, call lookup once with a narrow "
-      "request, then give the final explanation."
-    ),
-    "insight": (
-      "Entertainment is significantly below forecast this month at $309. Travel & Vacations is significantly below forecast at $47. "
-      "Leisure is thus significantly below forecast this month at $356."
-    ),
-    "top_transactions_recent_period": _sample_recent_txns_leisure_down(),
-    "top_transactions_previous_period": _sample_prev_txns_leisure_down(),
-    "output": "Expected: execute_plan returns (True, explanation) without lookup—large travel/event lines in the previous-period list explain leisure below forecast vs lighter entertainment/travel in the recent list.",
-    "mock_execution_result": None,
-  },
-  {
-    "batch": 1,
-    "name": "rationalize_shopping_up_requires_lookup",
-    "insight_type": "month_spend_vs_forecast",
-    "task_description": (
-      "Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible "
-      "drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period "
-      "transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise "
-      "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; if a "
-      "named category or roll-up is missing from the excerpts or the numbers do not line up, call lookup once with a narrow "
-      "request, then give the final explanation."
-    ),
-    "insight": "Shopping is significantly above forecast this month at $920 vs ~$200 expected for shopping.",
-    "top_transactions_recent_period": _sample_recent_txns_shopping_mismatch(),
-    "top_transactions_previous_period": _sample_prev_txns_shopping_mismatch(),
+""",
     "output": (
-      "Expected: execute_plan calls lookup once; output reflects many sub-floor $46 shopping_* charges totaling $920 (consistent with $48.00 10th-place global top txn)."
+      "Expected: execute_plan calls lookup once; output reflects many sub-floor $46 official shopping charges totaling $920 (consistent with $48.00 10th-place global top txn)."
     ),
-    "mock_execution_result": MOCK_LOOKUP_SHOPPING_RECONCILE,
   },
   {
     "batch": 1,
     "name": "rationalize_week_spend_followup_turn",
-    "insight_type": "week_spend_vs_forecast",
-    "task_description": (
-      "Explain **week-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible "
-      "drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period "
-      "transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise "
-      "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; if a "
-      "named category or roll-up is missing from the excerpts or the numbers do not line up, call lookup once with a narrow "
-      "request, then give the final explanation."
-    ),
-    "insight": "Dining out is significantly above your weekly forecast at about $180 vs ~$45 planned.",
-    "top_transactions_recent_period": """- On 2026-03-27, $95.00 Whole Foods (meals_groceries).
+    "mock_lookup_transactions": """From 2026-03-25 through 2026-03-31, with category meals_dining_out.
+
+Transactions:
+
+No matching transactions.
+""",
+    "input": """# Task Description
+
+Explain **week-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+
+# Insight
+
+Dining out is significantly above your weekly forecast at about $180 vs ~$45 planned. Prior turn: lookup_transactions returned no extra rows for the same 7-day window; answer from the top transactions below only—do not repeat that lookup.
+
+# Insight Type
+
+`week_spend_vs_forecast`
+
+# Top Transactions — recent insight period (2026-03-25 to 2026-03-31)
+
+- On 2026-03-27, $95.00 Whole Foods (meals_groceries).
 - On 2026-03-31, $62.00 Olive Garden (meals_dining_out).
 - On 2026-03-29, $44.00 DoorDash (meals_dining_out).
 - On 2026-03-30, $18.50 Chipotle (meals_dining_out).
-- On 2026-03-28, $12.00 Starbucks (meals_coffee).""",
-    "top_transactions_previous_period": """- On 2026-03-21, $72.00 Trader Joe's (meals_groceries).
+- On 2026-03-28, $12.00 Starbucks (meals_coffee).
++11 transactions
+
+# Top Transactions — previous period (2026-03-18 to 2026-03-24)
+
+- On 2026-03-21, $72.00 Trader Joe's (meals_groceries).
 - On 2026-03-20, $22.00 CVS (health_pharmacy).
 - On 2026-03-24, $14.00 Chipotle (meals_dining_out).
 - On 2026-03-22, $8.00 Starbucks (meals_coffee).
-- On 2026-03-23, $0.00 Home cooking transfer (internal).""",
-    "previous_outcomes": {
-      1: "Lookup returned no extra rows; prior attempt asked for duplicate week window.",
-    },
-    "latest_result_summary": "lookup_user_accounts_transactions_income_and_spending_patterns returned empty supplemental list for the same 7-day window.",
-    "latest_outcome_reflection": "Answer from provided top transactions only; do not repeat the same lookup request.",
+- On 2026-03-23, $0.00 Home cooking transfer (internal).
++14 transactions
+
+""",
     "output": "Expected: direct rationalization vs weekly dining forecast using top transactions (more dining lines and higher tickets), no redundant lookup.",
-    "mock_execution_result": None,
+  },
+  {
+    "batch": 2,
+    "name": "rationalize_salary_income_down_sufficient_context",
+    "mock_lookup_transactions": """From 2026-03-01 through 2026-03-31, with categories income_salary, income_sidegig, income_business, income_interest.
+
+Transactions:
+
+No matching transactions.
+""",
+    "input": """# Task Description
+
+Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+
+# Insight
+
+Salary is significantly down this month at $1481.  Income is thus down this month to $1481. February’s excerpt shows two full payroll deposits versus a single March deposit in the top lines.
+
+# Insight Type
+
+`month_spend_vs_forecast`
+
+# Top Transactions — recent insight period (2026-03-01 to 2026-03-31)
+
+- On 2026-03-14, $1481.00 Acme Corp Payroll (income_salary).
+- On 2026-03-28, $118.40 Whole Foods (meals_groceries).
+- On 2026-03-20, $67.10 Trader Joe's (meals_groceries).
+- On 2026-03-25, $62.00 Shell Gas (transportation_gas).
+- On 2026-03-08, $58.00 Thai Garden (meals_dining_out).
+- On 2026-03-10, $35.00 City Parking (transportation_parking).
+- On 2026-03-18, $23.50 Uber (transportation_rideshare).
+- On 2026-03-05, $19.20 CVS (health_pharmacy).
+- On 2026-03-02, $15.99 Netflix (entertainment_streaming).
+- On 2026-03-15, $10.99 Spotify (entertainment_streaming).
++33 transactions
+
+# Top Transactions — previous period (2026-02-01 to 2026-02-28)
+
+- On 2026-02-27, $1650.00 Acme Corp Payroll (income_salary).
+- On 2026-02-13, $1650.00 Acme Corp Payroll (income_salary).
+- On 2026-02-12, $890.00 Marriott (travel_lodging).
+- On 2026-02-25, $105.00 Whole Foods (meals_groceries).
+- On 2026-02-14, $72.00 Trader Joe's (meals_groceries).
+- On 2026-02-05, $44.00 Thai Garden (meals_dining_out).
+- On 2026-02-08, $40.00 City Parking (transportation_parking).
+- On 2026-02-26, $38.90 Shell Gas (transportation_gas).
+- On 2026-02-18, $28.00 Uber (transportation_rideshare).
+- On 2026-02-20, $21.00 CVS (health_pharmacy).
++36 transactions
+
+""",
+    "output": (
+      "Expected: execute_plan returns (True, explanation) without lookup—March shows one $1481 salary line matching total income $1481; February shows two larger payroll deposits, explaining income vs prior month and supporting the insight without supplemental income lookup."
+    ),
+  },
+  {
+    "batch": 2,
+    "name": "rationalize_shopping_down_discount_vs_prior_upscale",
+    "mock_lookup_transactions": """From 2026-03-01 through 2026-03-25, with categories shopping_clothing, shopping_gadgets, shopping_kids, shopping_pets.
+
+Transactions:
+
+No matching transactions.
+""",
+    "input": """# Task Description
+
+Explain **month-to-date actual spend vs forecast**: how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+
+# Insight
+
+Clothing is significantly down this month at $124. Kids is significantly down this month at $0. Gadgets is significantly down this month at $0. Shopping is thus significantly down this month to $124.
+
+# Insight Type
+
+`month_spend_vs_forecast`
+
+# Top Transactions — recent insight period (2026-03-01 to 2026-03-25)
+
+- On 2026-03-21, $228.00 Eataly (meals_groceries).
+- On 2026-03-23, $156.00 Shell V-Power (transportation_gas).
+- On 2026-03-11, $132.00 Carbone (meals_dining_out).
+- On 2026-03-08, $52.00 Target (shopping_clothing).
+- On 2026-03-12, $45.00 Kohl's (shopping_clothing).
+- On 2026-03-05, $27.00 TJ Maxx (shopping_clothing).
+- On 2026-03-18, $88.00 Garage Parking (transportation_parking).
+- On 2026-03-14, $54.00 Uber (transportation_rideshare).
+- On 2026-03-03, $42.00 CVS (health_pharmacy).
+- On 2026-03-02, $15.99 Netflix (entertainment_streaming).
++41 transactions
+
+# Top Transactions — previous period (2026-02-01 to 2026-02-25)
+
+- On 2026-02-19, $2199.00 Apple Fifth Avenue (shopping_gadgets).
+- On 2026-02-24, $890.00 Saks Fifth Avenue (shopping_clothing).
+- On 2026-02-11, $625.00 Bonpoint Madison (shopping_kids).
+- On 2026-02-22, $385.00 Whole Foods 365 (meals_groceries).
+- On 2026-02-16, $298.00 Equinox (health_gym).
+- On 2026-02-08, $245.00 Eleven Madison Park (meals_dining_out).
+- On 2026-02-20, $165.00 Hotel Valet (transportation_parking).
+- On 2026-02-04, $112.00 Shell V-Power (transportation_gas).
+- On 2026-02-13, $95.00 Uber Black (transportation_rideshare).
+- On 2026-02-01, $48.00 CVS (health_pharmacy).
++38 transactions
+
+""",
+    "output": (
+      "Expected: execute_plan returns (True, explanation) without lookup—March 1–25 shows only mid-tier clothing (Target/Kohl's/TJ Maxx, $52+$45+$27=$124) and no kids/gadgets lines; prior window shows flagship Apple, Saks, and luxury kids spend plus costly dining and services, supporting shopping down vs a much pricier February mix."
+    ),
   },
 ]
-
-for _tc in TEST_CASES:
-  _tid = _tc["insight_type"]
-  if _tc["task_description"] != RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE[_tid]:
-    raise AssertionError(
-      f"Test {_tc['name']!r}: task_description must equal RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE[{_tid!r}] "
-      "(only insight_type may choose the template)."
-    )
 
 
 def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer | None = None):
   if isinstance(test_name_or_index_or_dict, dict):
-    if "input" in test_name_or_index_or_dict:
-      test_name = test_name_or_index_or_dict.get("name", "custom_test")
-      print(f"\n# Test: **{test_name}**\n")
-      if optimizer is None:
-        optimizer = StrategizerOptimizer()
-      print("## LLM Input\n")
-      print(test_name_or_index_or_dict["input"])
-      print()
-      llm_out = optimizer.generate_response(
-        "",
-        "",
-        "",
-        "",
-        "",
-        prompt_override=test_name_or_index_or_dict["input"],
+    if "input" not in test_name_or_index_or_dict:
+      raise ValueError(
+        "test dict must include 'input' (and typically 'name', 'batch', 'output', 'mock_lookup_transactions')."
       )
-      print("## LLM Output:\n")
-      print(llm_out)
-      print()
-      code = extract_python_code(llm_out)
-      execution_result = None
-      if code:
-        try:
-          def wrapped_lookup(*args, **kwargs):
-            m = test_name_or_index_or_dict.get("mock_execution_result")
-            if m is not None:
-              return True, m
-            return lookup_user_accounts_transactions_income_and_spending_patterns(*args, **kwargs)
+    test_name = test_name_or_index_or_dict.get("name", "custom_test")
+    print(f"\n# Test: **{test_name}**\n")
+    if optimizer is None:
+      optimizer = StrategizerOptimizer()
+    prompt_body = test_name_or_index_or_dict["input"]
+    print("## LLM Input\n")
+    print(prompt_body)
+    print()
+    llm_out = optimizer.generate_response(
+      "",
+      "",
+      "",
+      "",
+      "",
+      prompt_override=prompt_body,
+    )
+    print("## LLM Output:\n")
+    print(llm_out)
+    print()
+    code = extract_python_code(llm_out)
+    execution_result = None
+    if code:
+      try:
+        mock_lookup = test_name_or_index_or_dict.get("mock_lookup_transactions")
 
-          namespace = {"lookup_user_accounts_transactions_income_and_spending_patterns": wrapped_lookup}
-          exec(code, namespace)
-          if "execute_plan" in namespace:
-            execution_result = namespace["execute_plan"]()
-            print("\n## Execution Final Result:\n")
-            print("```")
-            print(f"  success: {execution_result[0]}")
-            print(f"  output: {execution_result[1]}")
-            print("```")
-        except Exception as e:
-          print(f"Error executing generated code: {str(e)}")
-          import traceback
-          print(traceback.format_exc())
-      if test_name_or_index_or_dict.get("output"):
-        print(f"\n## Output:\n\n{test_name_or_index_or_dict['output']}\n")
-      return execution_result
+        def wrapped_lookup_transactions(*args, **kwargs):
+          if mock_lookup is not None:
+            out = mock_lookup
+          else:
+            out = lookup_transactions(*args, **kwargs)
+          print("\n## lookup_transactions returned\n")
+          print(out)
+          print()
+          return out
 
-    if "task_description" in test_name_or_index_or_dict:
-      test_name = test_name_or_index_or_dict.get("name", "custom_test")
-      print(f"\n# Test: **{test_name}**\n")
-      return _run_test_with_logging(
-        test_name_or_index_or_dict["task_description"],
-        test_name_or_index_or_dict.get("insight", ""),
-        test_name_or_index_or_dict.get("insight_type", ""),
-        test_name_or_index_or_dict.get("top_transactions_recent_period", ""),
-        test_name_or_index_or_dict.get("top_transactions_previous_period", ""),
-        optimizer,
-        mock_execution_result=test_name_or_index_or_dict.get("mock_execution_result"),
-        output=test_name_or_index_or_dict.get("output"),
-        previous_outcomes=test_name_or_index_or_dict.get("previous_outcomes"),
-        latest_result_summary=test_name_or_index_or_dict.get("latest_result_summary"),
-        latest_outcome_reflection=test_name_or_index_or_dict.get("latest_outcome_reflection"),
-      )
+        namespace = {
+          "USER_MESSAGE": prompt_body,
+          "lookup_transactions": wrapped_lookup_transactions,
+          "rationalize": rationalize,
+        }
+        exec(code, namespace)
+        if "execute_plan" in namespace:
+          execution_result = namespace["execute_plan"]()
+          print("\n## Execution Final Result:\n")
+          print("```")
+          print(f"  success: {execution_result[0]}")
+          print(f"  output: {execution_result[1]}")
+          print("```")
+      except Exception as e:
+        print(f"Error executing generated code: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+    if test_name_or_index_or_dict.get("output"):
+      print(f"\n## Output:\n\n{test_name_or_index_or_dict['output']}\n")
+    return execution_result
 
   if isinstance(test_name_or_index_or_dict, int):
     tc = TEST_CASES[test_name_or_index_or_dict] if 0 <= test_name_or_index_or_dict < len(TEST_CASES) else None
@@ -595,20 +688,7 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer | None 
     tc = next((t for t in TEST_CASES if t["name"] == test_name_or_index_or_dict), None)
   if not tc:
     return None
-  print(f"\n# Test: **{tc['name']}**\n")
-  return _run_test_with_logging(
-    tc["task_description"],
-    tc["insight"],
-    tc["insight_type"],
-    tc["top_transactions_recent_period"],
-    tc["top_transactions_previous_period"],
-    optimizer,
-    mock_execution_result=tc.get("mock_execution_result"),
-    output=tc.get("output"),
-    previous_outcomes=tc.get("previous_outcomes"),
-    latest_result_summary=tc.get("latest_result_summary"),
-    latest_outcome_reflection=tc.get("latest_outcome_reflection"),
-  )
+  return run_test(tc, optimizer)
 
 
 def run_all_tests_batch(optimizer: StrategizerOptimizer | None = None, batch_num: int = 1):
