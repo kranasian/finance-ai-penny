@@ -107,7 +107,7 @@ class SummarizedNamesRecurringLikelihood:
         self.temperature = 0.2
         self.top_p = 0.95
         self.top_k = 40
-        self.max_output_tokens = 4096
+        self.max_output_tokens = 1024
 
         # Safety Settings
         self.safety_settings = [
@@ -158,13 +158,17 @@ output:""")
             max_output_tokens=self.max_output_tokens,
             safety_settings=self.safety_settings,
             system_instruction=[types.Part.from_text(text=self.system_prompt)],
-            thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=self.thinking_budget,
+                include_thoughts=True,
+            ),
             response_mime_type="application/json",
             response_schema=SCHEMA,
         )
 
-        # Generate response
+        # Generate response using streaming to extract thoughts
         output_text = ""
+        thought_summary = ""
         for chunk in self.client.models.generate_content_stream(
             model=self.model_name,
             contents=contents,
@@ -172,6 +176,24 @@ output:""")
         ):
             if chunk.text is not None:
                 output_text += chunk.text
+
+            if hasattr(chunk, "candidates") and chunk.candidates:
+                for candidate in chunk.candidates:
+                    if hasattr(candidate, "content") and candidate.content:
+                        if hasattr(candidate.content, "parts") and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                if hasattr(part, "thought") and part.thought:
+                                    if hasattr(part, "text") and part.text:
+                                        if thought_summary:
+                                            thought_summary += part.text
+                                        else:
+                                            thought_summary = part.text
+
+        if thought_summary:
+            print(f"{'='*80}")
+            print("THOUGHT SUMMARY:")
+            print(thought_summary.strip())
+            print("="*80)
 
         # Parse JSON response
         try:

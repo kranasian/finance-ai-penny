@@ -16,7 +16,6 @@ SYSTEM_PROMPT = """You are an AI assistant that evaluates the output of a transa
 
 ## Key Definitions
 - **Recurring**: Any transaction that is expected to occur at regular intervals (e.g., monthly, weekly, bi-weekly, annually, quarterly).
-- **Bills**: Any recurring outflow of money (payment). This is a broad definition and not limited to traditional utility bills. For example, a monthly Netflix subscription is a bill.
 - **Side-gig**: Recurring income from freelance work, contract jobs, or other non-employer sources. It is **always an inflow** of money.
 
 ## Input Schema
@@ -27,7 +26,7 @@ SYSTEM_PROMPT = """You are an AI assistant that evaluates the output of a transa
 ## Output Schema
 You must output a single JSON object with the following structure:
 `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
-- `good_copy`: **This is a structural check only.** `true` if `REVIEW_NEEDED` is a valid JSON array and every object within it contains the keys `id`, `is_bills`, `is_salary`, and `is_sidegig`. It does not check if the values are correct.
+- `good_copy`: **This is a structural check only.** `true` if `REVIEW_NEEDED` is a valid JSON array and every object within it contains the keys `id`, `is_salary`, and `is_sidegig`. It does not check if the values are correct.
 - `info_correct`: `true` if all classifications in `REVIEW_NEEDED` adhere to the "Classifier Rules for Verification".
 - `eval_text`: **Required if `good_copy` or `info_correct` is `false`. Only explain mistakes in this field.**
   - **If the output for an ID is correct, do not include it in the `eval_text`.**
@@ -41,23 +40,21 @@ You must output a single JSON object with the following structure:
 ## Classifier Rules for Verification
 
 ### Golden Rules (Highest Priority)
-1.  **One-Time Purchases**: If a transaction is clearly a one-time event (e.g., "Starbucks coffee", "Shopping Mart"), all likelihoods **MUST** be `IMPOSSIBLE`.
+1.  **One-Time Purchases**: If a transaction is clearly a one-time event (e.g., "Starbucks coffee", "Shopping Mart"), both `is_salary` and `is_sidegig` **MUST** be `IMPOSSIBLE`.
 
 ### Categorization Logic
-1.  **Step 1: Determine if Recurring**: First, analyze the transaction's `name` and `description` to see if it's recurring. If not, Golden Rule #2 applies.
+1.  **Step 1: Determine if Recurring**: First, analyze the transaction's `name` and `description` to see if it's recurring. If not, the one-time rule applies: both fields `IMPOSSIBLE`.
 2.  **Step 2: Infer Direction (Inflow/Outflow)**: Determine if the money is coming in (income) or going out (expense).
     - **If the direction is ambiguous**: Assume the transaction type that is more common for the establishment. For example, "Netflix" is typically an outflow (payment), while a transaction from a known payroll company is an inflow.
 3.  **Step 3: Apply Rules (only if recurring)**:
     - **If Outflow (Expense)**:
         - `is_salary` **MUST** be `IMPOSSIBLE`. Salary is always an inflow.
-        - The transaction is likely a bill, so `is_bills` should be `LIKELY` or `UNLIKELY`.
-        - `is_sidegig` **MUST** be `IMPOSSIBLE` as side-gigs are always inflows.
+        - `is_sidegig` **MUST** be `IMPOSSIBLE`; side-gigs are always inflows.
     - **If Inflow (Income)**:
-        - `is_bills` **MUST** be `IMPOSSIBLE`. Bills are always outflows.
-        - It could be a `salary` or `sidegig`.
+        - Classify using `is_salary` and `is_sidegig` (e.g., stable payroll vs variable freelance). At least one may be `LIKELY` or `UNLIKELY` when the income type fits; the other is often `IMPOSSIBLE` or `UNLIKELY` depending on the transaction.
 
 ### Likelihood Flexibility
-- Sometimes, both `LIKELY` and `UNLIKELY` can be acceptable.
+- Sometimes, both `LIKELY` and `UNLIKELY` can be acceptable for a given field.
 - **Only flag an issue if the output is `IMPOSSIBLE` when it should be `LIKELY` or `UNLIKELY`.**
 
 ### Likelihood Definitions
@@ -78,7 +75,7 @@ class CheckSummarizedNamesRecurringLikelihood:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 4096
+    self.thinking_budget = 0
     self.model_name = model_name
     
     # Generation Configuration Constants
@@ -145,11 +142,15 @@ Output:"""
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
     )
 
-    # Generate response
+    # Generate response using streaming to extract thoughts
     output_text = ""
+    thought_summary = ""
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -157,7 +158,25 @@ Output:"""
     ):
       if chunk.text is not None:
         output_text += chunk.text
-    
+
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
+
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("="*80)
+
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
@@ -240,11 +259,11 @@ def run_varied_correct_response_test(checker: CheckSummarizedNamesRecurringLikel
   ]
   
   review_needed = [
-      {"id": 1, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "UNLIKELY"},
-      {"id": 2, "is_bills": "IMPOSSIBLE", "is_salary": "LIKELY", "is_sidegig": "UNLIKELY"},
-      {"id": 3, "is_bills": "IMPOSSIBLE", "is_salary": "UNLIKELY", "is_sidegig": "LIKELY"},
-      {"id": 4, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
-      {"id": 5, "is_bills": "IMPOSSIBLE", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
+      {"id": 1, "is_salary": "IMPOSSIBLE", "is_sidegig": "UNLIKELY"},
+      {"id": 2, "is_salary": "LIKELY", "is_sidegig": "UNLIKELY"},
+      {"id": 3, "is_salary": "UNLIKELY", "is_sidegig": "LIKELY"},
+      {"id": 4, "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
+      {"id": 5, "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
   ]
   
   return run_test_case("varied_correct_response_test", eval_input, review_needed, [], checker)
@@ -260,9 +279,9 @@ def run_partially_correct_recurring_test(checker: CheckSummarizedNamesRecurringL
   ]
   
   review_needed = [
-      {"id": 1, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "LIKELY"},
-      {"id": 2, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
-      {"id": 3, "is_bills": "IMPOSSIBLE", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
+      {"id": 1, "is_salary": "IMPOSSIBLE", "is_sidegig": "LIKELY"},
+      {"id": 2, "is_salary": "LIKELY", "is_sidegig": "IMPOSSIBLE"},
+      {"id": 3, "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
   ]
   
   return run_test_case("partially_correct_recurring_test", eval_input, review_needed, [], checker)
@@ -278,9 +297,9 @@ def run_mixed_correctness_test(checker: CheckSummarizedNamesRecurringLikelihood 
   ]
   
   review_needed = [
-      {"id": 1, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
-      {"id": 2, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
-      {"id": 3, "is_bills": "IMPOSSIBLE", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
+      {"id": 1, "is_salary": "IMPOSSIBLE", "is_sidegig": "UNLIKELY"},
+      {"id": 2, "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
+      {"id": 3, "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
   ]
   
   return run_test_case("mixed_correctness_test", eval_input, review_needed, [], checker)
@@ -295,8 +314,8 @@ def run_multiple_errors_test(checker: CheckSummarizedNamesRecurringLikelihood = 
   ]
   
   review_needed = [
-      {"id": 2, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "UNLIKELY"},
-      {"id": 4, "is_bills": "IMPOSSIBLE", "is_salary": "IMPOSSIBLE", "is_sidegig": "LIKELY"}
+      {"id": 2, "is_salary": "LIKELY", "is_sidegig": "IMPOSSIBLE"},
+      {"id": 4, "is_salary": "IMPOSSIBLE", "is_sidegig": "LIKELY"}
   ]
   
   return run_test_case("multiple_errors_test", eval_input, review_needed, [], checker)
@@ -310,7 +329,7 @@ def run_good_copy_fail_test(checker: CheckSummarizedNamesRecurringLikelihood = N
   ]
   
   review_needed = [
-      {"id": 1, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE"} 
+      {"id": 1, "is_salary": "IMPOSSIBLE"}
   ]
   
   return run_test_case("good_copy_fail_test", eval_input, review_needed, [], checker)
@@ -327,9 +346,9 @@ def run_ambiguous_transactions_test(checker: CheckSummarizedNamesRecurringLikeli
   ]
 
   review_needed = [
-    {"id": 1, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "UNLIKELY"},
-    {"id": 2, "is_bills": "IMPOSSIBLE", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
-    {"id": 3, "is_bills": "LIKELY", "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
+    {"id": 1, "is_salary": "IMPOSSIBLE", "is_sidegig": "UNLIKELY"},
+    {"id": 2, "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"},
+    {"id": 3, "is_salary": "IMPOSSIBLE", "is_sidegig": "IMPOSSIBLE"}
   ]
 
   return run_test_case("ambiguous_transactions_test", eval_input, review_needed, [], checker)
