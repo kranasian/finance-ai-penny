@@ -7,32 +7,14 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SCHEMA = types.Schema(
-    type=types.Type.OBJECT,
-    properties={
-        "is_correct": types.Schema(type=types.Type.BOOLEAN, description="True if all constraints are met, False otherwise"),
-        "reasoning": types.Schema(type=types.Type.STRING, description="Detailed explanation of why the output is correct or incorrect"),
-        "corrections": types.Schema(
-            type=types.Type.ARRAY,
-            items=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "id": types.Schema(type=types.Type.INTEGER),
-                    "field": types.Schema(type=types.Type.STRING),
-                    "suggested_value": types.Schema(type=types.Type.STRING),
-                    "issue": types.Schema(type=types.Type.STRING)
-                }
-            ),
-            description="List of suggested corrections if is_correct is False"
-        )
-    },
-    required=["is_correct", "reasoning"]
-)
-
 SYSTEM_PROMPT = r"""#### 1. Goal
 Evaluate the output of an account name verbalizer against a set of strict constraints and logic rules. Determine if the output is correct and provide detailed reasoning and corrections if necessary.
 
-#### 2. Rules to Check
+#### 2. Core Task
+- Evaluate `VERBALIZER_OUTPUT` against `ORIGINAL_INPUT`.
+- Output a JSON object: `{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`.
+
+#### 3. Rules to Check
 - **purpose_name**: Must be a concise and descriptive deduction of the core purpose (e.g., Checking, Savings, Credit Card, Brokerage, Auto Loan).
 - **crisp_name**: 
   - MUST include the `purpose_name` word for word.
@@ -49,8 +31,16 @@ Evaluate the output of an account name verbalizer against a set of strict constr
   - Original `id` must be maintained.
   - Generic names like "Secure Banking" or "First Banking" should be deduced as "Checking".
 
-#### 3. Output Format
-Return a JSON object with `is_correct`, `reasoning`, and an optional `corrections` array.
+#### 4. Output Schema
+- `good_copy`: `true` if the output follows ALL naming rules. `false` if ANY rule is violated.
+- `info_correct`: `true` if the output name conceptually matches the input account. `false` if wrong bank/account/hallucination.
+- `eval_text`: Required if `good_copy` or `info_correct` is `false`.
+  - **Must be an empty string ("")** if both `good_copy` and `info_correct` are `true`.
+  - **Must be a single string** (use `\n` for newlines).
+  - **Use single quotes** for quoted text inside the string to avoid JSON errors.
+  - Bullet points. Concise.
+  - **Start with the FIX action**.
+  - Format: `- ID <id>: <Action 1>; <Action 2> (Expected: <Final Correct Value>)`
 """
 
 class AccountNameVerbalizerChecker:
@@ -64,6 +54,7 @@ class AccountNameVerbalizerChecker:
         self.client = genai.Client(api_key=api_key)
         
         self.model_name = model_name
+        self.thinking_budget = 0
         self.temperature = 0.0
         self.top_p = 0.95
         self.max_output_tokens = 2048
@@ -76,19 +67,26 @@ class AccountNameVerbalizerChecker:
         ]
         
         self.system_prompt = SYSTEM_PROMPT
-        self.output_schema = SCHEMA
-        self.thinking_budget = 0
 
     def check_output(self, original_input: list, verbalizer_output: list) -> dict:
         """
         Check the verbalizer output against the original input and constraints.
         """
-        combined_input = {
-            "original_input": original_input,
-            "verbalizer_output": verbalizer_output
-        }
-        user_input = json.dumps(combined_input, indent=2)
-        contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_input)])]
+        request_text_str = f"""<ORIGINAL_INPUT>
+
+{json.dumps(original_input, indent=2)}
+
+</ORIGINAL_INPUT>
+
+<VERBALIZER_OUTPUT>
+
+{json.dumps(verbalizer_output, indent=2)}
+
+</VERBALIZER_OUTPUT>
+
+Output:"""
+        
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text=request_text_str)])]
         
         generate_content_config = types.GenerateContentConfig(
             temperature=self.temperature,
@@ -100,8 +98,6 @@ class AccountNameVerbalizerChecker:
                 thinking_budget=self.thinking_budget,
                 include_thoughts=True
             ),
-            response_schema=self.output_schema,
-            response_mime_type="application/json"
         )
 
         # Generate response using streaming to extract thoughts
@@ -139,15 +135,19 @@ class AccountNameVerbalizerChecker:
         if not output_text:
             raise ValueError("Empty response from model.")
             
+        # Parse JSON response
         try:
-            return json.loads(output_text)
-        except json.JSONDecodeError:
-            text = output_text.strip()
-            if text.startswith("```json"):
-                text = text[7:-3].strip()
-            elif text.startswith("```"):
-                text = text[3:-3].strip()
-            return json.loads(text)
+            # Extract JSON object from the response
+            json_start = output_text.find('{')
+            json_end = output_text.rfind('}') + 1
+            
+            if json_start != -1 and json_end > json_start:
+                json_str = output_text[json_start:json_end]
+                return json.loads(json_str)
+            else:
+                return json.loads(output_text.strip())
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse JSON response: {e}\nResponse text: {output_text}")
 
 def test_checker():
     checker = AccountNameVerbalizerChecker()
@@ -155,6 +155,7 @@ def test_checker():
     test_cases = [
         # Case 1: Correct Output
         {
+            "name": "Correct Output",
             "input": [
                 {"id": 9512, "account_name": "Capital One 360 Checking", "bank_name": None, "long_account_name": "Capital One 360 Checking"}
             ],
@@ -164,6 +165,7 @@ def test_checker():
         },
         # Case 2: Incorrect Output (Includes "Account", includes product in bank_added_name)
         {
+            "name": "Forbidden Word & Formatting Error",
             "input": [
                 {"id": 104, "account_name": "Brokerage Account", "bank_name": "Charles Schwab", "long_account_name": "Schwab Individual Brokerage Account"}
             ],
@@ -173,6 +175,7 @@ def test_checker():
         },
         # Case 3: Incorrect Output (Missing purpose_name in crisp_name, starts with bank name)
         {
+            "name": "Missing Purpose in Crisp & Prefix Error",
             "input": [
                 {"id": 103, "account_name": "Chase Secure Banking", "bank_name": "Chase", "long_account_name": "Chase Secure Banking"}
             ],
@@ -183,7 +186,7 @@ def test_checker():
     ]
     
     for i, case in enumerate(test_cases):
-        print(f"\n--- Test Case {i+1} ---")
+        print(f"\n--- Test Case {i+1}: {case['name']} ---")
         try:
             result = checker.check_output(case["input"], case["output"])
             print(json.dumps(result, indent=2))
