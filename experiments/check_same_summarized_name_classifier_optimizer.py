@@ -7,78 +7,107 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a checker verifying the output of a transaction name classifier.
+CONFIG = {
+  "json": True,
+  "sanitize": True,
+  "gen_config": {
+    "top_k": 40,
+    "top_p": 0.95,
+    "temperature": 0.5,
+    "thinking_budget": 1024,
+    "max_output_tokens": 4096,
+  },
+  "model_name": "gemini-flash-lite-latest",
+}
 
-## Input:
-- **EVAL_INPUT**: A JSON array of transaction pairs. Each pair has a `match_id`, `left` transaction set, and `right` transaction set.
-- **PAST_REVIEW_OUTCOMES**: An array of past review outcomes.
-- **REVIEW_NEEDED**: The JSON output from the classifier that needs to be reviewed.
+CHECK_RESPONSE_SCHEMA = types.Schema(
+  type=types.Type.OBJECT,
+  properties={
+    "good_copy": types.Schema(type=types.Type.BOOLEAN),
+    "info_correct": types.Schema(type=types.Type.BOOLEAN),
+    "eval_text": types.Schema(type=types.Type.STRING),
+  },
+  required=["good_copy", "info_correct"],
+)
 
-## Output:
-Return valid JSON only. Put each top-level key on its own line (line break after each of good_copy, info_correct, eval_text). Example format:
-```
-{"good_copy": true,
-"info_correct": true,
-"eval_text": ""}
-```
+SYSTEM_PROMPT = """You are a checker for SameSummarizedNameClassifier outputs (`same` / `different` per pair).
 
-- `good_copy`: True if REVIEW_NEEDED is a valid JSON array with all required fields (`match_id`, `reasoning`, `result`, `confidence`).
-- `info_correct`: True if the **`result`** for each item is correct. **Ignore `reasoning` and `confidence` entirely**—only `result` matters. When the only difference between left and right is location or branch, the correct result is **"same"**; if REVIEW_NEEDED has "same", mark it correct. When the only difference is ".com" for an **online-only** establishment, correct result is **"same"**.
-- `eval_text`: **Empty string when good_copy and info_correct are both True.** eval_text must **explain why REVIEW_NEEDED is incorrect** (e.g. wrong result for a pair). If you agree with REVIEW_NEEDED's result, do not write eval_text—leave it empty. When there are errors: one short phrase per erroneous match_id (max 25 words), separate with newline (`\n`). Do not reference PAST_REVIEW_OUTCOMES.
+## Inputs
+**EVAL_INPUT** (pairs), **PAST_REVIEW_OUTCOMES**, **REVIEW_NEEDED** (classifier JSON array).
 
-## Critical Priority: Learn from PAST_REVIEW_OUTCOMES
-Use PAST_REVIEW_OUTCOMES as a knowledge base. If REVIEW_NEEDED repeats mistakes flagged in past outcomes, mark incorrect. Do not mention past outcomes in `eval_text`.
+## Your JSON
+`{"good_copy": boolean, "info_correct": boolean, "eval_text": string}`
+- **good_copy**: REVIEW_NEEDED is a JSON array, one entry per EVAL_INPUT pair in order, each with `match_id`, `reasoning`, `result`, `confidence` (see Output).
+- **info_correct**: Every `result` matches **Policy** below. Correctness uses `result` only; ignore `reasoning` unless debugging a wrong `result`.
+- **eval_text**: Empty if both true. Else one short line per bad `match_id` (≤25 words, plain English, no rule numbers); use `\\n` between lines; optional `match_id:` prefix. Never cite PAST_REVIEW_OUTCOMES; do not repeat the model’s `result` verbatim.
 
-## Verification Steps
-1. Check PAST_REVIEW_OUTCOMES: if REVIEW_NEEDED repeats past mistakes → mark False.
-2. Verify good_copy: valid JSON and all required fields.
-3. Verify info_correct: align `match_id`s with EVAL_INPUT. For each item, check **only** the `result` field; ignore `reasoning` and `confidence`. Use `raw_names` to correct misprocessed `short_name`s before comparing. **If the only difference between left and right is location or branch, the correct result is "same".** Do not mark "same" wrong for (a) location/branch only, or (b) online-only ".com" vs no ".com".
-4. eval_text: **Only when REVIEW_NEEDED is incorrect.** Explain why the result is wrong (e.g. "Only difference is location; should be same."). If REVIEW_NEEDED is correct, eval_text must be empty.
+## Past reviews
+If REVIEW_NEEDED repeats an error already flagged in PAST_REVIEW_OUTCOMES, mark **info_correct** false. Do not mention past reviews inside **eval_text**.
 
-## Correcting and Comparing Names
-**Before comparing**, mentally correct `short_name`s using `raw_names` and these guidelines:
-- **Location/branch**: Ignore branch number and physical location (e.g. "Jollibee New York" vs "Jollibee San Francisco" → same establishment).
-- **Payment/card noise**: For merchants, ignore bank/card details; for transfers/payments, keep bank/account type and partial numbers (e.g. ***3232).
-- **Unnecessary**: Ignore device types, payment gateways, and **payment processors only** (e.g. TST, Vesta, SUMUP). **Do not** treat BNPL platforms (e.g. Affirm) or transfer types (e.g. ACH) as payment processors—they are not.
-- **Legal/format**: Ignore LLC, Inc., Corp., Ltd, etc., unless part of a compound name (e.g. "X and Y").
+## How to verify
+1. PAST_REVIEW_OUTCOMES check. 2. **good_copy** shape/order. 3. **info_correct**: `raw_names` first, then `description`; then Policy. 4. **eval_text** only if needed.
 
-**Abbreviations**: If one side is an abbreviation or shortened name for the other (e.g. "FedEx" vs "Federal Express"), result is **same**.
+## Policy (ground truth for `result`)
 
-## Result Rules (apply after correcting names)
-1. **Online vs physical**: If a brand has **both** online and physical (e.g. Nike, Apple): one side with ".com" = online, one without (e.g. "Nike Store") = physical → correct result is **"different"**. If REVIEW_NEEDED says "different" for such a pair, that is correct—do not flag it. If a brand is **online-only** (e.g. Netflix, Facebook): ".com" vs no ".com" → correct result is **"same"**. Only the `result` field matters; if it is correct, do not write eval_text.
-2. **Interchangeability**: Corrected left name must describe all right transactions and vice versa; otherwise **"different"**.
-3. **Location/branch only**: If the **only** difference is physical location, city, or branch (e.g. MGM Grand Las Vegas vs MGM Grand Detroit, Jollibee New York vs Jollibee San Francisco) → the correct result is **"same"**. Different locations or branches do **not** make establishments different. If REVIEW_NEEDED has result "same" for such a pair, info_correct is True for that item—do not flag it.
-4. **Sub-brands and specificity**: Sub-brands and departments (e.g. Old Navy Kids vs Old Navy) → **"different"**. A more specific **product or service tier** (e.g. Spotify Silver vs Platinum) → **"different"**. Same brand with only a **store format** or **location** in the name (e.g. Walmart Supercenter vs Walmart, Cleveland Marriott vs Marriott) → **"same"**.
-5. **Marketplaces**: Marketplace transaction ≠ direct → **"different"**.
-6. **Payment processors**: Ignore payment processor names when comparing merchant identity.
-7. **Transfers**: ACH transactions are **"different"** from non-ACH. More specific transfers (e.g. with memo) are **"different"** from general.
-8. **Pending**: Pending transactions are **"different"** from non-pending (posted/settled).
+**Goal:** same **merchant/establishment** and same **kind of charge** (rail/channel/product line).
 
-### What you verify in REVIEW_NEEDED
-- **Only the `result` field** is used to decide correctness. Ignore `reasoning` and `confidence` when judging each item.
-- `result` must be "same" or "different" per the rules above.
+**Read order:** `raw_names` → `description` → `short_name`. If `raw_names` agree on merchant but `short_name` conflicts, trust `raw_names` when interchangeability still holds.
+
+**Always ignore:** city/branch/store/location in the name (e.g. Jollibee Manila = Jollibee San Francisco); legal noise (LLC, Inc.); **payment platform** in front of a merchant (PayPal/Venmo/Apple Pay *Merchant vs Merchant) **unless** it changes transfer/check/ACH **type** below.
+
+**P2P payee names:** Treat **same** if the payee is clearly one person with **minor spelling, initials, or incompleteness** (e.g. “Alex J.” vs “Alexander Jones”). **Different** if memo/purpose differs, **\*tails** differ, beneficiaries differ, or accounts differ.
+
+**ACH:** Any ACH-labeled charge vs a non-ACH card/standard charge to the **same brand name** → **different** (e.g. ACH Amazon ≠ Amazon card). ACH withdrawal vs ACH deposit vs card → treat as **different** kinds where labels differ.
+
+**`different` if any holds**
+- **Different products/plans/tiers** from one company → **different** (Ring Yearly vs Ring Standard vs Ring; diaper SKU vs store brand).
+- Marketplace / delivery wrapper vs direct merchant (DoorDash McDonald’s vs McDonald’s).
+- Inflow vs outflow (e.g. Airbnb income vs payment).
+- **Physical** store identity vs **web** storefront when the business is not online-only (**Adidas** vs **Adidas.com** → different). **Online-only** → **.com** vs bare name → **same** (Netflix.com vs Netflix).
+- **Transfer type words** differ: Bank Transfer ≠ Mobile Payment ≠ Check Payment; retry ≠ standard; **ACH ≠ non-ACH**.
+- Pending vs posted.
+- P2P/B2B: different **\*tails**, beneficiaries, source accounts; **different memo/purpose** on P2P.
+
+**`same` when**
+- Only location/branch/city among outlets of one chain.
+- Merchant via platform vs direct (same merchant); ignore processor-only noise except rail-changing cases above.
+- **One company, abbreviation or carrier/service line** in `raw_names` (e.g. Federal Express vs FEDEX / FEDEX GROUND) → **same** when clearly the same corporate brand, not a separate sub-brand product.
+
+<EXAMPLES>
+Permutations (apply all): Netflix.com|Netflix→same (online-only); Amazon|Amazon.com→same (online carve-out); Adidas|Adidas.com→diff (physical vs web); PAYPAL*Chipotle|Chipotle→same (ignore platform); DOORDASH*Chipotle|Chipotle→diff (marketplace); ACH Amazon|Amazon card→diff (rail); Jollibee MNL|Jollibee SF→same (location); Venmo A.Kim|Venmo Alex Kim→same (P2P name variance); Venmo Alex|Venmo Alex:Rent→diff (memo); Ring Yearly|Ring Standard|Ring→pairwise diff (products); *3232|*4545 P2P→diff (tails); Bank Transfer vs ACH vs Check vs plain Payment→diff (labels).
+</EXAMPLES>
+
+## Output (classifier copy)
+JSON array, input order: `match_id`, short `reasoning`, `result` ∈ {same, different}, `confidence` ∈ {high, medium, low}. Use `high` rarely.
 """
 
 class CheckSameSummarizedNameClassifier:
   """Handles all Gemini API interactions for checking SameSummarizedNameClassifier outputs against rules"""
   
-  def __init__(self, model_name="gemini-flash-lite-latest"):
+  def __init__(self, model_name=None, thinking_budget=None):
     """Initialize the Gemini agent with API configuration for checking SameSummarizedNameClassifier evaluations"""
     # API Configuration
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
       raise ValueError("GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment.")
     self.client = genai.Client(api_key=api_key)
-    
+
+    gc = CONFIG["gen_config"]
+
     # Model Configuration
-    self.model_name = model_name
-    
+    self.model_name = model_name if model_name is not None else CONFIG["model_name"]
+    self.thinking_budget = (
+      thinking_budget if thinking_budget is not None else gc["thinking_budget"]
+    )
+
+    self.response_json = CONFIG["json"]
+    self.sanitize = CONFIG["sanitize"]
+
     # Generation Configuration Constants
-    self.top_k = 40
-    self.top_p = 0.95
-    self.temperature = 0.5
-    self.thinking_budget = 0
-    self.max_output_tokens = 4096
+    self.top_k = gc["top_k"]
+    self.top_p = gc["top_p"]
+    self.temperature = gc["temperature"]
+    self.max_output_tokens = gc["max_output_tokens"]
     
     # Safety Settings
     self.safety_settings = [
@@ -102,7 +131,8 @@ class CheckSameSummarizedNameClassifier:
       review_needed: The SameSummarizedNameClassifier output that needs to be reviewed (JSON array).
       
     Returns:
-      Dictionary with good_copy, info_correct, and eval_text keys
+      Dictionary with good_copy, info_correct, eval_text, and thought_summary (when the API
+      emits thought parts; same streaming extraction pattern as PennyAppUsageInfoOptimizer).
     """
     # Create request text with the new input structure
     request_text_str = f"""<EVAL_INPUT>
@@ -133,18 +163,26 @@ Output:"""
     # Create content and configuration
     contents = [types.Content(role="user", parts=[request_text])]
     
-    generate_content_config = types.GenerateContentConfig(
+    config_kwargs = dict(
       top_k=self.top_k,
       top_p=self.top_p,
       temperature=self.temperature,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
     )
+    if self.response_json:
+      config_kwargs["response_mime_type"] = "application/json"
+      config_kwargs["response_schema"] = CHECK_RESPONSE_SCHEMA
+    generate_content_config = types.GenerateContentConfig(**config_kwargs)
 
-    # Generate response
     output_text = ""
+    thought_summary = ""
+
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -152,7 +190,25 @@ Output:"""
     ):
       if chunk.text is not None:
         output_text += chunk.text
-    
+
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
+
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
+
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
@@ -178,10 +234,11 @@ Output:"""
       
       if json_start != -1 and json_end > json_start:
         json_str = output_text[json_start:json_end]
-        return json.loads(json_str)
+        parsed = json.loads(json_str)
       else:
-        # Try parsing the whole response
-        return json.loads(output_text.strip())
+        parsed = json.loads(output_text.strip())
+      parsed["thought_summary"] = thought_summary.strip()
+      return parsed
     except json.JSONDecodeError as e:
       raise ValueError(f"Failed to parse JSON response: {e}\nResponse length: {len(output_text)}\nResponse preview: {output_text[:500]}")
 
@@ -198,7 +255,7 @@ def run_test_case(test_name: str, eval_input: list, review_needed: list, past_re
     checker: Optional CheckSameSummarizedNameClassifier instance. If None, creates a new one.
     
   Returns:
-    Dictionary with good_copy, info_correct, and eval_text keys, or None if error occurred
+    Dictionary with good_copy, info_correct, eval_text, and thought_summary keys, or None if error occurred
   """
   if past_review_outcomes is None:
     past_review_outcomes = []

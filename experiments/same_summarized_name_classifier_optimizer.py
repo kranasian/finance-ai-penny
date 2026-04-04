@@ -1,5 +1,6 @@
 from google import genai
 from google.genai import types
+import json
 import os
 import sys
 from dotenv import load_dotenv
@@ -10,8 +11,53 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Load environment variables
 load_dotenv()
 
+CONFIG = {
+  "json": True,
+  "sanitize": True,
+  "gen_config": {
+    "top_k": 40,
+    "top_p": 0.95,
+    "temperature": 0.6,
+    "max_output_tokens": 1024,
+    "thinking_budget": 1024,
+    "response_mime_type": "application/json",
+  },
+  "model_name": "gemini-flash-lite-latest",
+  "check_template": "Chk:SameSummarizedNameClassifier",
+  "replacements": None,
+  "output_schema": {
+    "type": 5,
+    "items": {
+      "type": 6,
+      "required": ["match_id", "reasoning", "result", "confidence"],
+      "properties": {
+        "match_id": {
+          "type": 1,
+          "description": "The unique identifier for the establishment pair",
+        },
+        "reasoning": {
+          "type": 1,
+          "description": "Brief explanation of the decision (1-2 sentences)",
+        },
+        "result": {
+          "type": 1,
+          "description": "Whether the names are from the same entity/establishment",
+          "enum": ["same", "different"],
+        },
+        "confidence": {
+          "type": 1,
+          "description": "Confidence level of the result",
+          "enum": ["high", "medium", "low"],
+        },
+      },
+    },
+    "required": [],
+    "properties": {},
+  },
+}
 
-# Output Schema - array of result objects
+
+# Output schema for Gemini (aligned with CONFIG["output_schema"])
 SCHEMA = types.Schema(
   type=types.Type.ARRAY,
   items=types.Schema(
@@ -19,86 +65,57 @@ SCHEMA = types.Schema(
     properties={
       "match_id": types.Schema(
         type=types.Type.STRING,
-        description="Unique identifier for the pair. Same as input."
+        description="The unique identifier for the establishment pair",
       ),
       "reasoning": types.Schema(
         type=types.Type.STRING,
-        description="Brief 1-2 sentence explanation focusing on decisive factors for the classification"
+        description="Brief explanation of the decision (1-2 sentences)",
       ),
       "result": types.Schema(
         type=types.Type.STRING,
+        description="Whether the names are from the same entity/establishment",
         enum=["same", "different"],
-        description="Classification result: 'same' if names represent the same entity/establishment, 'different' if they represent different entities/establishments"
       ),
       "confidence": types.Schema(
         type=types.Type.STRING,
+        description="Confidence level of the result",
         enum=["high", "medium", "low"],
-        description="Confidence level: 'high' for strong evidence, 'medium' for good evidence with some ambiguity, 'low' for weak/conflicting evidence"
-      )
+      ),
     },
-    required=["match_id", "result", "confidence", "reasoning"]
-  )
+    required=["match_id", "reasoning", "result", "confidence"],
+  ),
 )
 
 
-SYSTEM_PROMPT = """You are an expert at determining if two transaction names represent the same kind of charge from the same entity, for the purpose of financial categorization.
+SYSTEM_PROMPT = """Same **merchant/establishment + same kind of charge** for categorization.
 
-## Decision Axes (maximize discrimination on these)
+## Steps
+1. **`raw_names` primary:** Build identity from `raw_names` first; use `description` to disambiguate. If `raw_names` agree on the merchant but `short_name` disagrees (e.g. both AMAZON.COM vs “Amazon Prime” vs “Amazon.com”), trust **raw_names** → `"same"` when interchangeability still holds.
+2. **Physical Locations:** Ignore locations, stores, cities, or branch #s.
+3. **Interchangeability:** After that read, evaluate based on the rules below? Both yes → `"same"`; else `"different"`.
 
-Apply these axes consistently. When any axis distinguishes left from right, the result is **"different"**:
+## `"different"` if any
+- **Generic vs. Specific:** plan/tier/sub-brand/dept ≠ generic parent (e.g. Amazon: Diapers vs Amazon; Ring Annual Plan vs Ring Basic; Venmo to Jose vs Venmo to Jose: Happy Birthday).
+- **Marketplace vs. Direct:** DoorDash: McDonald's ≠ McDonald's.
+- **Inflow vs. Outflow:** AirBNB Income ≠ AirBNB Payment.
+- **Physical vs Web:** brick-and-mortar store vs web storefront (e.g. **Adidas** vs **Adidas.com**) → `"different"`, unless establishment is solely online (e.g. **Amazon** vs **Amazon.com**) → `"same"`.
+- **Transfer Labels:** Different **type words** mean different rails: **Bank Transfer** ≠ **Mobile Payment** ≠ **Check Payment**; retry ≠ standard; ACH ≠ standard/plain.
+- **Transfer Status:** pending and posted transactions should be different
+- **Bank-to-bank / P2P:** Different **\*tails** or beneficiaries → `"different"`; P2P memo/purpose differs → `"different"`; different source accounts → `"different"`.
 
-1. **Transaction type:** Different payment or transfer methods are different (e.g. mobile vs physical check, check vs cash, retry vs standard payment).
-2. **Corrected identity via raw_names:** `short_name` and `description` may be wrong. Use `raw_names` on both sides to infer the true merchant or transaction type; verify whether left-group transactions truly belong with right-group before judging.
-3. **Inflows vs outflows:** If one side is inflow and the other outflow (or inferable as such), result is **"different"**.
-4. **Specific vs generic:** A transaction that indicates a **specific product, service, or tier** from a provider is **different** from a transaction that indicates only the **provider or brand**. Same brand with only location or branch in the name is **same**.
-5. **ACH vs non-ACH:** ACH transactions are **different** from non-ACH (card, wire, etc.). Do not merge them.
-6. **Physical vs online:** For brands that have both physical and online presence, physical-store transactions and online-store transactions are **different**. If the establishment is online-only, ".com" or domain in the name alone does not make them different → **same**.
-7. **P2P memo/purpose:** For person-to-person transfers, use the **memo or stated purpose** to decide: if the purpose makes one transfer semantically distinct from the other, treat as **different**. Same recipient with same generic purpose → **same**; specific purpose vs no purpose or different purpose → **different**.
+## `"same"` when
+- Only distinction is location, store, city, or branch # (e.g. Jollibee San Francisco = Jollibee = Jollibee Manila).
+- **Not** bank-to-bank or P2P: paying a **merchant** through PayPal/Venmo/etc. vs the merchant direct (e.g. PAYPAL *McDonald’s vs McDonald’s) → same merchant; still ignore pure processor noise **unless** it changes **transfer/check/ACH type** above.
+- Benign refs, city slugs—ignore for identity unless they encode a **different account** on a **transfer**.
 
-## Core Task
+<EXAMPLES>
+- Raw `AMAZON.COM` on both sides but `short_name` “Amazon Prime” vs “Amazon.com” → **same** (raw_names win); **Amazon** vs **Amazon.com** → **same** (carve-out); **Adidas** vs **Adidas.com** → **different** (web vs generic physical-channel label).
+- **ACH Withdrawal: Apple** vs **ACH Deposit: Apple** vs card **Apple** → **pairwise different**; **Bank Transfer** vs **Online Transfer** vs **Transfer** (same payee) → **different**; **Check Payment** vs **Payment** (non-check) → **different**; **\*1111** vs **\*2222** on B2B/P2P → **different**.
+- **PAYPAL *CHIPOTLE** vs **CHIPOTLE** → **same**; **DOORDASH *CHIPOTLE** vs **CHIPOTLE** → **different**; **NETFLIX.COM** vs **NETFLIX** → **same**; **VENMO RETRY** vs **VENMO PAYMENT** → **different**.
+</EXAMPLES>
 
-**Step 1 — Correct using raw_names:** Use `raw_names` on both left and right to infer the true merchant or transaction type. Do not trust `short_name` or `description` alone. Verify that left-group and right-group transactions truly belong together; only then apply the interchangeability test.
-
-**Step 2 — Interchangeability:** For the *corrected* understanding of left and right:
-1. Can the left (corrected) name accurately and completely describe all transactions in the right set?
-2. Can the right (corrected) name accurately and completely describe all transactions in the left set?
-
-- If **both** are yes → **"same"**.
-- If **either** is no → **"different"**.
-
-## Critical Rules (apply before interchangeability)
-
-- **Specificity:** Sub-brands, departments, and specific product or service lines are **different** from the establishment's generic name. Specific service from a provider ≠ transaction showing only the provider.
-
-- **Location and branch only:** If the **only** difference is physical location, city, state, or branch (or one name has a location and the other is the generic brand), result is **"same"**. Do not treat location in the name as a sub-brand.
-
-- **Transaction type:** Different payment or transfer types are **different**: mobile vs physical check, check vs cash, retry vs standard, ACH vs non-ACH. For **merchant** line items, ignore noise like "Payment", "Ref", reference numbers, card suffixes, and location — same merchant → **same** unless the transaction type is fundamentally different (pending vs settled, retry vs standard).
-
-- **ACH vs non-ACH:** ACH and non-ACH are **different**. Do not merge.
-
-- **Pending vs non-pending:** Pending (authorization) and posted/settled are **different**. Do not merge.
-
-- **Inflows vs outflows:** One side inflow and the other outflow → **"different"**.
-
-- **Online vs physical:** Unless the establishment is online-only, physical store and online store of the same brand are **different**. Online-only: ".com" or domain alone → **same**.
-
-- **P2P memo:** For person-to-person transfers, use memo/purpose: distinct purpose → **different**; same recipient, same generic purpose → **same**; specific purpose vs no or different purpose → **different**.
-
-## Analysis Heuristics
-
-- **Marketplaces:** A transaction through a distinct marketplace or platform is **different** from a direct transaction with the merchant. Ignore pure payment processor names when comparing merchant identity only.
-- **Product/Service tier:** Distinct products, service tiers, or charge types from the same company → **different**.
-- **Name evidence:** Use `short_name`, `raw_names`, and `description` to correct misprocessed names and to apply the axes above.
-
-## Output Format & Reasoning Guide
-
-Output a JSON array. Each element: `match_id`, `reasoning` (one concise phrase), `result` ("same" or "different"), `confidence` ("high", "medium", "low").
-
-## Rules
-- Process all pairs in input order.
-- Apply Critical Rules first, then Core Task.
-- Be conservative with "high" confidence.
-- Reasoning must be a single, concise phrase.
+## Output
+JSON array, input order: `match_id`, short `reasoning`, `result`, `confidence`. Use `high` rarely.
 """
 
 
@@ -108,19 +125,30 @@ Output a JSON array. Each element: `match_id`, `reasoning` (one concise phrase),
 class SameSummarizedNameClassifierOptimizer:
   """Handles all Gemini API interactions for detecting if names are from the same entity or establishment"""
   
-  def __init__(self, model_name="gemini-flash-lite-latest"):
+  def __init__(self, model_name=None, thinking_budget=None):
     """Initialize the Gemini agent with API configuration for similarity detection"""
     # API Configuration
     self.client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'))
-    
+    gc = CONFIG["gen_config"]
+
     # Model Configuration
-    self.thinking_budget = 0
-    self.model_name = model_name
-    
+    self.model_name = model_name if model_name is not None else CONFIG["model_name"]
+    self.thinking_budget = (
+      thinking_budget if thinking_budget is not None else gc["thinking_budget"]
+    )
+
+    # Registry / tooling metadata (see CONFIG)
+    self.response_json = CONFIG["json"]
+    self.sanitize = CONFIG["sanitize"]
+    self.check_template = CONFIG["check_template"]
+    self.replacements = CONFIG["replacements"]
+
     # Generation Configuration Constants
-    self.temperature = 0.6
-    self.top_p = 0.95
-    self.max_output_tokens = 4096
+    self.temperature = gc["temperature"]
+    self.top_p = gc["top_p"]
+    self.top_k = gc["top_k"]
+    self.max_output_tokens = gc["max_output_tokens"]
+    self.response_mime_type = gc["response_mime_type"]
     
     # Safety Settings
     self.safety_settings = [
@@ -133,25 +161,24 @@ class SameSummarizedNameClassifierOptimizer:
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
 
-  def detect_similarity(self, transaction_history_pairs: list) -> list:
+  def detect_similarity(self, transaction_history_pairs: list) -> dict:
     """
     Detect if establishment pairs are from the same entity or establishment using Gemini API.
-    
+
+    Returns a dict with ``results`` (parsed JSON array) and ``thought_summary`` when
+    the API emits thought parts (same streaming extraction pattern as
+    ``PennyAppUsageInfoOptimizer``).
+
     Args:
       transaction_history_pairs: A list of dictionaries, each containing:
         - match_id: Unique identifier for the pair
         - left: Name object with short_name, raw_names (list), description, amounts
         - right: Name object with short_name, raw_names (list), description, amounts
-      
+
     Returns:
-      A list of dictionaries, each containing:
-        - match_id: The same match_id from input
-        - result: "same" (same entity/establishment) or "different" (different entities/establishments)
-        - confidence: "high", "medium", or "low"
-        - reasoning: Explanation string
+      ``results``: list of dicts with match_id, result, confidence, reasoning;
+      ``thought_summary``: concatenated thought text from the stream (may be empty).
     """
-    import json
-    
     # Convert input to JSON string
     input_json = json.dumps(transaction_history_pairs, indent=2)
     
@@ -167,16 +194,21 @@ output:""")
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
+      top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
-      response_mime_type="application/json",
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
+      response_mime_type=self.response_mime_type,
       response_schema=SCHEMA,
     )
 
-    # Generate response
     output_text = ""
+    thought_summary = ""
+
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -184,7 +216,28 @@ output:""")
     ):
       if chunk.text is not None:
         output_text += chunk.text
-    
+
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
+
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
+
+    if not output_text:
+      raise ValueError("Empty response from model.")
+
     # Parse JSON response
     try:
       # Extract JSON from the response (in case there's extra text)
@@ -204,7 +257,10 @@ output:""")
         output_text = "\n".join(json_lines)
       
       result = json.loads(output_text)
-      return result
+      return {
+        "results": result,
+        "thought_summary": thought_summary.strip(),
+      }
     except json.JSONDecodeError as e:
       raise ValueError(f"Failed to parse JSON response: {e}\nResponse was: {output_text}")
   
@@ -256,8 +312,6 @@ def _run_test_with_logging(
   Returns:
     The detection results as a list
   """
-  import json
-
   if detector is None:
     detector = SameSummarizedNameClassifierOptimizer()
 
@@ -270,7 +324,8 @@ def _run_test_with_logging(
   print()
 
   try:
-    result = detector.detect_similarity(transaction_history_pairs)
+    out = detector.detect_similarity(transaction_history_pairs)
+    result = out["results"]
 
     # Print the output
     print("=" * 80)
