@@ -17,7 +17,6 @@ from penny.tool_funcs.lookup_transactions import lookup_transactions
 load_dotenv()
 
 # Defaults (StrategizerOptimizer): flash-lite + thinking—see class __init__. Tuned for concise code + low fluff.
-# Keep in sync with penny2 finance-ai-llm-server ``RATIONALIZE_CHANGE_SYSTEM_PROMPT`` (rationalize_change_strategizer.py).
 
 RATIONALIZE_CHANGE_MAX_VISIBLE_TRANSACTIONS = 10
 
@@ -706,7 +705,7 @@ def main(
     print(f"  {i}: {tc['name']} (batch {tc['batch']})")
 
 
-# python experiments/rationalize_change_strategizer_optimizer.py --test 0
+# python experiments/rationalize_change_strategizer_optimizer_v2.py --test 0
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser()
