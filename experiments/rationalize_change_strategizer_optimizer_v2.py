@@ -16,23 +16,17 @@ from penny.tool_funcs.rationalize import rationalize
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are RationalizeChange, a financial reasoning agent.
+# Defaults (StrategizerOptimizer): flash-lite + thinking—see class __init__. Tuned for concise code + low fluff.
 
-## Your job
-Using the **caller-supplied Task Description** (see below), explain **what changed** vs the **benchmark implied by the insight**—for types ending in `_vs_forecast`, that benchmark is the **forecast / plan**, not an automatic month-over-month or week-over-week comparison. Say **why** actuals landed where they did (merchants, categories, timing) using the data. If the insight text *also* mentions a prior period, treat that as extra color, not a redefinition of the type label. If the provided transactions and insight are enough to justify a concise answer, **do not** call `lookup_transactions` or `rationalize`; **`return True, "<concise dashboard explanation>"`** directly from `execute_plan`. If you **do** call `lookup_transactions`, then **`return rationalize(USER_MESSAGE, lookup_info)`** with `lookup_info` set to that call’s return value—**call `rationalize` only after a lookup**, never when you skipped lookup.
+SYSTEM_PROMPT = """You are **RationalizeChange**. Reply with **one** ```python``` block defining `execute_plan() -> tuple[bool, str]` only.
 
-**Both-period check before lookup:** Always weigh the **previous-period** excerpt together with the recent one. Natural-language insight labels (e.g. “Travel,” “Entertainment”) align loosely with official slugs (`travel_flights`, `travel_lodging`, `entertainment_*`, etc.). If **high-ticket travel, lodging, flights, or events in the prior period** contrast with a **lighter** recent period in a way that already explains leisure/travel vs forecast, **skip** `lookup_transactions` and **`return True, "<explanation>"`** without calling `rationalize`—**do not** call lookup only because insight dollar totals exceed the sum of visible recent bullets or because `+K transactions` hides detail.
+**Benchmark:** For `*_vs_forecast`, compare actuals to **forecast/plan**. The **previous** `# Top Transactions` section is context, not the benchmark. Prior-period phrases in the Insight do not redefine the task type.
 
-**Reconciliation rule:** Reconcile insight amounts with excerpts when you can, using **both** periods. Use `lookup_transactions` (official `in_category` slugs only) only when, after that, the insight’s **stated category or roll-up spend is still implausible or unexplained** relative to what the excerpts imply—not merely because every dollar in the insight must foot to listed lines.
+**Inputs:** **Task Description** (caller-authored; obey). **Insight.** Two predetermined `# Top Transactions` blocks (recent + previous). Optional **Previous Outcomes**. Recent header’s end date = Task **as of** (insight cutoff).
 
-## Inputs you receive
-1. **Task Description** — **Predetermined by the caller** that invokes this LLM; you receive it verbatim and do not author or replace it. Follow it exactly—its wording defines the benchmark window and rules (e.g. month-to-date vs week-to-date actuals vs forecast), a single **as-of** date (e.g. **as of 2026/03/31**), and how to use tools. The **recent** and **previous** transaction section date ranges are for the same run and **must match** that as-of anchor (e.g. month-to-date recent ends on the as-of day; the previous-period range is the aligned comparison window).
-2. **Insight** — Natural-language summary of the shift (e.g. category totals vs forecast).
-3. **Top Transactions — recent insight period (date range)** — The header includes the range in parentheses; its **closing day** is the same calendar date as **as of** in the Task Description for a consistent payload. One bullet per line: `- $25 at Whole Foods as meals_groceries.` **No per-charge dates** on rows; the header states the window. Lists are **ordered by amount descending** (largest first; ties may be host-defined). The list is a **global** top-N by amount, not per category—heavy category spend can be missing if it is split across many charges each smaller than the Nth-largest transaction. When the period has **more than N** charges, the excerpt may end with a line `+K transactions` meaning **K additional** rows in that window are omitted (not shown as bullets).
-4. **Top Transactions — previous period (date range)** — Same bullet format, **same sort order** (amount descending), and the same optional `+K transactions` tail when applicable; the range is the **comparison window aligned to that same as-of run**; **supplementary context** (e.g. habitual mix), not the forecast benchmark for `*_vs_forecast` types.
-5. **Previous Outcomes** (optional) — Numbered outcomes from earlier turns; do not repeat failed patterns; use them to decide the next lookup or final answer.
+**Flow:** (1) Map Insight labels loosely to official slugs; reconcile $ to bullets using **both** sections. (2) If excerpts already explain vs forecast → `return True, "…"` (no tools). (3) If still implausible → `lookup_transactions` (header date ranges; `in_category` official slugs only) then `return rationalize(USER_MESSAGE, lookup_info)`. Never `rationalize` without lookup. (4) Follow Insight constraints (e.g. skip redundant lookup).
 
-## Official categories (for `lookup_transactions(..., in_category=[...])`)
+**Return string:** Plain English, **≤3 short sentences**, no “Based on…”, no markdown inside quotes, no meta narration. **Do not contradict** dollar totals given in the Insight (visible bullets may be partial when `+K transactions` applies).
 
 <OFFICIAL_CATEGORIES>
 income: income_salary, income_sidegig, income_business, income_interest
@@ -47,57 +41,36 @@ health: health_medical_pharmacy, health_gym_wellness, health_personal_care
 donations_gifts, uncategorized, transfers, miscellaneous
 </OFFICIAL_CATEGORIES>
 
-## Tools available
-- `lookup_transactions(start: date, end: date, name_contains: str = "", amount_larger_than: int | None = None, amount_less_than: int | None = None, in_category: list[str] | None = None) -> str`  
-  Returns host text (not model-written): one opening sentence with the **date range** in prose and **only** non-default filters (`name_contains`, amount bounds, `in_category` when set). Then a blank line, `Transactions:`, a blank line, then `- $N at Merchant as category_slug.` lines (whole-dollar **N**; **no per-row dates**), optional `+K transactions`, and optional `Total: $…`. If nothing matched, say so under `Transactions:` (e.g. no rows). Use `datetime.date` for `start`/`end`. Bounds are inclusive. Only official slugs in `in_category`.
-- `rationalize(input_info: str, lookup_info: str) -> tuple[bool, str]`  
-  **Only call after `lookup_transactions`.** Pass **`USER_MESSAGE`** as `input_info` (injected `str`; never paste the prompt into code). Pass **`lookup_info`** as the **exact** string returned from the preceding `lookup_transactions` call.
+**Tools:** `lookup_transactions` and `rationalize` are **already in scope**—do **not** import them from any module. Only add `from datetime import date` (or `import datetime`) for bounds. Host returns `- $N at Merchant as slug.` lines, optional `+K transactions`. After lookup, **`return rationalize(USER_MESSAGE, lookup_info)`** only—never paraphrase the prompt as the first argument. Do not invent data.
 
-Do not invent transactions or amounts.
+**Lists:** Global top-N by amount; category totals may hide below the cutoff (`+K transactions`).
 
-## Output
-Output **Python only** in a single ```python``` block that defines:
-
-```python
-def execute_plan() -> tuple[bool, str]:
-    ...
-    return success, output
-```
-
-- **`execute_plan` return:** `(True, user_facing_string)` for success. If you **did not** call `lookup_transactions`, **`return True, "<explanation>"`** and **do not** call `rationalize`. If you **did** call `lookup_transactions`, **`return rationalize(USER_MESSAGE, lookup_info)`** with `lookup_info` from that call.
-- **CRITICAL**: Call tools by bare name (no module prefix). **`USER_MESSAGE`** is injected—never paste the full user text into code as a string literal.
-- Prefer a **compact** `execute_plan` (target ≤ ~20 lines): either direct `return True, "…"` or `lookup_transactions` then `return rationalize(USER_MESSAGE, lookup_info)`.
-- Avoid comments inside the generated code unless necessary.
+**Code:** Keep `execute_plan` small (~≤15 lines). For `lookup_transactions` bounds use `from datetime import date` and `date(y, m, d)` (or `import datetime` and `datetime.date`). **`return rationalize(USER_MESSAGE, lookup_info)`**—never pass a hand-written summary as the first argument. Skip filler comments.
 """
 
 # Second-stage merge: after `lookup_transactions`, model emits `execute_plan` (Python); host injects USER_MESSAGE + LOOKUP_INFO.
-RATIONALIZE_MERGE_SYSTEM_PROMPT = """You are RationalizeMerge. The user message includes (1) the full user turn and (2) supplemental text from `lookup_transactions`.
+RATIONALIZE_MERGE_SYSTEM_PROMPT = """You are **RationalizeMerge**. One ```python``` block: `execute_plan() -> tuple[bool, str]`.
 
-Output **Python only** in a single ```python``` block that defines:
+Host injects `USER_MESSAGE` and `LOOKUP_INFO`. Reference them; do not embed the full user turn as a source literal.
 
-```python
-def execute_plan() -> tuple[bool, str]:
-    ...
-    return success, output
-```
-
-- `output` is the concise dashboard-facing rationalization: a normal string (plain language inside the quotes), not code fences.
-- When `execute_plan` runs, the host defines **`USER_MESSAGE`** (full user turn) and **`LOOKUP_INFO`** (lookup text) as `str`. Use those names; **do not** paste the full user text into the source as a multi-line string literal.
-- Ground claims only in `USER_MESSAGE` and `LOOKUP_INFO`. Do not invent merchants, amounts, or dates.
-- Keep `execute_plan` compact (target ≤ ~20 lines). No tools—prose only in the return value."""
+Return **≤3 tight** dashboard sentences in the string—no preamble, no markdown in quotes. Ground only on `USER_MESSAGE` + `LOOKUP_INFO`. No tools."""
 
 
 class StrategizerOptimizer:
-  """Gemini API wrapper for the RationalizeChange agent (execute_plan; optional lookup_transactions + rationalize)."""
+  """Gemini API wrapper for RationalizeChange (`execute_plan`; optional lookup + rationalize).
 
-  def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=700, max_output_tokens=700):
+  **Defaults** (`gemini-flash-lite-latest`, thinking 512, max_output 600, temperature 0.2) passed batch 1–2 in this experiment.
+  Cutting thinking/output further (e.g. <512 / <600) can truncate Python or drop the shopping+lookup path.
+  """
+
+  def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=512, max_output_tokens=600):
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
       raise ValueError("GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment.")
     self.client = genai.Client(api_key=api_key)
     self.model_name = model_name
     self.thinking_budget = thinking_budget
-    self.temperature = 0.5
+    self.temperature = 0.2
     self.top_p = 0.95
     self.max_output_tokens = max_output_tokens
 
@@ -249,43 +222,40 @@ Produce a single ```python``` block defining `execute_plan() -> tuple[bool, str]
   return success, out
 
 
-# Canonical Task Description text keyed by `insight_type`—for the **LLM caller** to pass into the user message. Month/week templates contain `{as_of}` (one date `YYYY/MM/DD`, aligned with the **end** of the recent insight period in the headers); format with `rationalize_task_description_for_insight_type(..., as_of="YYYY/MM/DD")` or paste the resolved text (as in tests under `# Task Description`).
+# Task Description: static wording + `{insight_type}`, `{period_label}`, `{as_of}` (as_of = insight cutoff, end of recent window).
+_RATIONALIZE_TASK_PERIOD_BY_INSIGHT_TYPE: dict[str, str] = {
+  "month_spend_vs_forecast": "Month-to-date",
+  "week_spend_vs_forecast": "Week-to-date",
+}
+
+RATIONALIZE_TASK_DESCRIPTION_TEMPLATE = (
+  "**{insight_type}** — **{period_label}** actual spend vs forecast, **as of {as_of}**. "
+  "Use the Insight and the two **# Top Transactions** sections below. "
+  "Forecast/plan is the benchmark; the previous section is context only. "
+  "Reconcile stated amounts to bullet `as` slugs across **recent and previous** when possible. "
+  "If excerpts suffice, `return True` with a short dashboard string. "
+  "Otherwise `lookup_transactions` (official `in_category` slugs, dates from section headers) then `return rationalize(USER_MESSAGE, lookup_info)`."
+)
+
 RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE = {
-  "month_spend_vs_forecast": (
-    "Explain **month-to-date actual spend vs forecast** (**as of {as_of}**): how the user's spending differs from plan and the most plausible "
-    "drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period "
-    "transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise "
-    "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when "
-    "they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, "
-    "in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return "
-    "True and a concise explanation string directly—do not call rationalize."
-  ),
-  "week_spend_vs_forecast": (
-    "Explain **week-to-date actual spend vs forecast** (**as of {as_of}**): how the user's spending differs from plan and the most plausible "
-    "drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period "
-    "transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise "
-    "for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when "
-    "they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, "
-    "in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return "
-    "True and a concise explanation string directly—do not call rationalize."
-  ),
+  k: RATIONALIZE_TASK_DESCRIPTION_TEMPLATE.format(
+    insight_type=k,
+    period_label=_RATIONALIZE_TASK_PERIOD_BY_INSIGHT_TYPE[k],
+    as_of="{as_of}",
+  )
+  for k in _RATIONALIZE_TASK_PERIOD_BY_INSIGHT_TYPE
 }
 
 
 def rationalize_task_description_for_insight_type(insight_type: str, *, as_of: str = "2026/03/31") -> str:
-  """Return Task Description text for `insight_type` so the **LLM caller** can supply it in the RationalizeChange user message.
-
-  ``as_of`` is one calendar day as ``YYYY/MM/DD``—the same anchor the caller uses for recent/previous period ranges (recent window ends on this day).
-  """
+  """Return Task Description for ``insight_type``. ``as_of`` is ``YYYY/MM/DD`` (same as recent window end in headers)."""
   try:
     tpl = RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE[insight_type]
   except KeyError as e:
     raise KeyError(
-      f"No task description for insight_type={insight_type!r}; add an entry to RATIONALIZE_TASK_DESCRIPTION_BY_INSIGHT_TYPE."
+      f"No task description for insight_type={insight_type!r}; extend _RATIONALIZE_TASK_PERIOD_BY_INSIGHT_TYPE."
     ) from e
-  if "{as_of}" in tpl:
-    return tpl.format(as_of=as_of)
-  return tpl
+  return tpl.format(as_of=as_of)
 
 
 def _format_previous_outcomes(previous_outcomes: dict[int | str, str] | list[str] | str | None) -> str:
@@ -358,7 +328,7 @@ No matching transactions.
 """,
     "input": """# Task Description
 
-Explain **month-to-date actual spend vs forecast** (**as of 2026/03/31**): how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+**Month-to-date** actual spend vs forecast, **as of 2026/03/31**. Use the Insight and the two **# Top Transactions** sections below (predetermined). Forecast/plan is the benchmark; the previous section is context only. Reconcile stated amounts to bullet `as` slugs across **recent and previous** when possible. If excerpts suffice, `return True` with a short dashboard string. Otherwise `lookup_transactions` (official `in_category` slugs, dates from section headers) then `return rationalize(USER_MESSAGE, lookup_info)`.
 
 # Insight
 
@@ -417,7 +387,7 @@ Total: $920
 """,
     "input": """# Task Description
 
-Explain **month-to-date actual spend vs forecast** (**as of 2026/03/31**): how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+**Month-to-date** actual spend vs forecast, **as of 2026/03/31**. Use the Insight and the two **# Top Transactions** sections below (predetermined). Forecast/plan is the benchmark; the previous section is context only. Reconcile stated amounts to bullet `as` slugs across **recent and previous** when possible. If excerpts suffice, `return True` with a short dashboard string. Otherwise `lookup_transactions` (official `in_category` slugs, dates from section headers) then `return rationalize(USER_MESSAGE, lookup_info)`.
 
 # Insight
 
@@ -467,7 +437,7 @@ No matching transactions.
 """,
     "input": """# Task Description
 
-Explain **week-to-date actual spend vs forecast** (**as of 2026/03/31**): how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+**Week-to-date** actual spend vs forecast, **as of 2026/03/31**. Use the Insight and the two **# Top Transactions** sections below (predetermined). Forecast/plan is the benchmark; the previous section is context only. Reconcile stated amounts to bullet `as` slugs across **recent and previous** when possible. If excerpts suffice, `return True` with a short dashboard string. Otherwise `lookup_transactions` (official `in_category` slugs, dates from section headers) then `return rationalize(USER_MESSAGE, lookup_info)`.
 
 # Insight
 
@@ -505,7 +475,7 @@ No matching transactions.
 """,
     "input": """# Task Description
 
-Explain **month-to-date actual spend vs forecast** (**as of 2026/03/31**): how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+**Month-to-date** actual spend vs forecast, **as of 2026/03/31**. Use the Insight and the two **# Top Transactions** sections below (predetermined). Forecast/plan is the benchmark; the previous section is context only. Reconcile stated amounts to bullet `as` slugs across **recent and previous** when possible. If excerpts suffice, `return True` with a short dashboard string. Otherwise `lookup_transactions` (official `in_category` slugs, dates from section headers) then `return rationalize(USER_MESSAGE, lookup_info)`.
 
 # Insight
 
@@ -555,7 +525,7 @@ No matching transactions.
 """,
     "input": """# Task Description
 
-Explain **month-to-date actual spend vs forecast** (**as of 2026/03/25**): how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+**Month-to-date** actual spend vs forecast, **as of 2026/03/25**. Use the Insight and the two **# Top Transactions** sections below (predetermined). Forecast/plan is the benchmark; the previous section is context only. Reconcile stated amounts to bullet `as` slugs across **recent and previous** when possible. If excerpts suffice, `return True` with a short dashboard string. Otherwise `lookup_transactions` (official `in_category` slugs, dates from section headers) then `return rationalize(USER_MESSAGE, lookup_info)`.
 
 # Insight
 
@@ -605,7 +575,7 @@ No matching transactions.
 """,
     "input": """# Task Description
 
-Explain **month-to-date actual spend vs forecast** (**as of 2026/03/31**): how the user's spending differs from plan and the most plausible drivers (merchants, categories, timing). Ground the answer in the Insight field and in the recent- and prior-period transaction excerpts; those lists are supporting context only, not the forecast baseline. Keep the explanation concise for a dashboard. When the insight states amounts or categories, reconcile them with the excerpts where you can; when they are insufficient, call lookup_transactions (start, end, optional name_contains, amount_larger_than, amount_less_than, in_category using official slugs only), then return rationalize(USER_MESSAGE, lookup_info). If you skip lookup, return True and a concise explanation string directly—do not call rationalize.
+**Month-to-date** actual spend vs forecast, **as of 2026/03/31**. Use the Insight and the two **# Top Transactions** sections below (predetermined). Forecast/plan is the benchmark; the previous section is context only. Reconcile stated amounts to bullet `as` slugs across **recent and previous** when possible. If excerpts suffice, `return True` with a short dashboard string. Otherwise `lookup_transactions` (official `in_category` slugs, dates from section headers) then `return rationalize(USER_MESSAGE, lookup_info)`.
 
 # Insight
 
@@ -740,7 +710,7 @@ def main(
   max_output_tokens: int | None = None,
   model: str | None = None,
 ):
-  tb = 0 if no_thinking else (thinking_budget if thinking_budget is not None else 700)
+  tb = 0 if no_thinking else (thinking_budget if thinking_budget is not None else 512)
   kw: dict = {"thinking_budget": tb}
   if max_output_tokens is not None:
     kw["max_output_tokens"] = max_output_tokens
