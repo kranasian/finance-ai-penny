@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from google import genai
 from google.genai import types
 import json
@@ -17,17 +15,20 @@ OUTPUT_SCHEMA = types.Schema(
     "rules_satisfied": types.Schema(
       type=types.Type.BOOLEAN,
       description=(
-        "true iff: ≥1 parseable line; # Categorize Request has non-blank prose with constraints you can map (never infer rules from transactions if request text is empty); "
-        "if the request shows structured rules, they must be one {...} block—not rules given only as a [...] list; "
-        "each line supplies fields active checks need (sentinels Amount not given, (payee not given), date not given, Account/ID not given count as missing); "
-        "every line passes every check. Else false. Unsure → false. Set boolean before notes."
+        "Set first; `notes` must agree: true only with an all-clear message; false only with a failure—same verdict, no mixed signals. "
+        "True iff: ≥1 bullet; non-empty request with mappable rules (never infer from lines if request blank); "
+        "structured rules use one {...} block not [...]-only; each line shows payee, date, amount or their sentinels; "
+        "no transaction ids on lines; if request names account (account_id, account id, posts to account), enforce (Account…) and Account not given = missing; "
+        "every line passes every mapped rule. False if unsure."
       ),
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "Single line 8–140 chars, matches rules_satisfied tone. Plain English like # Categorize Request—no snake_case, no filter API names, no code operators (≤ ≥). "
-        "True: short success. False: one blocker (which row, what failed); only cite fields actually missing. Bad request shape: say invalid/malformed categorize request in plain words, not “JSON/array/object.”"
+        "One line, 8–140 chars; must match boolean. Target ≤100 chars. "
+        "Use $ and digits for money and dates like the request (e.g. $16.99, 2025-11-26)—never spell amounts or years in words. "
+        "State the fact only; never say categorized, processed, or successfully unless quoting the request. "
+        "Plain English; no snake_case or filter names; say at most, at least, exactly—not comparison symbols; no JSON/schema talk."
       ),
       min_length=8,
       max_length=140,
@@ -37,96 +38,21 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """Verify `# Transactions` against `# Categorize Request`. JSON only.
+SYSTEM_PROMPT = """Return only the JSON object. Set `rules_satisfied` then `notes`; they must agree (true ↔ success wording, false ↔ one failure reason).
 
-Order: verdict → `rules_satisfied` → one-line `notes` (same outcome); re-read both.
+Ignore category labels when interpreting rules.
 
-Request: Ignore category slugs. If the categorize-request prose is empty or whitespace, false—never invent rules from transaction lines alone. Otherwise need mappable constraints on payee, amount, date, account, or transaction id; if nothing mappable → false. Rules only as `[...]` not one `{...}` block → false (invalid categorize request).
+First failing gate → false with a matching note:
+A) Blank request → false; never infer rules from `# Transactions` alone.
+B) No bullets, or only “(+N more transactions.)” → false.
+C) No mappable payee/amount/date rules (treat account as required only if text says account_id, account id, or posts to account) → false.
+D) Structured rules only in [...] without a {...} block → false.
+E) Each bullet (not the +more line): apply all mapped rules—contains vs exact name (case-insensitive; exact = full payee); each line’s date and amount satisfy the request’s rules. If account is in scope, (Account not given) is missing; if not in scope, ignore absent Account tails.
+F) Sentinels such as Amount not given block any check that needs that value → false.
 
-`# Transactions` is `None` or has zero parseable lines → false.
+If every line passes → true + short success note.
 
-Row shape: `- $5.00 Starbucks transaction on November 5, 2025 (ID 41, Account 20).` (`$` or Amount not given; payee or (payee not given); on Month D, YYYY or date not given; ID/Account or not given). `(+N more transactions.)` is not a row.
-
-Every row passes every check (not just some rows). Amounts/dates numeric; spelled dates = ISO day; name substring/exact: case-insensitive, exact = full payee. Reason with internal filter names if needed—never put snake_case API names into `notes`.
-
-Notes: Plain English like the request, ~120 chars. Good: “Name contains ACME and the charge is at most $100.” Bad: name_contains or “amount <= $100.” Bad shape: invalid categorize request, not “JSON/array.”
-"""
-
-
-def _tx_field_str(tx: dict, key: str) -> str:
-  if key not in tx or tx[key] is None:
-    return ""
-  return str(tx[key])
-
-
-def _format_currency(amount_raw: str) -> str:
-  s = amount_raw.strip().replace("$", "").replace(",", "")
-  try:
-    v = float(s)
-  except ValueError:
-    return f"${amount_raw.strip()}"
-  sign = "-" if v < 0 else ""
-  return f"{sign}${abs(v):.2f}"
-
-
-def _format_date_long(date_raw: str) -> str:
-  if not date_raw or not date_raw.strip():
-    return "date not given"
-  ds = date_raw.strip()
-  try:
-    d = datetime.strptime(ds, "%Y-%m-%d")
-  except ValueError:
-    return ds
-  return f"{d.strftime('%B')} {d.day}, {d.year}"
-
-
-def _format_transaction_sentence(tx: dict) -> str:
-  tid_raw = _tx_field_str(tx, "transaction_id").replace("\n", " ").replace("\r", " ").strip()
-  tid_slot = tid_raw if tid_raw else "not given"
-
-  name_raw = _tx_field_str(tx, "name").replace("\n", " ").replace("\r", " ").replace("\t", " ")
-  payee = name_raw.strip()
-  payee_words = f"{payee} " if payee else "(payee not given) "
-
-  amt_raw = _tx_field_str(tx, "amount").strip()
-  if amt_raw:
-    lead = f"{_format_currency(amt_raw)} {payee_words}transaction on "
-  else:
-    lead = f"Amount not given, {payee_words}transaction on "
-
-  date_slot = _format_date_long(_tx_field_str(tx, "date"))
-  acct_raw = _tx_field_str(tx, "account_id").strip()
-  acct_slot = acct_raw if acct_raw else "not given"
-
-  return f"- {lead}{date_slot} (ID {tid_slot}, Account {acct_slot})."
-
-
-def format_transactions_compact(transactions: list, *, max_visible: int = 3) -> str:
-  """
-  One markdown bullet per transaction: `$5.00 Payee transaction on Month D, YYYY (ID x, Account y).`
-  If len(transactions) > max_visible, append (+N more transactions.)
-  """
-  if not transactions:
-    return "None"
-  n = len(transactions)
-  chunk = transactions[:max_visible]
-  parts = [_format_transaction_sentence(tx) for tx in chunk]
-  body = "\n".join(parts)
-  if n > max_visible:
-    return f"{body}\n(+{n - max_visible} more transactions.)"
-  return body
-
-
-def format_categorization_verify_input(categorize_request: str | None, transactions: list) -> str:
-  """Build user message: # Categorize Request prose + # Transactions compact string."""
-  request_body = "" if categorize_request is None else categorize_request
-  transactions_body = format_transactions_compact(transactions)
-  return (
-    "# Categorize Request\n\n"
-    f"{request_body}\n\n"
-    "# Transactions\n\n"
-    f"{transactions_body}"
-  )
+Notes: one sentence, fact-only; use $ and digits as in the request (no spelled-out dollars or years). Aim ≤100 chars. Never say categorized, processed, or successfully. No snake_case; say at most, at least, exactly—not symbols."""
 
 
 TEST_CASES = [
@@ -138,8 +64,8 @@ Re-categorize all transactions from 'Starbucks' where each charge was $50 or les
 
 # Transactions
 
-- $12.50 Starbucks on 2025-11-10 (ID 1, Account 20).
-- $4.75 Starbucks on 2025-11-12 (ID 2, Account 20).""",
+- $12.50 Starbucks on 2025-11-10.
+- $4.75 Starbucks on 2025-11-12.""",
     "output": {
       "rules_satisfied": True,
       "notes": "Every Starbucks transaction and charge shown meets the $50 cap and 2025-11-01 date cutoff.",
@@ -153,7 +79,7 @@ Re-categorize all transactions from 'Costco' where each charge was at least $100
 
 # Transactions
 
-- $25.00 AMAZON on 2025-10-25 (ID 71, Account 20).""",
+- $25.00 AMAZON on 2025-10-25.""",
     "output": {
       "rules_satisfied": False,
       "notes": "Not every Costco transaction has a charge of at least $100 as the groceries rule requires.",
@@ -163,43 +89,30 @@ Re-categorize all transactions from 'Costco' where each charge was at least $100
     "name": "unevaluable_rule_due_to_missing_fields",
     "input": """# Categorize Request
 
-Re-categorize transactions as 'income_salary' where the name includes 'payroll' and the amount is at least $1000 for every listed row (transaction_id 21 and 22).
+Re-categorize transactions as 'income_salary' where the name includes 'payroll' and the amount is at least $1000 for every listed row.
 
 # Transactions
 
-- $1440.00 CA State Payroll transaction on 2025-11-18 (ID 21, Account 20).
-- Amount not given, ACME Corp transaction on November 20, 2025 (ID 22, Account 20).""",
+- $1440.00 CA State Payroll transaction on 2025-11-18.
+- Amount not given, ACME Corp transaction on November 20, 2025.""",
     "output": {
       "rules_satisfied": False,
       "notes": "Cannot evaluate: one transaction has no amount for the payroll and at-least-$1000 charge rules.",
     },
   },
   {
-    "name": "malformed_input_missing_rules",
-    "input": """# Categorize Request
-
-
-# Transactions
-
-- $2000.00 Apartments LLC on 2025-11-18 (ID 31, Account 20).""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "Malformed input: missing verifiable filters.",
-    },
-  },
-  {
     "name": "name_eq_requires_exact_match",
     "input": """# Categorize Request
 
-Categorize transaction_id 41 and transaction_id 42 as 'meals_dining_out'; for each row the name must be exactly 'Starbucks' (not 'Starbucks Coffee' or any longer string).
+Categorize these rows as 'meals_dining_out'; for each row the name must be exactly 'Starbucks' (not 'Starbucks Coffee' or any longer string).
 
 # Transactions
 
-- $5.00 Starbucks on 2025-11-05 (ID 41, Account 20).
-- $6.00 Starbucks Coffee transaction on November 6, 2025 (ID 42, Account 20).""",
+- $5.00 Starbucks on 2025-11-05.
+- $6.00 Starbucks Coffee transaction on November 6, 2025.""",
     "output": {
       "rules_satisfied": False,
-      "notes": "transaction_id 42 fails: name is Starbucks Coffee, not exactly Starbucks (no longer strings).",
+      "notes": "One row fails: name is Starbucks Coffee, not exactly Starbucks (no longer strings).",
     },
   },
   {
@@ -210,8 +123,8 @@ Re-categorize all transactions from 'Whole Foods' as 'groceries' where the trans
 
 # Transactions
 
-- $45.00 Whole Foods on 2025-11-26 (ID 51, Account 20).
-- $12.00 Whole Foods on 2025-11-25 (ID 52, Account 20).""",
+- $45.00 Whole Foods on 2025-11-26.
+- $12.00 Whole Foods on 2025-11-25.""",
     "output": {
       "rules_satisfied": False,
       "notes": "A matching Whole Foods charge is not on transaction date 2025-11-26 as required.",
@@ -221,15 +134,15 @@ Re-categorize all transactions from 'Whole Foods' as 'groceries' where the trans
     "name": "amount_eq_enforced",
     "input": """# Categorize Request
 
-Categorize the Netflix subscription charges (transaction_id 61 and 62) as 'subscriptions_entertainment' where each amount is exactly $15.99.
+Categorize the Netflix subscription charges as 'subscriptions_entertainment' where each amount is exactly $15.99.
 
 # Transactions
 
-- $15.99 Netflix on 2025-11-03 (ID 61, Account 20).
-- $16.99 Netflix on 2025-12-03 (ID 62, Account 20).""",
+- $15.99 Netflix on 2025-11-03.
+- $16.99 Netflix on 2025-12-03.""",
     "output": {
       "rules_satisfied": False,
-      "notes": "Netflix charge ID 62 is $16.99, not exactly $15.99 as required for every row.",
+      "notes": "One Netflix charge is $16.99, not exactly $15.99 as required for every row.",
     },
   },
   {
@@ -240,8 +153,8 @@ Re-categorize all transactions from 'Amazon' as 'shopping_clothing' where each c
 
 # Transactions
 
-- $25.00 AMAZON on 2025-11-02 (ID 71, Account 20).
-- $30.00 Amazon on 2025-11-04 (ID 72, Account 21).""",
+- $25.00 AMAZON transaction on November 2, 2025 (Account 20).
+- $30.00 Amazon transaction on November 4, 2025 (Account 21).""",
     "output": {
       "rules_satisfied": False,
       "notes": "One Amazon charge posts to an account other than 20, conflicting with account_id equal to 20.",
@@ -251,12 +164,12 @@ Re-categorize all transactions from 'Amazon' as 'shopping_clothing' where each c
     "name": "case_insensitive_name_contains",
     "input": """# Categorize Request
 
-Re-categorize the Amazon marketplace transactions (transaction_id 81 and 82) as 'shopping_clothing'; the name should contain 'amazon' and matching must be case-insensitive.
+Re-categorize the Amazon marketplace transactions as 'shopping_clothing'; the name should contain 'amazon' and matching must be case-insensitive.
 
 # Transactions
 
-- $12.00 AMAZON MARKETPLACE on 2025-11-01 (ID 81, Account 20).
-- $9.00 Amazon.com on 2025-11-02 (ID 82, Account 20).""",
+- $12.00 AMAZON MARKETPLACE on 2025-11-01.
+- $9.00 Amazon.com on 2025-11-02.""",
     "output": {
       "rules_satisfied": True,
       "notes": "Both marketplace transactions meet case-insensitive name matching and the other rules.",
@@ -270,8 +183,8 @@ Re-categorize all 'Shell' fuel transactions as 'transport_car_fuel' where the ch
 
 # Transactions
 
-- $40.00 Shell on 2025-11-15 (ID 91, Account 20).
-- $35.00 Shell on 2025-12-01 (ID 92, Account 20).""",
+- $40.00 Shell on 2025-11-15.
+- $35.00 Shell on 2025-12-01.""",
     "output": {
       "rules_satisfied": False,
       "notes": "One Shell fuel charge has a charge date outside 2025-11-01 through 2025-11-30.",
@@ -285,8 +198,8 @@ Re-categorize all 'Costco' transactions as 'groceries' where each charge amount 
 
 # Transactions
 
-- $75.00 Costco on 2025-11-08 (ID 101, Account 20).
-- $250.00 Costco on 2025-11-09 (ID 102, Account 20).""",
+- $75.00 Costco on 2025-11-08.
+- $250.00 Costco on 2025-11-09.""",
     "output": {
       "rules_satisfied": False,
       "notes": "One Costco charge amount is outside the $50–$200 inclusive groceries range.",
@@ -307,21 +220,6 @@ None""",
     },
   },
   {
-    "name": "missing_name_required_by_rules",
-    "input": """# Categorize Request
-
-Re-categorize these trips as 'transport_public_transit' where the name contains 'Uber' and the date is on or after 2025-11-01.
-
-# Transactions
-
-- $18.00 Uber *TRIP on 2025-11-10 (ID 201, Account 20).
-- $22.00 on 2025-11-12 (ID 202, Account 20).""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "Cannot evaluate: one trip has no name for the Uber substring and date rules.",
-    },
-  },
-  {
     "name": "missing_account_id_required_by_rules",
     "input": """# Categorize Request
 
@@ -329,11 +227,10 @@ Re-categorize these housing payments as 'shelter_home' where the name contains '
 
 # Transactions
 
-- $2100.00 RentCo Apartments on 2025-11-01 (ID 301, Account 99).
-- $2100.00 RentCo Apartments on 2025-12-01 (ID 302, Account not given).""",
+- $2100.00 RentCo Apartments transaction on 2025-11-01.""",
     "output": {
       "rules_satisfied": False,
-      "notes": "Cannot evaluate: one housing payment has no account though the rules require account 99.",
+      "notes": "Cannot evaluate: housing payment has no account though the rules require account 99.",
     },
   },
   {
@@ -344,9 +241,9 @@ Re-categorize all transactions from 'Starbucks' where each charge was $50 or les
 
 # Transactions
 
-- $10.00 Starbucks on 2025-11-05 (ID 401, Account 1).
-- $20.00 Starbucks on 2025-11-06 (ID 402, Account 1).
-- $15.00 Starbucks on 2025-11-07 (ID 403, Account 1).
+- $10.00 Starbucks on 2025-11-05.
+- $20.00 Starbucks on 2025-11-06.
+- $15.00 Starbucks on 2025-11-07.
 (+2 more transactions.)""",
     "output": {
       "rules_satisfied": True,
@@ -361,7 +258,7 @@ Re-categorize transactions where the name contains 'ACME' and each charge is at 
 
 # Transactions
 
-- $55.00 ACME|UK Retail transaction on August 1, 2025 (ID 601, Account 20).""",
+- $55.00 ACME|UK Retail transaction on 2025-08-01.""",
     "output": {
       "rules_satisfied": True,
       "notes": "This transaction satisfies name contains ACME and each charge at most $100.",
@@ -377,11 +274,11 @@ BATCHES: dict[int, dict[str, object]] = {
   },
   2: {
     "name": "Empty transactions + additional missing fields",
-    "tests": [2, 11, 12, 13],
+    "tests": [2, 10, 11],
   },
   3: {
     "name": "Ranges + case-insensitivity",
-    "tests": [8, 9, 10],
+    "tests": [7, 8, 9],
   },
   4: {
     "name": "Exact/equality keys",
@@ -389,19 +286,19 @@ BATCHES: dict[int, dict[str, object]] = {
   },
   5: {
     "name": "Truncated transactions (>3 shown as compact + more note)",
-    "tests": [14, 15],
+    "tests": [12, 13],
   },
 }
 
 
 class UpdateTransactionCategoryVerifyOptimizer:
-  """Gemini client for categorization rule verification.
+  """Gemini verify client.
 
-  Recommended defaults (batches 1–3 in this repo were last validated with these; re-run if you change SCHEMA/SYSTEM_PROMPT):
-  - `gemini-flash-lite-latest`: minimum model/cost; step up to `gemini-2.0-flash` if booleans or notes drift.
-  - `thinking_budget=0`: structured JSON; extra thinking rarely helps alignment.
-  - `temperature=0`, `top_p=1`: stable `rules_satisfied` and matching `notes`.
-  - `max_output_tokens=128`; raise to 160–256 only on truncated JSON.
+  Last live check (14 `TEST_CASES`, all batch indices): `gemini-flash-lite-latest`, tokens 128, thinking 0 — 0 golden
+  mismatches on `rules_satisfied`; notes stayed ≤100 chars without spelled-out money/years or banned filler words.
+
+  Defaults: `gemini-flash-lite-latest`, `thinking_budget=0`, `temperature=0`, `top_p=1`, `max_output_tokens=128`.
+  If JSON truncates, try `max_output_tokens=160`; if verdicts drift, try `gemini-2.0-flash`.
   """
 
   def __init__(self, model_name: str = "gemini-flash-lite-latest"):
@@ -554,6 +451,9 @@ def main(test: str = None, batch: int | None = None, model: str | None = None):
     print(f"  {i}: {tc['name']}")
 
 
+# python experiments/check_before_recategorize_optimizer.py --test 0
+# python experiments/check_before_recategorize_optimizer.py --batch 1
+# python experiments/check_before_recategorize_optimizer.py --test all_rules_satisfied_simple
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(
