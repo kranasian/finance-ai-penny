@@ -10,23 +10,28 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
   sys.path.insert(0, parent_dir)
 
+from penny.strategizer.rationalize_change_engine import RationalizeChangeEngine
 from penny.tool_funcs.lookup_transactions import lookup_transactions
-from penny.tool_funcs.rationalize import rationalize
 
 # Load environment variables
 load_dotenv()
 
 # Defaults (StrategizerOptimizer): flash-lite + thinking—see class __init__. Tuned for concise code + low fluff.
+# Keep in sync with penny2 finance-ai-llm-server ``RATIONALIZE_CHANGE_SYSTEM_PROMPT`` (rationalize_change_strategizer.py).
 
-SYSTEM_PROMPT = """You are **RationalizeChange**. Reply with **one** ```python``` block defining `execute_plan() -> tuple[bool, str]` only.
+RATIONALIZE_CHANGE_MAX_VISIBLE_TRANSACTIONS = 10
+
+SYSTEM_PROMPT = f"""You are **RationalizeChange**. Reply with **one** ```python``` block defining `execute_plan() -> tuple[bool, str]` only.
 
 **Benchmark:** For `*_vs_forecast`, compare actuals to **forecast/plan**. The **previous** `# Top Transactions` section is context, not the benchmark. Prior-period phrases in the Insight do not redefine the task type.
 
 **Inputs:** **Task Description** (caller-authored; obey). **Insight.** Two predetermined `# Top Transactions` blocks (recent + previous). Optional **Previous Outcomes**. Recent header’s end date = Task **as of** (insight cutoff).
 
-**Flow:** (1) Map Insight labels loosely to official slugs; reconcile $ to bullets using **both** sections. (2) If excerpts already explain vs forecast → `return True, "…"` (no tools). (3) If still implausible → `lookup_transactions` (header date ranges; `in_category` official slugs only) then `return rationalize(USER_MESSAGE, lookup_info)`. Never `rationalize` without lookup. (4) Follow Insight constraints (e.g. skip redundant lookup).
+**Flow:** (1) Map Insight labels loosely to official slugs; reconcile $ to bullets using **both** sections. (2) If excerpts already explain vs forecast → `return True, "…"` (no tools). (3) If still implausible → `lookup_transactions` (header date ranges; `in_category` official slugs only) then `return rationalize(USER_MESSAGE, lookup_info)`. Never `rationalize` without lookup. (4) Follow Insight constraints (e.g. skip redundant lookup). (5) **Host follow-up:** If the user message already includes **`# Supplemental lookup`**, you are **past** the merge step: **`execute_plan` must `return True, "…"` only** (≤3 sentences)—**never** call `rationalize` or `lookup_transactions` again. Copying the first-turn pattern `return rationalize(USER_MESSAGE, lookup_info)` here is **wrong** on this turn.
 
-**Return string:** Plain English, **≤3 short sentences**, no “Based on…”, no markdown inside quotes, no meta narration. **Do not contradict** dollar totals given in the Insight (visible bullets may be partial when `+K transactions` applies).
+**Explain the change (required):** The return string must **account for why** the Insight’s situation holds—not only repeat current dollar totals vs forecast. Tie the narrative to **concrete drivers**: which subcategories or merchants moved (from bullets and/or lookup), **direction** (higher/lower vs forecast or vs previous period), and **one** clear causal link. Do **not** end on a vague line like “reflects a decrease compared to forecast” without saying **what** decreased or increased and **how** the listed transactions support it.
+
+**Return string:** Plain English, **≤3 short sentences**, no “Based on…”, no markdown inside quotes, no meta narration. **Do not contradict** dollar totals given in the Insight (visible bullets may be partial when `+K more` applies).
 
 <OFFICIAL_CATEGORIES>
 income: income_salary, income_sidegig, income_business, income_interest
@@ -41,19 +46,12 @@ health: health_medical_pharmacy, health_gym_wellness, health_personal_care
 donations_gifts, uncategorized, transfers, miscellaneous
 </OFFICIAL_CATEGORIES>
 
-**Tools:** `lookup_transactions` and `rationalize` are **already in scope**—do **not** import them from any module. Only add `from datetime import date` (or `import datetime`) for bounds. Host returns `- $N at Merchant as slug.` lines, optional `+K transactions`. After lookup, **`return rationalize(USER_MESSAGE, lookup_info)`** only—never paraphrase the prompt as the first argument. Do not invent data.
+**Tools:** `lookup_transactions` and `rationalize` are **already in scope**—do **not** import them from any module. Only add `from datetime import date` (or `import datetime`) for bounds. **`lookup_transactions`** signature: required **`start`**, **`end`** (`date`, inclusive); optional **`name_contains`** (substring on merchant), **`amount_larger_than`**, **`amount_less_than`** (ints, absolute dollars), **`in_category`** (list of official slugs), **`max_visible`** (default {RATIONALIZE_CHANGE_MAX_VISIBLE_TRANSACTIONS}). Host accepts common aliases (e.g. `start_date`/`end_date`, `merchant_contains`, `categories`) but prefer the names above. Host returns `- $N at Merchant as slug.` lines, optional `+K more`. After lookup, **`return rationalize(USER_MESSAGE, lookup_info)`** only—never paraphrase the prompt as the first argument. Do not invent data.
 
-**Lists:** Global top-N by amount; category totals may hide below the cutoff (`+K transactions`).
+**Lists:** Global top-{RATIONALIZE_CHANGE_MAX_VISIBLE_TRANSACTIONS} by amount (unless `max_visible` is overridden); category totals may hide below the cutoff (`+K more`).
 
-**Code:** Keep `execute_plan` small (~≤15 lines). For `lookup_transactions` bounds use `from datetime import date` and `date(y, m, d)` (or `import datetime` and `datetime.date`). **`return rationalize(USER_MESSAGE, lookup_info)`**—never pass a hand-written summary as the first argument. Skip filler comments.
+**Code:** Keep `execute_plan` small (~≤15 lines). For `lookup_transactions` bounds use `from datetime import date` and `date(y, m, d)` (or `import datetime` and `datetime.date`). On the **first** turn only: **`return rationalize(USER_MESSAGE, lookup_info)`** after lookup—never pass a hand-written summary as the first argument. On a turn that already has **`# Supplemental lookup`** in the user message: **`return True, "your summary"`** only. Skip filler comments.
 """
-
-# Second-stage merge: after `lookup_transactions`, model emits `execute_plan` (Python); host injects USER_MESSAGE + LOOKUP_INFO.
-RATIONALIZE_MERGE_SYSTEM_PROMPT = """You are **RationalizeMerge**. One ```python``` block: `execute_plan() -> tuple[bool, str]`.
-
-Host injects `USER_MESSAGE` and `LOOKUP_INFO`. Reference them; do not embed the full user turn as a source literal.
-
-Return **≤3 tight** dashboard sentences in the string—no preamble, no markdown in quotes. Ground only on `USER_MESSAGE` + `LOOKUP_INFO`. No tools."""
 
 
 class StrategizerOptimizer:
@@ -82,6 +80,7 @@ class StrategizerOptimizer:
     ]
 
     self.system_prompt = SYSTEM_PROMPT
+    self._last_formatted_user_message = ""
 
   def generate_response(
     self,
@@ -108,6 +107,7 @@ class StrategizerOptimizer:
         previous_insight_date_range=previous_insight_date_range,
         previous_outcomes=previous_outcomes,
       )
+    self._last_formatted_user_message = body
     request_text = types.Part.from_text(text=body)
 
     contents = [types.Content(role="user", parts=[request_text])]
@@ -179,16 +179,7 @@ def generate_rationalization_text(
   thinking_budget: int | None = None,
   max_output_tokens: int | None = None,
 ) -> tuple[bool, str]:
-  """Run RationalizeMerge: Gemini emits ``execute_plan`` in a Python block; host runs it with ``USER_MESSAGE`` and ``LOOKUP_INFO``."""
-  body = f"""# Context (user message)
-
-{input_info}
-
-# Supplemental lookup (from lookup_transactions)
-
-{lookup_info}
-
-Produce a single ```python``` block defining `execute_plan() -> tuple[bool, str]`. At execution time the host sets `USER_MESSAGE` and `LOOKUP_INFO` to the two sections above—reference them inside `execute_plan`, do not embed the full context as a source literal."""
+  """Same strategizer template as the first turn (``SYSTEM_PROMPT``), with supplemental lookup in the user message."""
   opt_kw: dict = {}
   if model_name is not None:
     opt_kw["model_name"] = model_name
@@ -197,29 +188,8 @@ Produce a single ```python``` block defining `execute_plan() -> tuple[bool, str]
   if max_output_tokens is not None:
     opt_kw["max_output_tokens"] = max_output_tokens
   optimizer = StrategizerOptimizer(**opt_kw)
-  llm_out = optimizer.generate_response(
-    "",
-    "",
-    "",
-    "",
-    prompt_override=body,
-    system_prompt_override=RATIONALIZE_MERGE_SYSTEM_PROMPT,
-    print_thought_summary=False,
-  )
-  code = extract_python_code(llm_out)
-  if not code or "execute_plan" not in code:
-    raise ValueError("RationalizeMerge output must include a ```python``` block defining execute_plan.")
-  namespace: dict = {"USER_MESSAGE": input_info, "LOOKUP_INFO": lookup_info}
-  exec(code, namespace)
-  if "execute_plan" not in namespace or not callable(namespace["execute_plan"]):
-    raise ValueError("RationalizeMerge code must define a callable execute_plan.")
-  result = namespace["execute_plan"]()
-  if not isinstance(result, tuple) or len(result) != 2:
-    raise ValueError("execute_plan must return tuple[bool, str].")
-  success, out = result[0], result[1]
-  if not isinstance(success, bool) or not isinstance(out, str):
-    raise ValueError("execute_plan must return tuple[bool, str].")
-  return success, out
+  engine = RationalizeChangeEngine(optimizer, print_thought_summary=False)
+  return engine.run_followup_turn(input_info, lookup_info)
 
 
 # Task Description: static wording + `{insight_type}`, `{period_label}`, `{as_of}` (as_of = insight cutoff, end of recent window).
@@ -627,6 +597,7 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer | None 
     print(f"\n# Test: **{test_name}**\n")
     if optimizer is None:
       optimizer = StrategizerOptimizer()
+    engine = RationalizeChangeEngine(optimizer, print_thought_summary=False)
     prompt_body = test_name_or_index_or_dict["input"]
     print("## LLM Input\n")
     print(prompt_body)
@@ -660,7 +631,7 @@ def run_test(test_name_or_index_or_dict, optimizer: StrategizerOptimizer | None 
         namespace = {
           "USER_MESSAGE": prompt_body,
           "lookup_transactions": wrapped_lookup_transactions,
-          "rationalize": rationalize,
+          "rationalize": engine.sandbox_rationalize_callback(),
         }
         exec(code, namespace)
         if "execute_plan" in namespace:
