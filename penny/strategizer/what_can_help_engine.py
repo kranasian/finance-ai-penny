@@ -47,6 +47,22 @@ def _followup_llm_body(merged_body: str) -> tuple[str, str]:
   return structured, full
 
 
+def _normalize_aggregated_lookup_text(aggregated: Any) -> str:
+  """Models sometimes pass a list/tuple of tool return strings; merge accepts one string only."""
+  if aggregated is None:
+    return ""
+  if isinstance(aggregated, str):
+    return aggregated
+  if isinstance(aggregated, (list, tuple)):
+    parts: List[str] = []
+    for item in aggregated:
+      if item is None:
+        continue
+      parts.append(item if isinstance(item, str) else str(item))
+    return "\n\n".join(p.strip() for p in parts if p.strip())
+  return str(aggregated)
+
+
 def _refine_strategy_followup_terminal_stub(_aggregated: str) -> Tuple[bool, str]:
   return (
     False,
@@ -135,10 +151,10 @@ class WhatCanHelpEngine:
     self.print_thought_summary = print_thought_summary
     self._wch_snapshot_for_merge: str = ""
 
-  def _merge_aggregated_into_wch_snapshot(self, aggregated_latest_outcome: str) -> str:
+  def _merge_aggregated_into_wch_snapshot(self, aggregated_latest_outcome: Any) -> str:
     """Append lookup output to the running snapshot; return full text for the next turn."""
     base = (self._wch_snapshot_for_merge or "").strip()
-    agg = (aggregated_latest_outcome or "").strip()
+    agg = _normalize_aggregated_lookup_text(aggregated_latest_outcome).strip()
     if base and agg:
       merged = f"{base}\n\n{agg}"
     elif agg:
@@ -223,7 +239,7 @@ class WhatCanHelpEngine:
 
   def run_refinement_turn(
     self,
-    aggregated_latest_outcome: str,
+    aggregated_latest_outcome: Any,
     *,
     debug_arr: Optional[List[str]] = None,
   ) -> Tuple[bool, str]:
@@ -240,7 +256,7 @@ class WhatCanHelpEngine:
 
   def _execute_strategizer_followup(
     self,
-    aggregated_latest_outcome: str,
+    aggregated_latest_outcome: Any,
     *,
     followup_generation: int = 0,
     debug_arr: Optional[List[str]] = None,
@@ -304,7 +320,7 @@ class WhatCanHelpEngine:
   ):
     phase = "follow-up-retry-" + str(followup_generation) if followup_generation > 0 else "follow-up"
 
-    def _refine_strategy(aggregated_lookup: str) -> Tuple[bool, str]:
+    def _refine_strategy(aggregated_lookup: Any) -> Tuple[bool, str]:
       self._log_what_can_help(
         phase,
         "nested refine_strategy()",
@@ -319,7 +335,7 @@ class WhatCanHelpEngine:
     return _refine_strategy
 
   def _make_refinement_callback(self):
-    def _refine_strategy(aggregated_lookup: str) -> Tuple[bool, str]:
+    def _refine_strategy(aggregated_lookup: Any) -> Tuple[bool, str]:
       return self._execute_strategizer_followup(
         aggregated_lookup,
         followup_generation=0,

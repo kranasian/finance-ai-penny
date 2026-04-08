@@ -2,6 +2,9 @@
 WhatCanHelp strategizer (Gemini): emits ``execute_plan`` using lookup tools + optional ``refine_strategy`` follow-up.
 
 Engine is ``WhatCanHelpEngine``.
+
+Default ``StrategizerOptimizer`` settings (``gemini-flash-lite-latest``, ``thinking_budget=256``, ``max_output_tokens=2048``)
+balance cost/latency vs reliability: ``max_output_tokens`` below ~2048 risks truncating ``execute_plan``; batch 1 in ``--batch 1`` is the smoke check.
 """
 
 from __future__ import annotations
@@ -33,32 +36,15 @@ load_dotenv()
 LOOKUP_TX_MAX_VISIBLE = 10
 
 # Optimizer ``system_prompt`` — fixed for every WhatCanHelp turn; only user ``prompt_override`` changes.
-SYSTEM_PROMPT = f"""You are WhatCanHelpStrategizer. Respond with one ```python``` block that defines only `execute_plan() -> tuple[bool, str]`.
+SYSTEM_PROMPT = f"""You are WhatCanHelpStrategizer. Output one ```python``` block defining only `execute_plan() -> tuple[bool, str]`.
 
-**Input** is the financial snapshot you reason over. Inside `execute_plan` that text is bound as the global `WCH_USER_TURN` (do not import it). The chat user message for a turn is the same merged payload (snapshot plus any appended lookup excerpts). The host always supplies a non-empty snapshot. Never invent amounts or accounts.
+**Execution:** The host runs your code—**valid, complete** Python (no cut-off or unclosed strings). Final answer: `return True, strategy` with **plain text** only (four headers below; no markdown inside the string). **Forbidden:** `return False, lookup_*(...)`, `return True, lookup_*(...)`, or any `(bool, str)` whose second value is raw tool output—wrap tools in **`return refine_strategy(aggregated)`** as the only return on that turn. **`aggregated`** must be **one string** (e.g. `f"tx:\\n{{tx}}\\n\\nfc:\\n{{fc}}"` or `\\n\\n`.join([...]))—not a bare `list` unless you join it.
 
-**Input** includes:
-- Accounts
-- Last month spending for the five top-level categories (Food, Others, Bills, Shopping, Income)
-- This month current spending for those five
-- This month expected spending for those five
-- Expected account balances next month
+**`WCH_USER_TURN`:** Global string: five snapshot sections (headers like `# Accounts`, `# Last month spending`, `# This month current spending`, `# This month expected spending`, `# Expected account balances next month`) plus merged tool excerpts from earlier turns. Never invent numbers or accounts. Name **merchants or ledger lines** in **Tactics** only if that text is already in `WCH_USER_TURN` (or you add it via one refine).
 
-Use matching section headers in the snapshot text, e.g. ``# Accounts``, ``# Last month spending``, ``# This month current spending``, ``# This month expected spending``, ``# Expected account balances next month``.
+**Confidence and fewest turns:** If `WCH_USER_TURN` **already** contains merged **transaction or forecast** excerpts from tools, `return True, strategy` once tactics are grounded in that text. **Otherwise**, when the snapshot shows a **structural gap** (total spend far above income, or **Food / Bills / Shopping** clearly out of line vs income or vs expected), **do not** stop at generic category advice—run **one** batched `return refine_strategy(aggregated)` that combines every needed `lookup_transactions` window (use `<OFFICIAL_CATEGORIES>` slugs; split Food into meals_* as useful) plus optional forecast calls, **then** on the following turn `return True` with **Tactics** that cite **merchants or rows** from the merged text. Still: one refine per missing batch, no duplicate same dates+`in_category`, windows aligned to snapshot months. Refines are capped.
 
-**Input** may also include **extra labeled excerpts** from **tool results on earlier turns** (e.g. forecasts or transactions). Treat those as factual context alongside the five sections.
-
-**Your job:** From this input, infer what the user most needs help with and **strategize** how to support them (priorities, tradeoffs, what to watch). If the input is **insufficient** to ground that plan—or you need **verification** against ledger/forecast reality—call tool(s), build one factual string `aggregated` (no coaching prose), and **`return refine_strategy(aggregated)`** as the **only** return from `execute_plan` on that pass (it is already a `(bool, str)` from the orchestrator). **Never** return lookup text as the second element of a plain tuple—e.g. **do not** `return False, lookup_income_forecasts(...) + lookup_transactions(...)`; **always** pass combined tool output **into** `refine_strategy(...)`.
-
-If the input is already enough, `return True, strategy_string` with plain-text sections **Urgency:**, **User vs system:**, **Goals:**, **Tactics:** — urgency high/medium/low in one line each; 2–5 goals tied to data; **Tactics:** as numbered items. **Do not** promise ledger or forecast re-checks in **Tactics** unless those facts are **already** in `WCH_USER_TURN` or you **just** retrieved them via tools on this same turn. If a tactic would need income/spending **forecasts** or **transaction rows** you do not yet have, call the right tool(s) and **`return refine_strategy(aggregated)`** instead of `return True, …`. **Coach-only** tactics (employment, intent, habits) are fine without tools; anything that depends on **amounts, categories, or payees in the ledger** needs tools first when missing. No markdown inside the string, no meta narration. When returning `True`, use **no** tools and **no** `refine_strategy`.
-
-**Efficiency:** Reach a grounded plan in the **fewest** turns. When you must refine, batch **all** still-missing facts into **one** `aggregated` string for that turn (e.g. combine forecast + transaction pulls with clear labels)—avoid a chain of narrow refines. **`return True, strategy_string`** as soon as snapshot plus merged excerpts are enough for concrete **Tactics**; **do not** repeat lookups whose rows are already in `WCH_USER_TURN`. **Do not** call `lookup_transactions` again with the **same** date window and **`in_category`** (or a subset that adds nothing new) if that block is **already** present in merged text—reuse it and only fetch genuinely **missing** slices (e.g. forecasts if not yet appended).
-
-**Tool coverage:** `lookup_income_forecasts` / `lookup_spending_forecasts` give **monthly aggregates**; `lookup_transactions` gives **line-level** history (date range, optional category filter). Together they are enough for numeric verification implied by the snapshot (e.g. top-level **Income** vs payroll lines in `lookup_transactions`). They do **not** replace asking the user subjective questions—put those under coach-style tactics after data is clear.
-
-**Where users can improve (dig deeper):** Do not stop at “Food is high” or “Shopping is high.” Use the snapshot to spot **outliers** (vs income, vs other categories, or vs expected). When a category warrants it and you lack line detail, **`return refine_strategy`** with targeted pulls—e.g. **Food:** compare dining out vs delivery vs groceries via separate or combined `in_category` lists of official slugs (e.g. ``["meals_dining_out"]``, ``["meals_delivered_food"]``, ``["meals_groceries"]``) over the same months as the snapshot, or one broad `lookup_transactions` window and read merchant lines. **Shopping:** pull transactions filtered by shopping-related slugs or scan top merchants if unfiltered. **Bills / Others:** look for large recurring payees. After you have rows, **Goals** and **Tactics** should name **specific levers** (merchants, sub-categories, frequency) the user can change—not only generic “spend less.” If one refine already added transaction excerpts, mine them in `execute_plan` before asking for more.
-
-`refine_strategy(aggregated)` supplies new lookup text; the **next** user turn repeats the **original** snapshot and appends that text (cumulative on further refines). The orchestrator may cap further `refine_strategy` rounds—treat each refine as expensive and exit with **`return True, …`** once information is sufficient.
+**Strategy format** (when `return True, …`): **Urgency:** (one line, high/medium/low) **User vs system:** **Goals:** (2–5, data-backed) **Tactics:** (numbered; specific where data allows). Do not promise new ledger/forecast pulls in tactics unless those facts are already in `WCH_USER_TURN` or you just retrieved them this turn. Coach-only tactics (habits, intent) need no tools.
 
 <OFFICIAL_CATEGORIES>
 income: income_salary, income_sidegig, income_business, income_interest
@@ -77,7 +63,7 @@ donations_gifts, uncategorized, transfers, miscellaneous
 - `lookup_spending_forecasts(horizon_months=3)`, `lookup_income_forecasts(horizon_months=3)`
 - `lookup_transactions(start, end, name_contains="", amount_larger_than=None, amount_less_than=None, in_category=None)` — `in_category` is a **list** of official slugs from `<OFFICIAL_CATEGORIES>` (or `None`); optional `max_visible` (default {LOOKUP_TX_MAX_VISIBLE})
 
-You may use `from datetime import date` for bounds. Keep `execute_plan` ~≤25 lines, no filler comments.
+Use `from datetime import date` for bounds if needed. Keep `execute_plan` ~≤25 lines, minimal comments.
 """
 
 
@@ -87,7 +73,7 @@ class StrategizerOptimizer:
   def __init__(
     self,
     model_name: str = "gemini-flash-lite-latest",
-    thinking_budget: int = 512,
+    thinking_budget: int = 256,
     max_output_tokens: int = 2048,
   ):
     api_key = os.getenv("GEMINI_API_KEY")
@@ -375,11 +361,11 @@ def _wrap_tools_for_test(
 
 
 # Each entry must contain exactly: ``batch``, ``name``, ``tool_mocks``, ``input``, ``output``.
-# ``input``: top-body payload ``str | None``; prefer prefilled five-block input (literal str per case).
+# ``input``: top-body payload ``str | None``; five snapshot blocks, optionally plus merged tool excerpts.
 TEST_CASES: list[dict[str, Any]] = [
   {
     "batch": 1,
-    "name": "wch_first_call_empty_then_tools_and_refine",
+    "name": "wch_deficit_snapshot_income_forecast_1481",
     "tool_mocks": dict(TOOL_DUMMY_RESPONSES),
     "input": """# Accounts (as of 2026-04-07):
 - Chase Checking (checking): $2,840
@@ -396,18 +382,17 @@ TEST_CASES: list[dict[str, Any]] = [
 - 2026-04: Food $1,260  Others $520  Bills $1,980  Shopping $700  Income $1,481
 
 # Expected account balances next month
-- Remaining expected spending this month: $2,030
 - Chase Checking (checking): $810
 - Amex Credit (credit card): -$910
 - Ally Savings (savings): $12,170
 """,
     "output": (
-      "multiple turns: lookups then `(False, refine_strategy(aggregated))`. last turn: `(True, strategy)`."
+      "multiple turns: lookups then `return refine_strategy(aggregated)`. last turn: `return (True, strategy)`."
     ),
   },
   {
     "batch": 1,
-    "name": "wch_first_call_empty_income_gap_mocks",
+    "name": "wch_deficit_snapshot_forecasts_4200_5100",
     "tool_mocks": {
       **TOOL_DUMMY_RESPONSES,
       "lookup_income_forecasts": """Income forecasts (next 3 months):
@@ -431,18 +416,17 @@ TEST_CASES: list[dict[str, Any]] = [
 - 2026-04: Food $1,260  Others $520  Bills $1,980  Shopping $700  Income $1,481
 
 # Expected account balances next month
-- Remaining expected spending this month: $2,030
 - Chase Checking (checking): $810
 - Amex Credit (credit card): -$910
 - Ally Savings (savings): $12,170
 """,
     "output": (
-       "may call lookups in multiple turns calling (False, refine_strategy(aggregated)), then last turn: `(True, strategy)`."
+       "may call lookups in multiple turns calling refine_strategy(aggregated), then last turn: `(True, strategy)`."
     ),
   },
   {
     "batch": 1,
-    "name": "wch_prefilled_lookup_final_only",
+    "name": "wch_deficit_snapshot_prefilled_merged_tx_and_forecasts",
     "tool_mocks": dict(TOOL_DUMMY_RESPONSES),
     "input": """# Accounts (as of 2026-04-07):
 - Chase Checking (checking): $2,840
@@ -459,13 +443,36 @@ TEST_CASES: list[dict[str, Any]] = [
 - 2026-04: Food $1,260  Others $520  Bills $1,980  Shopping $700  Income $1,481
 
 # Expected account balances next month
-- Remaining expected spending this month: $2,030
 - Chase Checking (checking): $810
 - Amex Credit (credit card): -$910
 - Ally Savings (savings): $12,170
+
+Spending forecasts (next 3 months):
+- 2026-04: $4,200
+- 2026-05: $4,050
+- 2026-06: $4,100
+
+Income forecasts (next 3 months):
+- 2026-04: $1,481
+- 2026-05: $1,481
+- 2026-06: $1,481
+
+From 2026-03-01 through 2026-03-31 (top by amount, max 10):
+
+- $1,481 at Acme Corp Payroll as income_salary.
+- $420 at Whole Foods as meals_groceries.
+- $400 at BrightLink Fiber as bills_connectivity.
+- $310 at City Property Mgmt as shelter_home.
+- $300 at Design Gig LLC as income_sidegig.
+- $220 at State Estimated Tax as bills_tax.
+- $210 at Shell as transportation_car.
+- $185 at DoorDash as meals_delivered_food.
+- $175 at HOA Management as bills_service_fees.
+- $160 at Netflix as leisure_entertainment.
++7 transactions
 """,
     "output": (
-      "may call lookups in multiple turns calling (False, refine_strategy(aggregated)), then last turn: `(True, strategy)`."
+      "single turn: `return True, strategy` grounded in merged excerpts—no `refine_strategy` unless a gap remains."
     ),
   },
 ]
@@ -572,7 +579,7 @@ def main(
   max_output_tokens: int | None = None,
   model: str | None = None,
 ):
-  tb = 0 if no_thinking else (thinking_budget if thinking_budget is not None else 512)
+  tb = 0 if no_thinking else (thinking_budget if thinking_budget is not None else 256)
   kw: dict[str, Any] = {"thinking_budget": tb}
   if max_output_tokens is not None:
     kw["max_output_tokens"] = max_output_tokens
