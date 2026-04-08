@@ -10,6 +10,7 @@ import argparse
 import os
 import sys
 import traceback
+from datetime import date
 from typing import Any, Callable
 
 from dotenv import load_dotenv
@@ -24,8 +25,7 @@ if parent_dir not in sys.path:
 from penny.strategizer.what_can_help_engine import (
   WhatCanHelpEngine,
   format_lookup_user_turn,
-  wch_latest_outcome_is_empty,
-  wch_lookup_is_empty,
+  latest_outcome_payload,
 )
 
 load_dotenv()
@@ -35,24 +35,47 @@ LOOKUP_TX_MAX_VISIBLE = 10
 # Optimizer ``system_prompt`` — fixed for every WhatCanHelp turn; only user ``prompt_override`` changes.
 SYSTEM_PROMPT = f"""You are WhatCanHelpStrategizer. Respond with one ```python``` block that defines only `execute_plan() -> tuple[bool, str]`.
 
-The chat user message matches the host’s structured turn plus optional **HOST** reminders on refine passes.
+**Input** is the financial snapshot you reason over. Inside `execute_plan` that text is bound as the global `WCH_USER_TURN` (do not import it). The chat user message for a turn is the same merged payload (snapshot plus any appended lookup excerpts). The host always supplies a non-empty snapshot. Never invent amounts or accounts.
 
-The host injects `WCH_USER_TURN`, `wch_latest_outcome_is_empty`, and `wch_lookup_is_empty` (deprecated alias) into `execute_plan`’s globals—do not import them. Prefer `wch_latest_outcome_is_empty(WCH_USER_TURN)`.
+**Input** includes:
+- Accounts
+- Last month spending for the five top-level categories (Food, Others, Bills, Shopping, Income)
+- This month current spending for those five
+- This month expected spending for those five
+- Expected account balances next month
 
-`WCH_USER_TURN` has no **HOST** lines: `# Latest Outcome` (prefilled and/or tool-aggregated data, or the token `None` when nothing is loaded yet), then optionally `# Previous Outcomes` with numbered prior strategizer outcomes (`1. **Outcome #1**: …`). `wch_latest_outcome_is_empty(WCH_USER_TURN)` is true only when the **# Latest Outcome** body is exactly `None`. Honor `# Previous Outcomes` when present; do not contradict them without evidence from new lookups. Never invent amounts or accounts.
+Use matching section headers in the snapshot text, e.g. ``# Accounts``, ``# Last month spending``, ``# This month current spending``, ``# This month expected spending``, ``# Expected account balances next month``.
 
-Branch:
-- `wch_latest_outcome_is_empty(WCH_USER_TURN)`: call the minimum tools needed, concatenate into one string, `return refine_strategy(aggregated)` with that string (it becomes the next turn’s `# Latest Outcome` body). Do not `return True, ...` with the final strategy here.
-- else: `return True, strategy_string` with plain-text sections Urgency:, User vs system:, Goals:, Tactics (code / LLM): — urgency high/medium/low in one line each; 2–5 goals tied to data; per goal name what to re-check (tools/thresholds) vs how a coach should guide the user. No markdown inside the string, no meta narration. No tools, no `refine_strategy`.
+**Input** may also include **extra labeled excerpts** from **tool results on earlier turns** (e.g. forecasts or transactions). Treat those as factual context alongside the five sections.
 
-`refine_strategy(aggregated)` takes one string: concatenated tool output for the next turn’s `# Latest Outcome`.
+**Your job:** From this input, infer what the user most needs help with and **strategize** how to support them (priorities, tradeoffs, what to watch). If the input is **insufficient** to ground that plan—or you need **verification** against ledger/forecast reality—call tool(s), build one factual string `aggregated` (no coaching prose), and **`return refine_strategy(aggregated)`** as the **only** return from `execute_plan` on that pass (it is already a `(bool, str)` from the orchestrator). **Never** return lookup text as the second element of a plain tuple—e.g. **do not** `return False, lookup_income_forecasts(...) + lookup_transactions(...)`; **always** pass combined tool output **into** `refine_strategy(...)`.
 
-Tools already in scope:
-- `lookup_accounts()`
+If the input is already enough, `return True, strategy_string` with plain-text sections **Urgency:**, **User vs system:**, **Goals:**, **Tactics:** — urgency high/medium/low in one line each; 2–5 goals tied to data; **Tactics:** as numbered items. **Do not** promise ledger or forecast re-checks in **Tactics** unless those facts are **already** in `WCH_USER_TURN` or you **just** retrieved them via tools on this same turn. If a tactic would need income/spending **forecasts** or **transaction rows** you do not yet have, call the right tool(s) and **`return refine_strategy(aggregated)`** instead of `return True, …`. **Coach-only** tactics (employment, intent, habits) are fine without tools; anything that depends on **amounts, categories, or payees in the ledger** needs tools first when missing. No markdown inside the string, no meta narration. When returning `True`, use **no** tools and **no** `refine_strategy`.
+
+**Efficiency:** Reach a grounded plan in the **fewest** turns. When you must refine, batch **all** still-missing facts into **one** `aggregated` string for that turn (e.g. combine forecast + transaction pulls with clear labels)—avoid a chain of narrow refines. **`return True, strategy_string`** as soon as snapshot plus merged excerpts are enough for concrete **Tactics**; **do not** repeat lookups whose rows are already in `WCH_USER_TURN`. **Do not** call `lookup_transactions` again with the **same** date window and **`in_category`** (or a subset that adds nothing new) if that block is **already** present in merged text—reuse it and only fetch genuinely **missing** slices (e.g. forecasts if not yet appended).
+
+**Tool coverage:** `lookup_income_forecasts` / `lookup_spending_forecasts` give **monthly aggregates**; `lookup_transactions` gives **line-level** history (date range, optional category filter). Together they are enough for numeric verification implied by the snapshot (e.g. top-level **Income** vs payroll lines in `lookup_transactions`). They do **not** replace asking the user subjective questions—put those under coach-style tactics after data is clear.
+
+**Where users can improve (dig deeper):** Do not stop at “Food is high” or “Shopping is high.” Use the snapshot to spot **outliers** (vs income, vs other categories, or vs expected). When a category warrants it and you lack line detail, **`return refine_strategy`** with targeted pulls—e.g. **Food:** compare dining out vs delivery vs groceries via separate or combined `in_category` lists of official slugs (e.g. ``["meals_dining_out"]``, ``["meals_delivered_food"]``, ``["meals_groceries"]``) over the same months as the snapshot, or one broad `lookup_transactions` window and read merchant lines. **Shopping:** pull transactions filtered by shopping-related slugs or scan top merchants if unfiltered. **Bills / Others:** look for large recurring payees. After you have rows, **Goals** and **Tactics** should name **specific levers** (merchants, sub-categories, frequency) the user can change—not only generic “spend less.” If one refine already added transaction excerpts, mine them in `execute_plan` before asking for more.
+
+`refine_strategy(aggregated)` supplies new lookup text; the **next** user turn repeats the **original** snapshot and appends that text (cumulative on further refines). The orchestrator may cap further `refine_strategy` rounds—treat each refine as expensive and exit with **`return True, …`** once information is sufficient.
+
+<OFFICIAL_CATEGORIES>
+income: income_salary, income_sidegig, income_business, income_interest
+meals: meals_groceries, meals_dining_out, meals_delivered_food
+leisure: leisure_entertainment, leisure_travel
+bills: bills_connectivity, bills_insurance, bills_tax, bills_service_fees
+shelter: shelter_home, shelter_utilities, shelter_upkeep
+education: education_kids_activities, education_tuition
+shopping: shopping_clothing, shopping_gadgets, shopping_kids, shopping_pets
+transportation: transportation_public, transportation_car
+health: health_medical_pharmacy, health_gym_wellness, health_personal_care
+donations_gifts, uncategorized, transfers, miscellaneous
+</OFFICIAL_CATEGORIES>
+
+**Tools available (only these):**
 - `lookup_spending_forecasts(horizon_months=3)`, `lookup_income_forecasts(horizon_months=3)`
-- `lookup_transactions(start, end, name_contains="", amount_larger_than=None, amount_less_than=None, in_category=None)` — official slugs in `in_category`; host may accept `max_visible` (default {LOOKUP_TX_MAX_VISIBLE})
-- `lookup_spending_transactions(start, end, name_contains="", in_category=None, max_visible={LOOKUP_TX_MAX_VISIBLE})`, `lookup_income_transactions(start, end, name_contains="", max_visible={LOOKUP_TX_MAX_VISIBLE})`
-- `lookup_monthly_spending_by_category(months_back=6)`, `lookup_future_spending_by_category(months_ahead=3)`, `lookup_avg_monthly_spending(category)`
+- `lookup_transactions(start, end, name_contains="", amount_larger_than=None, amount_less_than=None, in_category=None)` — `in_category` is a **list** of official slugs from `<OFFICIAL_CATEGORIES>` (or `None`); optional `max_visible` (default {LOOKUP_TX_MAX_VISIBLE})
 
 You may use `from datetime import date` for bounds. Keep `execute_plan` ~≤25 lines, no filler comments.
 """
@@ -65,7 +88,7 @@ class StrategizerOptimizer:
     self,
     model_name: str = "gemini-flash-lite-latest",
     thinking_budget: int = 512,
-    max_output_tokens: int = 1024,
+    max_output_tokens: int = 2048,
   ):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -95,7 +118,6 @@ class StrategizerOptimizer:
     top_transactions_previous_period: str,
     recent_insight_date_range: str = "—",
     previous_insight_date_range: str = "—",
-    previous_outcomes: dict[int | str, str] | list[str] | str | None = None,
     prompt_override: str | None = None,
     system_prompt_override: str | None = None,
     print_thought_summary: bool = True,
@@ -107,7 +129,6 @@ class StrategizerOptimizer:
       top_transactions_previous_period,
       recent_insight_date_range,
       previous_insight_date_range,
-      previous_outcomes,
     )
     body = prompt_override if prompt_override is not None else ""
     self._last_lookup_user_turn = body
@@ -165,6 +186,86 @@ def extract_python_code(text: str) -> str:
 
 
 # --- Dummy tool responses (used by tests; document expected shape for hosts) ---
+# Filtered ``lookup_transactions`` uses ``_MOCK_TX_ROWS`` so ``in_category`` / name / amount filters match row slugs.
+
+_MOCK_TX_ROWS: list[tuple[int, str, str]] = [
+  (1481, "Acme Corp Payroll", "income_salary"),
+  (420, "Whole Foods", "meals_groceries"),
+  (400, "BrightLink Fiber", "bills_connectivity"),
+  (310, "City Property Mgmt", "shelter_home"),
+  (300, "Design Gig LLC", "income_sidegig"),
+  (220, "State Estimated Tax", "bills_tax"),
+  (210, "Shell", "transportation_car"),
+  (185, "DoorDash", "meals_delivered_food"),
+  (175, "HOA Management", "bills_service_fees"),
+  (160, "Netflix", "leisure_entertainment"),
+  (160, "State Farm", "bills_insurance"),
+  (120, "Comcast", "bills_connectivity"),
+  (99, "App Store Fees", "bills_service_fees"),
+  (95, "CVS", "health_medical_pharmacy"),
+  (88, "Uber", "transportation_car"),
+  (72, "Thai Garden", "meals_dining_out"),
+  (61, "Spotify", "leisure_entertainment"),
+]
+
+
+def _coerce_date_wch(val: Any) -> date | None:
+  if val is None:
+    return None
+  if isinstance(val, date):
+    return val
+  if isinstance(val, str):
+    try:
+      return date.fromisoformat(val.strip()[:10])
+    except ValueError:
+      return None
+  return None
+
+
+def _lookup_tx_kwargs_from_call(*args: Any, **kwargs: Any) -> dict[str, Any]:
+  out = dict(kwargs)
+  if len(args) >= 1 and "start" not in out:
+    out["start"] = args[0]
+  if len(args) >= 2 and "end" not in out:
+    out["end"] = args[1]
+  return out
+
+
+def _mock_lookup_transactions_filtered(kw: dict[str, Any]) -> str:
+  s = _coerce_date_wch(kw.get("start")) or date(2026, 3, 1)
+  e = _coerce_date_wch(kw.get("end")) or date(2026, 3, 31)
+  in_category = kw.get("in_category")
+  cats = frozenset(in_category) if in_category else None
+  name_contains = (kw.get("name_contains") or "").strip().lower()
+  lo = kw.get("amount_larger_than")
+  hi = kw.get("amount_less_than")
+  max_vis = int(kw.get("max_visible") or LOOKUP_TX_MAX_VISIBLE)
+
+  rows = list(_MOCK_TX_ROWS)
+  if cats:
+    rows = [r for r in rows if r[2] in cats]
+  if name_contains:
+    rows = [r for r in rows if name_contains in r[1].lower()]
+  if lo is not None:
+    rows = [r for r in rows if r[0] >= int(lo)]
+  if hi is not None:
+    rows = [r for r in rows if r[0] <= int(hi)]
+  rows.sort(key=lambda r: r[0], reverse=True)
+  visible = rows[:max_vis]
+  remainder = max(0, len(rows) - len(visible))
+
+  lines = [
+    f"From {s.isoformat()} through {e.isoformat()} (top by amount, max {max_vis}):",
+    "",
+  ]
+  if not visible:
+    lines.append("(no rows in this window for the given filters)")
+  else:
+    for amt, merch, slug in visible:
+      lines.append(f"- ${amt:,} at {merch} as {slug}.")
+  lines.append(f"+{remainder} transactions")
+  return "\n".join(lines) + "\n"
+
 
 TOOL_DUMMY_RESPONSES: dict[str, str] = {
   "lookup_accounts": """Accounts (as of 2026-04-07):
@@ -178,23 +279,23 @@ TOOL_DUMMY_RESPONSES: dict[str, str] = {
 - 2026-06: $4,100
 """,
   "lookup_income_forecasts": """Income forecasts (next 3 months):
-- 2026-04: $5,100
-- 2026-05: $5,100
-- 2026-06: $5,050
+- 2026-04: $1,481
+- 2026-05: $1,481
+- 2026-06: $1,481
 """,
   "lookup_transactions": """From 2026-03-01 through 2026-03-31 (top by amount, max 10):
 
 - $1,481 at Acme Corp Payroll as income_salary.
 - $420 at Whole Foods as meals_groceries.
+- $400 at BrightLink Fiber as bills_connectivity.
 - $310 at City Property Mgmt as shelter_home.
+- $300 at Design Gig LLC as income_sidegig.
+- $220 at State Estimated Tax as bills_tax.
 - $210 at Shell as transportation_car.
 - $185 at DoorDash as meals_delivered_food.
+- $175 at HOA Management as bills_service_fees.
 - $160 at Netflix as leisure_entertainment.
-- $95 at CVS as health_medical_pharmacy.
-- $88 at Uber as transportation_car.
-- $72 at Thai Garden as meals_dining_out.
-- $61 at Spotify as leisure_entertainment.
-+22 transactions
++7 transactions
 """,
   "lookup_spending_transactions": """Spending only, 2026-03-01..2026-03-31 (max 10):
 
@@ -236,48 +337,72 @@ def _wrap_tools_for_test(
   engine: WhatCanHelpEngine,
   tool_mocks: dict[str, str],
 ) -> dict[str, Callable[..., str]]:
-  """Return namespace tools that print and return dummy strings."""
+  """Return namespace tools that return dummy strings (no console logging)."""
 
   def _make(name: str) -> Callable[..., str]:
     def _fn(*args: Any, **kwargs: Any) -> str:
-      out = tool_mocks.get(name, TOOL_DUMMY_RESPONSES.get(name, ""))
-      print(f"\n## {name} returned\n")
-      print(out)
-      print()
-      return out
+      return tool_mocks.get(name, TOOL_DUMMY_RESPONSES.get(name, ""))
 
     return _fn
+
+  static_tx = tool_mocks.get("lookup_transactions", TOOL_DUMMY_RESPONSES["lookup_transactions"])
+
+  def _lookup_transactions_mock(*args: Any, **kwargs: Any) -> str:
+    kw = _lookup_tx_kwargs_from_call(*args, **kwargs)
+    ic = kw.get("in_category")
+    use_filtered = bool(
+      ic
+      or (kw.get("name_contains") or "").strip()
+      or kw.get("amount_larger_than") is not None
+      or kw.get("amount_less_than") is not None
+    )
+    if use_filtered:
+      kw.setdefault("max_visible", LOOKUP_TX_MAX_VISIBLE)
+      return _mock_lookup_transactions_filtered(kw)
+    return static_tx
 
   out: dict[str, Callable[..., str]] = {}
   bindings = engine.tool_bindings
   for key in (
-    "lookup_accounts",
     "lookup_spending_forecasts",
     "lookup_income_forecasts",
-    "lookup_transactions",
-    "lookup_spending_transactions",
-    "lookup_income_transactions",
-    "lookup_monthly_spending_by_category",
-    "lookup_future_spending_by_category",
-    "lookup_avg_monthly_spending",
   ):
     _ = bindings[key]
     out[key] = _make(key)
+  _ = bindings["lookup_transactions"]
+  out["lookup_transactions"] = _lookup_transactions_mock
   return out
 
 
 # Each entry must contain exactly: ``batch``, ``name``, ``tool_mocks``, ``input``, ``output``.
-# ``input``: latest-outcome payload ``str | None``; ``None`` or ``""`` → ``# Latest Outcome`` is token ``None``.
+# ``input``: top-body payload ``str | None``; prefer prefilled five-block input (literal str per case).
 TEST_CASES: list[dict[str, Any]] = [
   {
     "batch": 1,
     "name": "wch_first_call_empty_then_tools_and_refine",
     "tool_mocks": dict(TOOL_DUMMY_RESPONSES),
-    "input": None,
+    "input": """# Accounts (as of 2026-04-07):
+- Chase Checking (checking): $2,840
+- Amex Credit (credit card): $1,120
+- Ally Savings (savings): $14,200
+
+# Last month spending
+- 2026-03: Food $1,240  Others $560  Bills $1,980  Shopping $720  Income $1,481
+
+# This month current spending
+- 2026-04: Food $810  Others $180  Bills $1,240  Shopping $390  Income $1,481
+
+# This month expected spending
+- 2026-04: Food $1,260  Others $520  Bills $1,980  Shopping $700  Income $1,481
+
+# Expected account balances next month
+- Remaining expected spending this month: $2,030
+- Chase Checking (checking): $810
+- Amex Credit (credit card): -$910
+- Ally Savings (savings): $12,170
+""",
     "output": (
-      "Expected: wch_latest_outcome_is_empty(WCH_USER_TURN); execute_plan calls lookups, builds aggregated string, "
-      "`return refine_strategy(aggregated)` (not final True on first pass). Second turn (simulated by host) "
-      "would return True with strategy."
+      "multiple turns: lookups then `(False, refine_strategy(aggregated))`. last turn: `(True, strategy)`."
     ),
   },
   {
@@ -291,40 +416,56 @@ TEST_CASES: list[dict[str, Any]] = [
 - 2026-06: $5,100
 """,
     },
-    "input": None,
+    "input": """# Accounts (as of 2026-04-07):
+- Chase Checking (checking): $2,840
+- Amex Credit (credit card): $1,120
+- Ally Savings (savings): $14,200
+
+# Last month spending
+- 2026-03: Food $1,240  Others $560  Bills $1,980  Shopping $720  Income $1,481
+
+# This month current spending
+- 2026-04: Food $810  Others $180  Bills $1,240  Shopping $390  Income $1,481
+
+# This month expected spending
+- 2026-04: Food $1,260  Others $520  Bills $1,980  Shopping $700  Income $1,481
+
+# Expected account balances next month
+- Remaining expected spending this month: $2,030
+- Chase Checking (checking): $810
+- Amex Credit (credit card): -$910
+- Ally Savings (savings): $12,170
+""",
     "output": (
-      "Expected: first pass aggregates forecasts + accounts (or similar), `refine_strategy(aggregated)`; "
-      "follow-up turn returns True with cut-order / savings guidance grounded in lookup text."
+       "may call lookups in multiple turns calling (False, refine_strategy(aggregated)), then last turn: `(True, strategy)`."
     ),
   },
   {
     "batch": 1,
     "name": "wch_prefilled_lookup_final_only",
     "tool_mocks": dict(TOOL_DUMMY_RESPONSES),
-    "input": """Accounts (as of 2026-04-07):
-- Checking ****4401 | Chase | balance $2,840
-- Credit ****9912 | Amex | balance $1,120 (limit $8,000)
-- Savings ****2200 | Ally | balance $14,200
+    "input": """# Accounts (as of 2026-04-07):
+- Chase Checking (checking): $2,840
+- Amex Credit (credit card): $1,120
+- Ally Savings (savings): $14,200
 
-Spending forecasts (next 3 months):
-- 2026-04: $4,200
-- 2026-05: $4,050 
-- 2026-06: $4,100
+# Last month spending
+- 2026-03: Food $1,240  Others $560  Bills $1,980  Shopping $720  Income $1,481
 
-Income forecasts (next 3 months):
-- 2026-04: $4,200
-- 2026-05: $5,100
-- 2026-06: $5,050
+# This month current spending
+- 2026-04: Food $810  Others $180  Bills $1,240  Shopping $390  Income $1,481
 
-Forecasted monthly spending by category (next 3 months):
-- shelter_home: $310
-- meals_groceries: $450
-- meals_delivered_food: $120
-- transportation_car: $280
+# This month expected spending
+- 2026-04: Food $1,260  Others $520  Bills $1,980  Shopping $700  Income $1,481
+
+# Expected account balances next month
+- Remaining expected spending this month: $2,030
+- Chase Checking (checking): $810
+- Amex Credit (credit card): -$910
+- Ally Savings (savings): $12,170
 """,
     "output": (
-      "Expected: not wch_latest_outcome_is_empty(WCH_USER_TURN); execute_plan returns (True, summary) only—no tools, "
-      "no refine_strategy; tight cash flow and savings guidance from prefilled tool-shaped latest-outcome text."
+      "may call lookups in multiple turns calling (False, refine_strategy(aggregated)), then last turn: `(True, strategy)`."
     ),
   },
 ]
@@ -352,40 +493,58 @@ def run_test(test_dict: dict[str, Any], optimizer: StrategizerOptimizer | None =
 
   lookup_payload = raw_input
   prompt_body = format_lookup_user_turn(lookup_payload)
+  engine._wch_snapshot_for_merge = latest_outcome_payload(lookup_payload).strip()
   setattr(optimizer, "_last_lookup_user_turn", prompt_body)
-  print("## LLM Input\n")
-  print(prompt_body)
-  print()
-  llm_out = optimizer.generate_response(
-    "",
-    "",
-    "",
-    "",
-    prompt_override=prompt_body,
-  )
-  print("## LLM Output:\n")
-  print(llm_out)
-  print()
-  code = extract_python_code(llm_out)
+
+  _orig_generate_response = optimizer.generate_response
+  _llm_call = 0
+
+  def _trace_generate_response(*args: Any, **kwargs: Any) -> str:
+    nonlocal _llm_call
+    _llm_call += 1
+    prompt = kwargs.get("prompt_override")
+    if prompt is None:
+      prompt = ""
+    print(f"## LLM Input (call {_llm_call})\n")
+    print(prompt)
+    print()
+    out = _orig_generate_response(*args, **kwargs)
+    print(f"## LLM Output (call {_llm_call}):\n")
+    print(out)
+    print()
+    return out
+
+  optimizer.generate_response = _trace_generate_response
   execution_result = None
-  if code:
-    try:
-      namespace: dict[str, Any] = dict(wrapped)
-      namespace["WCH_USER_TURN"] = prompt_body
-      namespace["wch_latest_outcome_is_empty"] = wch_latest_outcome_is_empty
-      namespace["wch_lookup_is_empty"] = wch_lookup_is_empty
-      namespace["refine_strategy"] = engine.sandbox_refinement_callback()
-      exec(code, namespace)
-      if "execute_plan" in namespace:
-        execution_result = namespace["execute_plan"]()
-        print("\n## Execution Final Result:\n")
-        print("```")
-        print(f"  success: {execution_result[0]}")
-        print(f"  output: {execution_result[1]}")
-        print("```")
-    except Exception as e:
-      print(f"Error executing generated code: {e!s}")
-      print(traceback.format_exc())
+  try:
+    llm_out = optimizer.generate_response(
+      "",
+      "",
+      "",
+      "",
+      prompt_override=prompt_body,
+      print_thought_summary=False,
+    )
+    code = extract_python_code(llm_out)
+    if code:
+      try:
+        namespace: dict[str, Any] = dict(wrapped)
+        namespace["WCH_USER_TURN"] = prompt_body
+        namespace["refine_strategy"] = engine.sandbox_refinement_callback()
+        exec(code, namespace)
+        if "execute_plan" in namespace:
+          execution_result = namespace["execute_plan"]()
+          print("\n## Execution Final Result:\n")
+          print("```")
+          print(f"  success: {execution_result[0]}")
+          print(f"  output: {execution_result[1]}")
+          print("```")
+      except Exception as e:
+        print(f"Error executing generated code: {e!s}")
+        print(traceback.format_exc())
+  finally:
+    optimizer.generate_response = _orig_generate_response
+
   print(f"\n## Expected behavior:\n\n{test_dict['output']}\n")
   return execution_result
 

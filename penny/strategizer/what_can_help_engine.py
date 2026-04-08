@@ -5,62 +5,24 @@ WhatCanHelp orchestration: same loop shape as ``rationalize_change_engine`` (pen
 **Iteration 1:** Optimizer’s fixed ``system_prompt`` + structured user turn → sandbox
 ``execute_plan`` with lookup tools and ``refine_strategy``.
 
-**Iteration 2+:** ``refine_strategy(aggregated)`` passes concatenated tool strings; the host places that text in
-``# Latest Outcome`` on the next turn (optional ``# Previous Outcomes`` for numbered prior strategizer outcomes).
+**Iteration 2+:** ``refine_strategy(aggregated)`` passes new lookup text; the engine prepends the **original**
+snapshot (from ``run``) so the next user message and ``WCH_USER_TURN`` are snapshot + lookups, then further
+aggregates stack on later refines.
 ``_call_llm`` always passes ``system_prompt_override=None``.
-Further ``refine_strategy`` generations are capped; retries append ``_FOLLOWUP_HOST_REMINDER``; the last
-generation uses a ``refine_strategy`` stub that returns ``(False, …)``.
+Further ``refine_strategy`` generations are capped; the last generation uses a ``refine_strategy`` stub that returns ``(False, …)``.
 
-Structured turn: ``# Latest Outcome`` (prefilled data and/or tool aggregates; token ``None`` when not loaded yet),
-then optionally ``# Previous Outcomes`` (numbered lines). Pass ``None`` or ``""`` for ``latest_outcome`` when empty.
+Structured turn: host text—the five snapshot sections plus any lookup excerpts from prior turns. Production
+always supplies a non-empty snapshot.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from penny.tool_funcs import what_can_help_lookups as default_lookups
 
 _MAX_FOLLOWUP_STRATEGIZER_GENERATIONS = 3
-
-_GEN0_REFINE_HINT = (
-  "\n\n**HOST:** `# Latest Outcome` above is **aggregated tool output** from the prior `execute_plan`. "
-  "On this turn, `execute_plan` must **only** `return True, \"…\"` (concise strategy summary). "
-  "Do **not** call lookup tools or `refine_strategy` again.\n"
-)
-
-_FOLLOWUP_HOST_REMINDER = """
----
-**HOST (required on this turn):** `# Latest Outcome` contains data to finalize your strategy. Your ```python``` `execute_plan` must **only** `return True, "…"` with urgency, goals, and tactics. **Do not** call lookup tools or `refine_strategy`.
-"""
-
-PreviousOutcomesArg = Optional[Union[Dict[Union[int, str], str], List[str], str]]
-
-
-def format_previous_outcomes_block(previous_outcomes: PreviousOutcomesArg) -> str:
-  """Format prior WhatCanHelp / host outcomes like ``rationalize_change`` (numbered lines)."""
-  if previous_outcomes is None:
-    return ""
-  if isinstance(previous_outcomes, str):
-    return f"1. **Outcome #1**: {previous_outcomes}"
-  if isinstance(previous_outcomes, dict):
-    numbered_rows = []
-    for key in sorted(previous_outcomes, key=lambda x: int(x) if str(x).isdigit() else str(x)):
-      value = previous_outcomes[key]
-      if isinstance(value, str) and value.strip():
-        label_num = int(key) if str(key).isdigit() else key
-        numbered_rows.append(f"{label_num}. **Outcome #{label_num}**: {value.strip()}")
-    if numbered_rows:
-      return "\n".join(numbered_rows)
-    return ""
-  clean_outcomes = [item.strip() for item in previous_outcomes if isinstance(item, str) and item.strip()]
-  if not clean_outcomes:
-    return ""
-  return "\n".join(
-    f"{idx}. **Outcome #{idx}**: {outcome}" for idx, outcome in enumerate(clean_outcomes, start=1)
-  )
-
 
 def latest_outcome_payload(latest_outcome: str | None) -> str:
   """Normalized latest-outcome fragment for the user turn (``None`` → empty)."""
@@ -69,65 +31,19 @@ def latest_outcome_payload(latest_outcome: str | None) -> str:
   return latest_outcome.strip()
 
 
-_LATEST_OUTCOME_PREFIX = "# Latest Outcome\n\n"
-
-
-def _wch_latest_outcome_section(structured_turn: str) -> str:
-  """Body under ``# Latest Outcome`` through (but not including) ``# Previous Outcomes``."""
-  s = structured_turn.strip()
-  if s.startswith(_LATEST_OUTCOME_PREFIX):
-    s = s[len(_LATEST_OUTCOME_PREFIX) :]
-  elif "\n# Latest Outcome\n\n" in s:
-    s = s.split("\n# Latest Outcome\n\n", 1)[1]
-  else:
-    return ""
-  if "\n# Previous Outcomes\n\n" in s:
-    s = s.split("\n# Previous Outcomes\n\n", 1)[0]
-  return s.strip()
-
-
-def wch_latest_outcome_is_empty(structured_turn: str) -> bool:
-  """True iff the ``# Latest Outcome`` body is exactly the token ``None`` (no data / tools yet)."""
-  return _wch_latest_outcome_section(structured_turn) == "None"
-
-
-def wch_lookup_is_empty(structured_turn: str) -> bool:
-  """Deprecated alias for :func:`wch_latest_outcome_is_empty`."""
-  return wch_latest_outcome_is_empty(structured_turn)
-
-
-def format_lookup_user_turn(
-  latest_outcome: str | None,
-  *,
-  previous_outcomes: PreviousOutcomesArg = None,
-) -> str:
-  """Structured message: ``# Latest Outcome`` (empty → token ``None``), optional ``# Previous Outcomes``."""
+def format_lookup_user_turn(latest_outcome: str | None) -> str:
+  """Structured user message: host payload with trailing newline."""
   payload = latest_outcome_payload(latest_outcome)
-  latest_body = payload if payload else "None"
-  parts = [
-    _LATEST_OUTCOME_PREFIX,
-    f"{latest_body}\n",
-  ]
-  prev_block = format_previous_outcomes_block(previous_outcomes)
-  if prev_block.strip():
-    parts.extend(["\n# Previous Outcomes\n\n", prev_block, "\n"])
-  return "".join(parts)
+  if not payload:
+    return ""
+  return f"{payload}\n"
 
 
-def _followup_llm_body(
-  aggregated_latest_outcome: str,
-  *,
-  followup_generation: int,
-  previous_outcomes: PreviousOutcomesArg = None,
-) -> tuple[str, str]:
-  """Return ``(structured_turn_for_sandbox, full_prompt_for_llm)``."""
-  agg = (aggregated_latest_outcome or "").strip()
-  structured = format_lookup_user_turn(agg if agg else None, previous_outcomes=previous_outcomes)
+def _followup_llm_body(merged_body: str) -> tuple[str, str]:
+  """Return ``(structured_turn_for_sandbox, full_prompt_for_llm)`` for merged snapshot + lookup text."""
+  text = (merged_body or "").strip()
+  structured = format_lookup_user_turn(text if text else None)
   full = structured.rstrip()
-  if followup_generation == 0:
-    full = full + _GEN0_REFINE_HINT
-  else:
-    full = full + _FOLLOWUP_HOST_REMINDER
   return structured, full
 
 
@@ -201,7 +117,7 @@ def _default_tool_bindings() -> Dict[str, Any]:
 
 
 class WhatCanHelpEngine:
-  """Runs the WhatCanHelp strategizer loop (``# Latest Outcome`` / ``# Previous Outcomes`` turns + refine_strategy)."""
+  """Runs the WhatCanHelp strategizer loop (structured host payload + refine_strategy)."""
 
   def __init__(
     self,
@@ -217,6 +133,22 @@ class WhatCanHelpEngine:
     self.l = l
     self.dl = dl or {}
     self.print_thought_summary = print_thought_summary
+    self._wch_snapshot_for_merge: str = ""
+
+  def _merge_aggregated_into_wch_snapshot(self, aggregated_latest_outcome: str) -> str:
+    """Append lookup output to the running snapshot; return full text for the next turn."""
+    base = (self._wch_snapshot_for_merge or "").strip()
+    agg = (aggregated_latest_outcome or "").strip()
+    if base and agg:
+      merged = f"{base}\n\n{agg}"
+    elif agg:
+      merged = agg
+    elif base:
+      merged = base
+    else:
+      merged = ""
+    self._wch_snapshot_for_merge = merged.strip()
+    return self._wch_snapshot_for_merge
 
   def _log_what_can_help(self, phase_label: str, title: str, body: str, debug_arr: Optional[List[str]] = None) -> None:
     if self.l is None:
@@ -246,11 +178,11 @@ class WhatCanHelpEngine:
     self,
     *,
     latest_outcome: str | None = None,
-    previous_outcomes: PreviousOutcomesArg = None,
     debug_arr: Optional[List[str]] = None,
   ) -> Tuple[bool, str]:
-    """First host call: ``latest_outcome`` unset → token ``None`` under ``# Latest Outcome``."""
-    body = format_lookup_user_turn(latest_outcome, previous_outcomes=previous_outcomes)
+    """First host call: structured user turn from ``latest_outcome``."""
+    self._wch_snapshot_for_merge = latest_outcome_payload(latest_outcome).strip()
+    body = format_lookup_user_turn(latest_outcome)
     setattr(self.optimizer, "_last_lookup_user_turn", body)
     llm_out = self._call_llm(
       task_description="",
@@ -259,7 +191,6 @@ class WhatCanHelpEngine:
       top_transactions_previous_period="",
       recent_insight_date_range="—",
       previous_insight_date_range="—",
-      previous_outcomes=None,
       prompt_override=body,
     )
     generated = llm_out if isinstance(llm_out, str) else str(llm_out)
@@ -271,13 +202,11 @@ class WhatCanHelpEngine:
       self._lw(msg)
       return False, msg
 
-    refine_cb = self._make_refinement_callback(previous_outcomes=previous_outcomes)
+    refine_cb = self._make_refinement_callback()
     exec_globals: Dict[str, Any] = dict(self.tool_bindings)
     exec_globals.update(
       {
         "WCH_USER_TURN": body,
-        "wch_latest_outcome_is_empty": wch_latest_outcome_is_empty,
-        "wch_lookup_is_empty": wch_lookup_is_empty,
         "refine_strategy": refine_cb,
       }
     )
@@ -296,39 +225,29 @@ class WhatCanHelpEngine:
     self,
     aggregated_latest_outcome: str,
     *,
-    previous_outcomes: PreviousOutcomesArg = None,
     debug_arr: Optional[List[str]] = None,
   ) -> Tuple[bool, str]:
-    """Host convenience: ``refine_strategy`` follow-up; pass same ``previous_outcomes`` as ``run`` when applicable."""
+    """Host convenience: ``refine_strategy`` follow-up."""
     return self._execute_strategizer_followup(
       aggregated_latest_outcome,
       followup_generation=0,
-      previous_outcomes=previous_outcomes,
       debug_arr=debug_arr,
     )
 
-  def sandbox_refinement_callback(
-    self,
-    *,
-    previous_outcomes: PreviousOutcomesArg = None,
-  ) -> Callable[[str], Tuple[bool, str]]:
-    """``refine_strategy(aggregated)`` for tests/sandbox; threads ``previous_outcomes`` into follow-ups."""
-    return self._make_refinement_callback(previous_outcomes=previous_outcomes)
+  def sandbox_refinement_callback(self) -> Callable[[str], Tuple[bool, str]]:
+    """``refine_strategy(aggregated)`` for tests/sandbox."""
+    return self._make_refinement_callback()
 
   def _execute_strategizer_followup(
     self,
     aggregated_latest_outcome: str,
     *,
     followup_generation: int = 0,
-    previous_outcomes: PreviousOutcomesArg = None,
     debug_arr: Optional[List[str]] = None,
   ) -> Tuple[bool, str]:
     phase = "follow-up" if followup_generation == 0 else f"follow-up-retry-{followup_generation}"
-    structured_turn, prompt_for_llm = _followup_llm_body(
-      aggregated_latest_outcome,
-      followup_generation=followup_generation,
-      previous_outcomes=previous_outcomes,
-    )
+    merged_body = self._merge_aggregated_into_wch_snapshot(aggregated_latest_outcome)
+    structured_turn, prompt_for_llm = _followup_llm_body(merged_body)
     setattr(self.optimizer, "_last_lookup_user_turn", prompt_for_llm)
     try:
       llm_out = self._call_llm(
@@ -338,7 +257,6 @@ class WhatCanHelpEngine:
         top_transactions_previous_period="",
         recent_insight_date_range="—",
         previous_insight_date_range="—",
-        previous_outcomes=None,
         prompt_override=prompt_for_llm,
       )
     except Exception as e:
@@ -358,7 +276,6 @@ class WhatCanHelpEngine:
     if followup_generation + 1 < _MAX_FOLLOWUP_STRATEGIZER_GENERATIONS:
       refine_cb = self._make_followup_refinement_recurse_callback(
         followup_generation=followup_generation + 1,
-        previous_outcomes=previous_outcomes,
       )
     else:
       refine_cb = _refine_strategy_followup_terminal_stub
@@ -367,8 +284,6 @@ class WhatCanHelpEngine:
     exec_globals.update(
       {
         "WCH_USER_TURN": structured_turn,
-        "wch_latest_outcome_is_empty": wch_latest_outcome_is_empty,
-        "wch_lookup_is_empty": wch_lookup_is_empty,
         "refine_strategy": refine_cb,
       }
     )
@@ -386,7 +301,6 @@ class WhatCanHelpEngine:
     self,
     *,
     followup_generation: int,
-    previous_outcomes: PreviousOutcomesArg,
   ):
     phase = "follow-up-retry-" + str(followup_generation) if followup_generation > 0 else "follow-up"
 
@@ -400,21 +314,15 @@ class WhatCanHelpEngine:
       return self._execute_strategizer_followup(
         aggregated_lookup,
         followup_generation=followup_generation,
-        previous_outcomes=previous_outcomes,
       )
 
     return _refine_strategy
 
-  def _make_refinement_callback(
-    self,
-    *,
-    previous_outcomes: PreviousOutcomesArg,
-  ):
+  def _make_refinement_callback(self):
     def _refine_strategy(aggregated_lookup: str) -> Tuple[bool, str]:
       return self._execute_strategizer_followup(
         aggregated_lookup,
         followup_generation=0,
-        previous_outcomes=previous_outcomes,
       )
 
     return _refine_strategy

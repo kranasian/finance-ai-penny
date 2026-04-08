@@ -53,8 +53,8 @@ def lookup_transactions(
   - amount_less_than: keep rows with amount <= this value (None = no upper bound).
   - in_category: restrict to these category slugs; each entry must be in OFFICIAL_CATEGORY_VALUES (empty/None = no filter).
 
-  Host-produced row lines match top-transaction excerpts: ``- On YYYY-MM-DD, $N at Merchant as category_slug.``
-  with whole-dollar amounts.
+  Host-produced row lines match top-transaction excerpts: ``- $N at Merchant as category_slug.``
+  with whole-dollar amounts (no per-row dates; the lookup preamble states the window).
 
   This stub returns an explanatory placeholder when no datastore is wired.
   """
