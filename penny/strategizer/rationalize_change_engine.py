@@ -16,16 +16,6 @@ from penny.tool_funcs.lookup_transactions import lookup_transactions as default_
 # Supplemental LLM generations 0 .. N-1; generation N uses terminal rationalize stub (no more nested LLM).
 _MAX_FOLLOWUP_STRATEGIZER_GENERATIONS = 3
 
-_GEN0_SUPPLEMENTAL_HINT = (
-  "\n\n**HOST:** `# Supplemental lookup` is already attached—finalize with "
-  "`execute_plan` that **only** `return True, \"…\"` (≤3 sentences). Do **not** call `rationalize` again.\n"
-)
-
-_FOLLOWUP_HOST_REMINDER = """
----
-**HOST (required on this turn):** `# Supplemental lookup` is already in the message above. Your ```python``` `execute_plan` must **only** `return True, "…"` (≤3 sentences, explain the change vs forecast using Insight + both Top Transactions sections + supplemental lookup). **Do not** call `lookup_transactions`, `rationalize`, or any tool—only `from datetime import date` if needed (you should not need it here).
-"""
-
 
 def _user_message_with_supplemental_lookup(user_message: str, lookup_info: str) -> str:
   return (
@@ -35,11 +25,8 @@ def _user_message_with_supplemental_lookup(user_message: str, lookup_info: str) 
   )
 
 
-def _followup_llm_body(user_message: str, lookup_info: str, *, followup_generation: int) -> str:
-  base = _user_message_with_supplemental_lookup(user_message, lookup_info)
-  if followup_generation == 0:
-    return base + _GEN0_SUPPLEMENTAL_HINT
-  return base + _FOLLOWUP_HOST_REMINDER
+def _followup_llm_body(user_message: str, lookup_info: str) -> str:
+  return _user_message_with_supplemental_lookup(user_message, lookup_info)
 
 
 def _rationalize_followup_terminal_stub(_user_message: str, _lookup_info: str) -> Tuple[bool, str]:
@@ -209,7 +196,7 @@ class RationalizeChangeEngine:
     debug_arr: Optional[List[str]] = None,
   ) -> Tuple[bool, str]:
     phase = "follow-up" if followup_generation == 0 else f"follow-up-retry-{followup_generation}"
-    body = _followup_llm_body(user_message, lookup_info, followup_generation=followup_generation)
+    body = _followup_llm_body(user_message, lookup_info)
     try:
       llm_out = self._call_llm(
         task_description="",
