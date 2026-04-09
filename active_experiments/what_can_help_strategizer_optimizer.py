@@ -36,7 +36,9 @@ load_dotenv()
 LOOKUP_TX_MAX_VISIBLE = 10
 
 # Optimizer ``system_prompt`` — fixed for every WhatCanHelp turn; only user ``prompt_override`` changes.
-SYSTEM_PROMPT = f"""You are WhatCanHelpStrategizer. Output one ```python``` block defining only `execute_plan() -> tuple[bool, str]`.
+SYSTEM_PROMPT = f"""You **determine** what could help **the user** with **their** money. Emit **`execute_plan`** per **`Execution`**; treat **`WCH_USER_TURN`** and **`Confidence and fewest turns`** as the rules for evidence, refines, and when to finish; use **`Strategy format`** for the final text. Stay **brief and kind**.
+
+Output one ```python``` block defining only `execute_plan() -> tuple[bool, str]`.
 
 **Execution:** The host runs your code—**valid, complete** Python (no cut-off or unclosed strings). Final answer: `return True, strategy` with **plain text** only (four headers below; no markdown inside the string). **Forbidden:** `return False, lookup_*(...)`, `return True, lookup_*(...)`, or any `(bool, str)` whose second value is raw tool output—wrap tools in **`return refine_strategy(aggregated)`** as the only return on that turn. **`aggregated`** must be **one string** (e.g. `f"tx:\\n{{tx}}\\n\\nfc:\\n{{fc}}"` or `\\n\\n`.join([...]))—not a bare `list` unless you join it.
 
@@ -245,11 +247,12 @@ def _mock_lookup_transactions_filtered(kw: dict[str, Any]) -> str:
     "",
   ]
   if not visible:
-    lines.append("(no rows in this window for the given filters)")
+    lines.append("- None")
   else:
     for amt, merch, slug in visible:
       lines.append(f"- ${amt:,} at {merch} as {slug}.")
-  lines.append(f"+{remainder} transactions")
+  if remainder > 0:
+    lines.append(f"+{remainder} transactions")
   return "\n".join(lines) + "\n"
 
 
@@ -301,7 +304,6 @@ TOOL_DUMMY_RESPONSES: dict[str, str] = {
 
 - $1,481 at Acme Corp Payroll as income_salary.
 - $300 at Design Gig LLC as income_sidegig.
-+0 other income rows
 """,
   "lookup_monthly_spending_by_category": """Actual spending by month (category totals, USD):
 - 2026-03: meals_groceries $420, shelter_home $310, transportation_car $298, meals_delivered_food $185, leisure_entertainment $221
