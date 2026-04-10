@@ -103,3 +103,11 @@ def create_budget_or_goal_from_request(
         amount=parsed["amount"],
         title=parsed["title"],
     )
+
+
+def create_budget_or_goal(
+    creation_request: str,
+    input_info: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Create a category budget or savings goal from a natural-language request (no reminders)."""
+    return create_budget_or_goal_from_request(creation_request, input_info)
