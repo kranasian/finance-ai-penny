@@ -7,9 +7,9 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-experiments_dir = os.path.join(parent_dir, 'experiments')
-if experiments_dir not in sys.path:
-    sys.path.insert(0, experiments_dir)
+past_experiments_dir = os.path.join(parent_dir, 'past_experiments')
+if past_experiments_dir not in sys.path:
+    sys.path.insert(0, past_experiments_dir)
 
 from create_budget_or_goal_or_reminder import CreateBudgetOrGoalOrReminder
 import sandbox

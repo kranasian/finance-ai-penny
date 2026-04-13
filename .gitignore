@@ -6,3 +6,6 @@ penny/tool_funcs/__pycache__/*
 penny/tools/__pycache__/*
 .venv
 venv
+.cursorrules
+pyproject.toml
+.vscode/settings.json
