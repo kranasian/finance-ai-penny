@@ -7,38 +7,6 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Output Schema - array of result objects
-SCHEMA = types.Schema(
-  type=types.Type.ARRAY,
-  items=types.Schema(
-    type=types.Type.OBJECT,
-    properties={
-      "group_id": types.Schema(
-        type=types.Type.STRING,
-        description="The group ID from the input transaction group"
-      ),
-      "transaction_id": types.Schema(
-        type=types.Type.INTEGER,
-        description="The transaction ID from the input transaction"
-      ),
-      "reasoning": types.Schema(
-        type=types.Type.STRING,
-        description="Brief 1-2 sentence explanation of why this category was chosen. Focus on the key decisive factors only."
-      ),
-      "category": types.Schema(
-        type=types.Type.STRING,
-        description="One of the provided category options that must match exactly from the category_options in the input, or 'unknown' if none are a good fit"
-      ),
-      "confidence": types.Schema(
-        type=types.Type.STRING,
-        enum=["high", "medium", "low"],
-        description="Confidence level in the categorization: 'high' for strong evidence, 'medium' for good evidence with some ambiguity, 'low' for weak/conflicting evidence"
-      )
-    },
-    required=["group_id", "transaction_id", "reasoning", "category", "confidence"]
-  )
-)
-
 SYSTEM_PROMPT = """You are a financial transaction categorization expert. Analyze each transaction and categorize it using the provided category options.
 
 ## Input Format
@@ -56,43 +24,43 @@ Negative amounts are inflows. Not all inflows are income. Refunds, returns, or r
 
 ## Parent Category and Subcategory Meanings
 - **income**:
-  - `salary`: regular paycheck income.
-  - `interest`: bank or stock interest earned.
-  - `sidegig`: income from freelance or secondary work.
-  - `business`: income generated from a business entity.
+  - `income_salary`: regular paycheck income.
+  - `income_interest`: bank or stock interest earned.
+  - `income_sidegig`: income from freelance or secondary work.
+  - `income_business`: income generated from a business entity.
 - **meals**:
-  - `groceries`: food purchased for home cooking.
-  - `dining_out`: restaurant meals.
-  - `delivered_food`: food ordered via delivery.
+  - `food_groceries`: food purchased for home cooking.
+  - `food_dining_out`: restaurant meals.
+  - `food_delivered_food`: food ordered via delivery.
 - **leisure**:
-  - `entertainment`: movies, concerts, events, recreation.
-  - `travel`: costs related to trips and vacations.
+  - `leisure_entertainment`: movies, concerts, events, recreation.
+  - `leisure_travel_vacations`: costs related to trips and vacations.
 - **bills**:
-  - `connectivity`: internet, cable, phone bills.
-  - `insurance`: premiums for health, auto, home insurance.
-  - `tax`: payments made for local, state, or federal taxes.
-  - `service_fees`: bank fees or administrative charges.
+  - `bills_connectivity`: internet, cable, phone bills.
+  - `bills_insurance`: premiums for health, auto, home insurance.
+  - `bills_tax`: payments made for local, state, or federal taxes.
+  - `bills_service_fees`: bank fees or administrative charges.
 - **shelter**:
-  - `home`: mortgage or rent payments.
-  - `utilities`: electricity, gas, water, trash services.
-  - `upkeep`: home repairs and maintenance.
+  - `shelter_home`: mortgage or rent payments.
+  - `shelter_utilities`: electricity, gas, water, trash services.
+  - `shelter_upkeep`: home repairs and maintenance.
 - **education**:
-  - `kids_activities`: costs for children's classes or sports.
-  - `tuition`: costs for personal or dependent education.
+  - `education_kids_activities`: costs for children's classes or sports.
+  - `education_tuition`: costs for personal or dependent education.
 - **shopping**:
-  - `clothing`: apparel purchases.
-  - `gadgets`: electronics and technology purchases (not necessarily for online or electronic payments).
-  - `kids`: general shopping for children not covered elsewhere.
-  - `pets`: supplies and services for pets.
+  - `shopping_clothing`: apparel purchases.
+  - `shopping_gadgets`: electronics and technology purchases.
+  - `shopping_kids`: general shopping for children.
+  - `shopping_pets`: supplies and services for pets.
 - **transportation**:
-  - `public`: bus, train, subway fares.
-  - `car`: gas, maintenance, parking, or car payments.
+  - `transport_public`: bus, train, subway fares.
+  - `transport_car_fuel`: gas, maintenance, parking, or car payments.
 - **health**:
-  - `medical_pharmacy`: doctor visits, prescriptions.
-  - `gym_wellness`: gym memberships, supplements.
-  - `personal_care`: haircuts, toiletries.
+  - `health_medical_pharmacy`: doctor visits, prescriptions.
+  - `health_gym_wellness`: gym memberships, supplements.
+  - `health_personal_care`: haircuts, toiletries.
 - **donations_gifts**: charitable giving or gifts for others.
-- **transfer**: Strictly (1) movement of money between the same person's own accounts (e.g. checking to savings, ACH between own accounts), or (2) payment toward that person's own debts, mortgages, or other liabilities (e.g. credit card payment to own card, loan payment to own loan, mortgage payment to own mortgage). Net worth unchanged. Peer-to-peer to/from another person is NOT transfer.
+- **transfer**: Strictly (1) movement of money between the same person's own accounts (e.g. checking to savings, ACH between own accounts), or (2) payment toward that person's own debts, mortgages, or other liabilities (e.g. credit card payment to own card, loan payment to own loan, mortgage payment to own mortgage). Net worth unchanged. Peer-to-peer to/from another person is NOT transfer unless it's to the same person's account.
 
 ## Analysis Process
 1. **Transaction Text** (primary): Extract keywords and patterns indicating purpose
@@ -107,14 +75,24 @@ Negative amounts are inflows. Not all inflows are income. Refunds, returns, or r
 - **low**: Weak evidence, multiple plausible categories, or significant uncertainty
 
 ## Critical Rules
-- **Subcategory only**: If category_options contains both a parent and a subcategory from the same hierarchy, you MUST output the subcategory string exactly as it appears in the list. Never output the parent. Examples: copy `leisure_entertainment` not `leisure`; copy `bills_insurance` or `bills_connectivity` not `bills`; copy `transport_car_fuel` not `transport` (parking, fuel, car-related expenses use transport_car_fuel when it is in the list); copy `food_dining_out` not `food`.
-- **CRITICAL ID Matching**: The `transaction_id` in your output response MUST be an EXACT, character-for-character copy of the `transaction_id` from the input. Your output MUST ONLY contain: `transaction_id`, `reasoning`, `category`, and `confidence`. Do NOT include `group_id` or any other fields in your output.
-- **CRITICAL Transfer Rule**: `transfer` ONLY when (a) money moves between the same person's own accounts (e.g. Transfer To Checking, Transfer From Savings, ACH between own accounts), or (b) payment is toward that person's own debt, mortgage, or other liability (e.g. credit card payment to own card, loan payment to own loan, mortgage payment to own mortgage). Do not use transfer for payments to other people or to merchants. Peer-to-peer (Zelle, Venmo, PayPal, Cash App) to/from another person is NOT transfer.
-- **CRITICAL Peer-to-Peer Payment Rule**: For peer-to-peer payments between two different people (Zelle, Venmo, PayPal, Cash App, etc.), you MUST determine the purpose from transaction text, establishment description, or amount context. If the purpose is NOT specified or cannot be determined (no clear indication of gift, repayment, payment for goods/services, etc.), you MUST use `unknown`. Peer-to-peer payments between two people default to `unknown` when the purpose is not specified. Do NOT default to `donations_gifts` or other categories without clear evidence. Remember: `unknown` is ALWAYS available as a category option, even if not explicitly listed in `category_options`.
-- **Category Selection**: The `category` value in your output MUST be an exact character-for-character copy of one string from `category_options`, or the literal `unknown`. Do not alter spelling, casing, or wording. When both a parent and a subcategory appear in `category_options`, output the subcategory string exactly as written there. For general-purpose marketplaces (e.g. Amazon, Shopee, Walmart) when the specific purchase is unknown, use `unknown`. When a transaction is clearly general shopping (e.g. a retail store where the specific product is not stated), choose the most plausible shopping subcategory from `category_options` based on establishment type, description, or amount—and state that basis briefly in reasoning (e.g. "General retail; clothing store description suggests shopping_clothing."). Do not use a parent shopping category when a subcategory is available. **Outflows (positive amount)**: Never use income_side_gig, income_business, or income_salary for a payment or purchase—only for money received as earnings. Use an expense or transfer category for outflows.
+- **Subcategory only**: Your output `category` MUST NEVER be a parent category (e.g., `income`, `meals`, `leisure`, `bills`, `shelter`, `education`, `shopping`, `transportation`, `health`). You MUST always select a specific subcategory (e.g., `shopping_clothing` is allowed, but `shopping` is forbidden). This applies even if the parent category is the only one that seems to fit—in that case, use `unknown`.
+- **Unknown Category**: Use `unknown` ONLY if none of the specific subcategories in `category_options` match the transaction. If you are unsure or if only a parent category matches, use `unknown`.
+- **Match Best Subcategory**: When multiple subcategories are available, choose the one that most specifically describes the transaction. For example, if both `bills` and `bills_connectivity` are in `category_options` for an internet bill, you MUST choose `bills_connectivity`. If only `bills` is available, you MUST use `unknown` because `bills` is a parent category.
+- **CRITICAL ID Matching**: The `transaction_id` in your output response MUST be an EXACT, character-for-character copy of the `transaction_id` from the input. Your output MUST ONLY contain: `transaction_id`, `reasoning`, `category`, and `confidence`.
+- **CRITICAL Transfer Rule**: `transfer` ONLY when (a) money moves between the same person's own accounts (e.g. Transfer To Checking, Transfer From Savings, ACH between own accounts), or (b) payment is toward that person's own debt, mortgage, or other liability (e.g. credit card payment to own card, loan payment to own loan, mortgage payment to own mortgage).
+- **CRITICAL Bank/Person-to-Person (P2P) Rule**: For transfers or P2P payments (Zelle, Venmo, PayPal, Cash App, etc.):
+    1. If the transfer is to an account belonging to the **SAME person**, use `transfer`.
+    2. If the transfer is to **ANOTHER person**:
+        - If the purpose is **specified** (e.g., "for dinner", "rent"), select the subcategory matching that purpose.
+        - If the purpose is **unspecified**, use `unknown`.
+    3. If you are **unsure** whether it is to the same person or another person, use `unknown`.
+- **Category Selection**: The `category` value in your output MUST be an exact character-for-character copy of one string from `category_options`, or the literal `unknown`. Do not alter spelling, casing, or wording. For general-purpose marketplaces (e.g. Amazon, Shopee, Walmart) when the specific purchase is unknown, use `unknown`. When a transaction is clearly general shopping (e.g. a retail store where the specific product is not stated), choose the most plausible shopping subcategory from `category_options` based on establishment type, description, or amount—and state that basis briefly in reasoning (e.g. "General retail; clothing store description suggests shopping_clothing."). Do not use a parent shopping category when a subcategory is available. **Outflows (positive amount)**: Never use income_side_gig, income_business, or income_salary for a payment or purchase—only for money received as earnings. Use an expense or transfer category for outflows.
 - **CRITICAL Reasoning Rule**: Reasoning must be concise. State ONLY positive evidence that supports the chosen category. Do not mention category_options, subcategory, "options include", or other categories. For `unknown`, state briefly why purpose cannot be determined.
 - **Consistency**: Similar transactions should typically share the same category, unless amounts suggest otherwise.
 - When uncertain but a category is plausible, use "medium" or "low" confidence and briefly explain the uncertainty
+- **Specific Examples**:
+    - **AAA**: Roadside assistance or membership dues should be `bills_insurance` if available, or `transport_car_fuel` if it's the only car-related option.
+    - **Software/Digital Services**: Subscriptions for design tools, AI, or apps should be `bills_service_fees` or `shopping_gadgets` depending on the description. If neither fits well, use `unknown`.
 """
 
 class RethinkTransactionCategorization:
@@ -147,9 +125,6 @@ class RethinkTransactionCategorization:
     
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
-    
-    # Output Schema
-    self.output_schema = SCHEMA
 
   
   def generate_response(self, input_json: str) -> list:
@@ -182,13 +157,17 @@ output: """
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
       response_mime_type="application/json",
-      response_schema=self.output_schema,
     )
 
-    # Generate response
+    # Generate response using streaming to extract thoughts
     output_text = ""
+    thought_summary = ""
+
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -196,7 +175,25 @@ output: """
     ):
       if chunk.text is not None:
         output_text += chunk.text
-    
+
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
+
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("="*80)
+
     # Check if response is empty
     if not output_text or not output_text.strip():
       raise ValueError(f"Empty response from model. Check API key and model availability.")
@@ -224,9 +221,16 @@ output: """
             json_lines.append(line)
         output_text = "\n".join(json_lines)
       
-      result = json.loads(output_text)
-      return result
+      return json.loads(output_text)
     except json.JSONDecodeError as e:
+      # Without a response schema, the model may wrap the array in prose; try the outermost [...] slice.
+      bracket_start = output_text.find("[")
+      bracket_end = output_text.rfind("]")
+      if bracket_start != -1 and bracket_end > bracket_start:
+        try:
+          return json.loads(output_text[bracket_start : bracket_end + 1])
+        except json.JSONDecodeError:
+          pass
       raise ValueError(f"Failed to parse JSON response: {e}\nResponse was: {output_text}")
 
 
@@ -247,10 +251,9 @@ def test_with_inputs(input_json: list, categorizer: RethinkTransactionCategoriza
   return categorizer.generate_response(json.dumps(input_json, indent=2))
 
 
-# Test data dictionary - stores all test data by group_id to avoid duplication
+# Test data dictionary keyed by fixture id (internal lookup only; not sent as model input).
 TEST_DATA = {
   8809: {
-    "group_id": 8809,
     "establishment_name": "Macho's",
     "establishment_description": "sells Mexican food such as tacos, burritos, and quesadillas",
     "transactions": [
@@ -277,7 +280,6 @@ TEST_DATA = {
     ]
   },
   12723: {
-    "group_id": 12723,
     "establishment_name": "Marco's Pizza",
     "establishment_description": "pizza restaurant that sells a variety of pizzas, subs, wings, sides, and desserts",
     "transactions": [
@@ -299,7 +301,6 @@ TEST_DATA = {
     ]
   },
   8965: {
-    "group_id": 8965,
     "establishment_name": "Marcos Pizza",
     "establishment_description": "A payment for food and beverages at a pizza restaurant.",
     "transactions": [
@@ -320,7 +321,6 @@ TEST_DATA = {
     ]
   },
   11711: {
-    "group_id": 11711,
     "establishment_name": "Seamless",
     "establishment_description": "sells food delivery services from various restaurants",
     "transactions": [
@@ -339,7 +339,6 @@ TEST_DATA = {
     ]
   },
   4966: {
-    "group_id": 4966,
     "establishment_name": "Cos",
     "establishment_description": "sells clothing, accessories, and beauty products for women",
     "transactions": [
@@ -356,7 +355,6 @@ TEST_DATA = {
     ]
   },
   12671: {
-    "group_id": 12671,
     "establishment_name": "Cleveland Marriott",
     "establishment_description": "sells hotel accommodations, meeting rooms, and other services",
     "transactions": [
@@ -393,7 +391,6 @@ TEST_DATA = {
     ]
   },
   11741: {
-    "group_id": 11741,
     "establishment_name": "Marriott",
     "establishment_description": "sells hotel accommodations, resort stays, and other travel-related services",
     "transactions": [
@@ -415,7 +412,6 @@ TEST_DATA = {
     ]
   },
   4613: {
-    "group_id": 4613,
     "establishment_name": "Salvatore's",
     "establishment_description": "sells Italian food such as pizza, pasta, sandwiches, and salads",
     "transactions": [
@@ -436,7 +432,6 @@ TEST_DATA = {
     ]
   },
   12712: {
-    "group_id": 12712,
     "establishment_name": "Farm Carol San Pedro",
     "establishment_description": "sells groceries, including fresh produce, meat, dairy, packaged goods, and household items",
     "transactions": [
@@ -458,7 +453,6 @@ TEST_DATA = {
     ]
   },
   12633: {
-    "group_id": 12633,
     "establishment_name": "Zeko's Grill",
     "establishment_description": "sells various types of grilled meats, sandwiches, and other food items",
     "transactions": [
@@ -479,7 +473,6 @@ TEST_DATA = {
     ]
   },
   3578: {
-    "group_id": 3578,
     "establishment_name": "AT&T Bill Payment",
     "establishment_description": "bill payment for AT&T services like internet, phone, and television",
     "transactions": [
@@ -497,7 +490,6 @@ TEST_DATA = {
     ]
   },
   8657: {
-    "group_id": 8657,
     "establishment_name": "Transfer to Checking",
     "establishment_description": "transfer of funds from one checking account to another",
     "transactions": [
@@ -534,7 +526,6 @@ TEST_DATA = {
     ]
   },
   8377: {
-    "group_id": 8377,
     "establishment_name": "F & S Metro News",
     "establishment_description": "sells newspapers, magazines, and other periodicals",
     "transactions": [
@@ -561,7 +552,6 @@ TEST_DATA = {
     ]
   },
   12586: {
-    "group_id": 12586,
     "establishment_name": "Placeit",
     "establishment_description": "sells website templates, mockups, and other design assets",
     "transactions": [
@@ -583,7 +573,6 @@ TEST_DATA = {
     ]
   },
   12583: {
-    "group_id": 12583,
     "establishment_name": "Cleo Express Fee",
     "establishment_description": "A recurring fee for a financial assistant application.",
     "transactions": [
@@ -606,7 +595,6 @@ TEST_DATA = {
     ]
   },
   4417: {
-    "group_id": 4417,
     "establishment_name": "OpenAI",
     "establishment_description": "sells access to its large language model API, including text generation, translation, and code completion",
     "transactions": [
@@ -633,7 +621,6 @@ TEST_DATA = {
     ]
   },
   12562: {
-    "group_id": 12562,
     "establishment_name": "OpenAI Chatgpt",
     "establishment_description": "sells subscriptions to use the AI chatbot for various tasks such as writing, coding, and problem-solving",
     "transactions": [
@@ -652,7 +639,6 @@ TEST_DATA = {
     ]
   },
   651: {
-    "group_id": 651,
     "establishment_name": "SFO Parking",
     "establishment_description": "sells parking services at San Francisco International Airport, with options for short-term and long-term parking",
     "transactions": [
@@ -669,7 +655,6 @@ TEST_DATA = {
     ]
   },
   4485: {
-    "group_id": 4485,
     "establishment_name": "Equinox",
     "establishment_description": "sells fitness classes, personal training, and other wellness services",
     "transactions": [
@@ -703,7 +688,6 @@ TEST_DATA = {
     ]
   },
   8611: {
-    "group_id": 8611,
     "establishment_name": "Hand and Stone",
     "establishment_description": "offers professional massage, facial, and hair removal services",
     "transactions": [
@@ -727,7 +711,6 @@ TEST_DATA = {
     ]
   },
   8460: {
-    "group_id": 8460,
     "establishment_name": "Ace Hardware",
     "establishment_description": "sells a wide variety of hardware, tools, paint, plumbing supplies, electrical supplies, and lawn and garden products",
     "transactions": [
@@ -746,7 +729,6 @@ TEST_DATA = {
     ]
   },
   6458: {
-    "group_id": 6458,
     "establishment_name": "Bob's Burgers & Brew",
     "establishment_description": "sells burgers, sandwiches, and other pub fare",
     "transactions": [
@@ -768,7 +750,6 @@ TEST_DATA = {
     ]
   },
   8103: {
-    "group_id": 8103,
     "establishment_name": "AAA",
     "establishment_description": "membership for roadside assistance, travel services, and insurance",
     "transactions": [
@@ -795,7 +776,6 @@ TEST_DATA = {
     ]
   },
   4402: {
-    "group_id": 4402,
     "establishment_name": "Lazada",
     "establishment_description": "sells a wide variety of products online, including electronics, fashion, home goods, beauty products, and more",
     "transactions": [
@@ -814,7 +794,6 @@ TEST_DATA = {
     ]
   },
   12361: {
-    "group_id": 12361,
     "establishment_name": "DoorDash: Flamers",
     "establishment_description": "payment to DoorDash for food delivery",
     "transactions": [
@@ -832,7 +811,6 @@ TEST_DATA = {
     ]
   },
   4481: {
-    "group_id": 4481,
     "establishment_name": "Empower",
     "establishment_description": "Payment to a financial technology company offering cash advances and budgeting tools.",
     "transactions": [
@@ -869,7 +847,6 @@ TEST_DATA = {
     ]
   },
   562: {
-    "group_id": 562,
     "establishment_name": "Lululemon",
     "establishment_description": "Purchase of athletic apparel and accessories from a retail store.",
     "transactions": [
@@ -901,7 +878,6 @@ TEST_DATA = {
     ]
   },
   12374: {
-    "group_id": 12374,
     "establishment_name": "Sam's Restaurant",
     "establishment_description": "sells a variety of dishes, including seafood, pasta, and cocktails",
     "transactions": [
@@ -920,7 +896,6 @@ TEST_DATA = {
     ]
   },
   10001: {
-    "group_id": 10001,
     "establishment_name": "asdfqwerlkjhasd",
     "establishment_description": "No description available.",
     "transactions": [
@@ -937,7 +912,6 @@ TEST_DATA = {
     ]
   },
   10002: {
-    "group_id": 10002,
     "establishment_name": "Shopee",
     "establishment_description": "sells a wide variety of products online, including electronics, fashion, home goods, beauty products, and more",
     "transactions": [
@@ -955,7 +929,6 @@ TEST_DATA = {
     ]
   },
   10003: {
-    "group_id": 10003,
     "establishment_name": "McDonald's",
     "establishment_description": "A fast-food restaurant known for burgers and fries.",
     "transactions": [
@@ -972,7 +945,6 @@ TEST_DATA = {
     ]
   },
   10004: {
-    "group_id": 10004,
     "establishment_name": "Zelle",
     "establishment_description": "peer-to-peer payment service for sending and receiving money between individuals",
     "transactions": [
@@ -991,7 +963,6 @@ TEST_DATA = {
     ]
   },
   3336: {
-    "group_id": 3336,
     "establishment_name": "Ebay",
     "establishment_description": "Purchases from an online marketplace for new and used goods.",
     "transactions": [
@@ -1008,7 +979,6 @@ TEST_DATA = {
     ]
   },
   "1:4739": {
-    "group_id": "1:4739",
     "establishment_name": "ABCDESFASD2312",
     "establishment_description": "general purchase from an unknown establishment.",
     "transactions": [
@@ -1029,7 +999,6 @@ TEST_DATA = {
     ]
   },
   "1:8123193": {
-    "group_id": "1:8123193",
     "establishment_name": "Thea's Chicken",
     "establishment_description": "This is a payment to a restaurant for a meal.",
     "transactions": [
@@ -1046,7 +1015,6 @@ TEST_DATA = {
     ]
   },
   "SFO_Parking_Example": {
-    "group_id": "SFO_Parking_Example",
     "establishment_name": "SFO Parking",
     "establishment_description": "sells parking services at San Francisco International Airport, with options for short-term and long-term parking",
     "transactions": [
@@ -1137,14 +1105,14 @@ def run_test_zekos_grill(categorizer: RethinkTransactionCategorization = None):
 
 def run_test_multiple_groups(categorizer: RethinkTransactionCategorization = None):
   """
-  Run a test case with 5 different group_ids in a single input.
+  Run a test case with five different transaction groups in a single input.
   This tests the categorizer's ability to handle multiple transaction groups at once.
-  Uses the group_ids with the most number of transactions.
+  Uses fixtures with the most transactions.
   """
   # Select the 5 groups with the most transactions
   # 12671: 4 transactions, 8809: 2 transactions, 8377: 2 transactions, 11711: 1 transaction, 4966: 1 transaction
-  group_ids = [12671, 8809, 8377, 11711, 4966]
-  return test_with_inputs([TEST_DATA[group_id] for group_id in group_ids], categorizer)
+  fixture_keys = [12671, 8809, 8377, 11711, 4966]
+  return test_with_inputs([TEST_DATA[key] for key in fixture_keys], categorizer)
 
 
 def run_test_att_bill_payment(categorizer: RethinkTransactionCategorization = None):
@@ -1483,7 +1451,7 @@ def _run_batch(batch_num: int, categorizer: RethinkTransactionCategorization):
     run_test_lululemon(categorizer)
     print("\n")
     
-    print("Test 4: Multiple Groups (5 group_ids)")
+    print("Test 4: Multiple Groups (5 fixtures)")
     print("-" * 80)
     run_test_multiple_groups(categorizer)
     print("\n")
