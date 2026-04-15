@@ -14,17 +14,11 @@ from google.genai.errors import ClientError
 import os
 import sys
 from datetime import datetime
-from typing import Optional
 from dotenv import load_dotenv
 
-# Add the parent directory to the path so we can import the tools
 parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
-
-past_experiments_dir = os.path.join(parent_dir, "past_experiments")
-if past_experiments_dir not in sys.path:
-    sys.path.insert(0, past_experiments_dir)
 
 from penny.tool_funcs.lookup_user_accounts_transactions_income_and_spending_patterns import (
     lookup_user_accounts_transactions_income_and_spending_patterns,
@@ -33,7 +27,7 @@ from penny.tool_funcs.create_budget_or_goal_or_reminder import (
     create_budget_or_goal_or_reminder,
     extract_python_code as extract_python_code_from_create,
 )
-from create_budget_or_goal_optimizer import CreateBudgetOrGoal
+from past_experiments.create_budget_or_goal_optimizer import CreateBudgetOrGoal
 import sandbox
 from penny.tool_funcs.research_and_strategize_financial_outcomes import (
     research_and_strategize_financial_outcomes,
@@ -41,33 +35,9 @@ from penny.tool_funcs.research_and_strategize_financial_outcomes import (
 from penny.tool_funcs.update_transaction_category_or_create_category_rules import (
     update_transaction_category_or_create_category_rules,
 )
-
-_script_dir = os.path.dirname(os.path.abspath(__file__))
-if _script_dir not in sys.path:
-    sys.path.insert(0, _script_dir)
-from penny_app_usage_info_optimizer import PennyAppUsageInfoOptimizer
+from penny.tool_funcs.app_usage_info import app_usage_info
 
 load_dotenv()
-
-_app_usage_info_optimizer: Optional[PennyAppUsageInfoOptimizer] = None
-
-
-def app_usage_info(usage_request: str, *args, **kwargs) -> tuple[bool, str]:
-    """
-    Answer Hey Penny app usage questions: navigation (tabs, sections, buttons), category
-    definitions and defaults, how features work (e.g. Split It Up, goals), and product limits
-    (e.g. no manual transactions, no custom categories). Uses real in-app labels only—no user
-    financial data. Delegates to PennyAppUsageInfoOptimizer.generate_response, which only
-    accepts the usage question string; ``*args`` / ``kwargs`` (e.g. ``input_info=``) are ignored.
-    """
-    global _app_usage_info_optimizer
-    if _app_usage_info_optimizer is None:
-        _app_usage_info_optimizer = PennyAppUsageInfoOptimizer()
-    try:
-        result = _app_usage_info_optimizer.generate_response(usage_request.strip())
-        return True, result["reply"]
-    except Exception as e:
-        return False, str(e)
 
 SYSTEM_PROMPT = """You are a financial planner agent very good at understanding conversation.
 
