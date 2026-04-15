@@ -76,7 +76,7 @@ List of insights (and their matching keys) that are each independent of each oth
 
 ### `...spend_vs_forecast`, `...spent_vs_forecast`, `...spend_vs_goal`, and `...spent_vs_goal` Guidelines
 - **Messaging**: Include monetary amounts, timeframe (ie. weekly or monthly), and severity of divergence (or synonyms).
-   - When referring to category totals, avoid using "higher by X", "up X", "X higher", and anything similar. Instead, use "higher at X", "up at X", "increased to X", and similar phrases. Note that "increased this week to $264" means that the total for the week is $264.
+   - When referring to category totals, avoid using "higher by X", "up X", "X higher", and anything similar. Instead, use "higher at X", "up at X", "increased to X", and similar phrases—**for `*_vs_forecast` keys**. For `*_vs_goal` outflows, anchor spend against the user's **limit / cap / budget** (see Goal-Specific Semantics)—not bare "higher at $X" alone. Note that "increased this week to $264" means that the total for the week is $264.
    - Specify if the insight is on an inflow/income or outflow/spending.
    - **Focus on the main category** mentioned in the key (e.g., if key is `...:Food`, focus on "Food" or "Meals") rather than listing every sub-item, to keep it concise.
 - **Format**
@@ -85,9 +85,9 @@ List of insights (and their matching keys) that are each independent of each oth
    - Inflow category is higher than forecasted: category and monetary amount in green, with category linked (ex: g{[Income](/income/monthly)} at g{$1,234})
    - Outflow category is lower than forecasted: category and monetary amount in green, with category linked (ex: g{[Meals](/meals/weekly)} at g{$1,234})
 - **Goal-Specific Semantics (`...vs_goal`)**
-   - For **spending/category goals** (`...spend_vs_goal`, `...spent_vs_goal` in outflow categories): talk about **limit attainment**. Preferred wording is "exceeded your limit", "within your limit", or "at your limit".
-   - For **income goals** (`income`, `salary`, `sidegig`, `business`, `interest` with `...vs_goal`): talk about **goal attainment**. Preferred wording is "exceeded your goal", "fell below your goal", or "at your goal".
-   - Avoid forecast framing for `...vs_goal` messages. Do not say "than forecast", "vs forecast", or imply model prediction when the key is `...vs_goal`.
+   - **Outflow spending** (`...spend_vs_goal`, `...spent_vs_goal`): Spend vs the user's **limit / cap / budget**—not forecast. Do **not** use forecast-only phrasing (bare "higher at $X" with no user-set bar). **Do not** lean on one stock line such as always saying "exceeded your limit"—vary verbs and nouns (e.g. over your cap, past the line you set, above the budget you chose, blew past your ceiling). Keep short input qualifiers if they fit; no preachy closers. Pair `r{[category](…)}` and `r{$…}` cleanly.
+   - **Income** (`income`, `salary`, `sidegig`, `business`, `interest`): **goal attainment**, not forecast; vary phrasing—do not always use "exceeded your goal".
+   - No forecast framing for `...vs_goal` (no "vs forecast" / model-prediction wording).
 - **Linking**: Use the slug in parentheses from the Official Category List for the link path (e.g., `meals_dining_out` becomes `/meals_dining_out/weekly`). Use the display name for the link text. If the category in the key is a general one like "Food", use the closest official slug (e.g., `meals`).
 - **Timeframe**: Always include the timeframe in the link (e.g., `/monthly` or `/weekly`) based on the insight text.
 - **Color Consistency**: The category link and the amount must have the SAME color (both g{} or both r{}). If spending is lower than forecast (good), both are green. If income is lower than forecast (bad), both are red.
@@ -377,6 +377,17 @@ TEST_CASES = [
             }
         ],
         "ideal_response": "One item. key unchanged. insight: outflow higher → red category + amount, linked (e.g. r{[Shopping](/shopping/monthly)}); up this month to $1,250; ≤100 chars.",
+    },
+    {
+        "name": "spend_vs_forecast_2026_03_income_combined",
+        "batch": "spend_vs_forecast",
+        "insight_input": [
+            {
+                "key": "spend_vs_forecast:2026-03:Income",
+                "insight": "Business is slightly up this month at $375.  Side-Gig is significantly down this month at $300.  Salary is significantly down this month at $1271.",
+            }
+        ],
+        "ideal_response": "One item. key unchanged. Insight names only leaf streams (Business, Side-Gig, Salary)—no 'Income' in text, so do not roll up or sum to one Income total; verbalize the named lines (up→green, down→red per stream) or pick one or two to focus on; ≤100 chars.",
     },
     {
         "name": "spend_vs_forecast_batch_transport_health_sidegig_shopping",
