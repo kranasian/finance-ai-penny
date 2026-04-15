@@ -18,13 +18,16 @@ load_dotenv()
 
 DEFAULT_MODEL = "gemini-flash-lite-latest"
 
-SYSTEM_PROMPT = """Input: JSON array of {id, name, transactions[]} — each line is date, $amount, category_token.
+SYSTEM_PROMPT = """Input is JSON [{id,name,transactions[]}], each transaction: date, $amount, category_token.
+Positive amounts are inflows (credits); negative amounts are outflows (debits/reversals).
 
-Primary signals (in order): (1) amount scale, shape, and pairing—stable wage-sized repeats vs micro-amount noise vs fee-flat lines vs large offsetting debits/credits in the same band; (2) calendar recurrence and cadence across lines. Category tokens are weak and often mis-tagged—do not let them override amount+rhythm evidence. The group name is secondary (employer/Payroll/DEP language, Instapay/Advance/travel/P2P hints); use it only when dollars+dates are ambiguous.
+Decide by: (1) amount pattern + recurrence, (2) name hints, (3) category_token (weak, often wrong).
+Frequent inflows imply income-like behavior, not spending-like behavior.
 
-salary_ids: coherent recurring inflows at plausible take-home scale with payroll-like stability—including **variable check-to-check amounts** (hundreds to low thousands) when dates cluster like pay cycles and the name reads as employer **Payroll** (not Instapay/Advance). Do **not** demand every line be four-figure if the rhythm and scale still resemble wage deposits. **Score each group independently**—never deny a Payroll-named employer stream because another group in the same payload posts larger ACH numbers. Mid-three-digit to ~$1k swings without micro-gig flecks (<$15) can still be payroll. If **Payroll** appears in the employer-facing name (excluding Instapay/Advance) and there are **≥3** credits each **≥ ~$40** spanning **≥14 days** of calendar coverage, treat as salary_ids unless the series is unmistakably a transfer/autopay chip pattern (near-identical bill-sized repeats). excluded_ids: everything else—including identical repeating amounts from labor-agency/unemployment context (DOL/UI) even if mislabeled salary; earned-wage style names (Instapay, MyPay Advance, @Work, etc.) stay excluded unless the amount series clearly matches employer ACH pay-scale rhythm, not small transfer steps; travel-sized mirrored flows; autopay/transfer ladders; gig/rebate magnitudes; brokerage-scale business swings.
+salary_ids: recurring inflows at paycheck scale with payroll-like cadence (weekly/biweekly/semimonthly/monthly), including variable checks. Score groups independently. Payroll/Direct Deposit names increase confidence. If employer-facing Payroll appears (excluding Instapay/Advance) and there are >=3 inflows >=$40 over >=14 days, classify as salary_ids unless mirrored transfer/autopay behavior is clear.
+excluded_ids: everything else (travel/card mirrors, transfer ladders, P2P exchanges, Instapay/MyPay/@Work advances, unemployment/labor-agency repeats, micro-gig/rebates, one-off loan/brokerage swings).
 
-notes: ≤3 sentences; names only (no ids). Justify with amount/recurrence facts (e.g. bi-weekly ~$3.8k vs $1–$5 micro streak). Never: "is payroll", "is not payroll", "transaction is payroll", "transaction is not payroll"."""
+notes: <=3 sentences, names only (no ids), justify with amount/recurrence facts. Never say: "is payroll", "is not payroll", "transaction is payroll", "transaction is not payroll"."""
 
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
@@ -169,47 +172,79 @@ _MAX_CASES_PER_OPTIMIZER_BATCH = 1
 TEST_CASES = [
   {
     "batch": 1,
-    "name": "photo_batch_1_justplay_instacash_axiom",
+    "name": "photo_batch_1_keybank_axiom_payroll_streams",
     "input": """[
   {
-    "id": 601784,
-    "name": "Justplay",
+    "id": 5487,
+    "name": "ACH Credit: Keybank National Direct Deposit",
     "transactions": [
-      "2026-03-23  $1.03  income_side_gig",
-      "2026-03-23  $3.52  income_side_gig",
-      "2026-03-20  $2.56  income_side_gig",
-      "2026-03-18  $3.08  income_side_gig",
-      "2026-03-18  $1.69  income_side_gig",
-      "2026-03-17  $3.11  income_side_gig"
+      "2026-03-13  $3809.69  income_salary",
+      "2026-03-06  $20375.10  income_salary",
+      "2026-02-27  $3808.50  income_salary",
+      "2026-02-13  $3808.49  income_salary",
+      "2026-01-30  $3859.50  income_salary"
     ]
   },
   {
-    "id": 432517,
-    "name": "Instacash Turbo Fee Rebate",
+    "id": 588112,
+    "name": "KeyBank National Payroll",
     "transactions": [
-      "2026-03-12  $5.00  bills_service_fees",
-      "2026-02-12  $5.00  bills_service_fees",
-      "2026-01-15  $5.00  bills_service_fees"
+      "2026-04-10  $4282.73  income_salary",
+      "2026-03-27  $3970.91  income_salary"
     ]
   },
   {
     "id": 601905,
-    "name": "Axiom Healthcare Payroll",
+    "name": "Walmart",
     "transactions": [
-      "2026-03-26  $549.82  income_salary",
-      "2026-03-12  $790.62  income_salary",
-      "2026-02-25  $1000.00  income_salary",
-      "2026-02-11  $1000.00  income_salary",
-      "2026-01-29  $1000.00  income_salary",
-      "2026-01-15  $504.57  income_salary"
+      "2026-03-26  $549.82  shopping_clothing",
+      "2026-03-12  $790.62  shopping_clothing",
+      "2026-02-25  $1000.00  shopping_clothing",
+      "2026-02-11  $1000.00  shopping_clothing",
+      "2026-01-29  $1000.00  shopping_clothing",
+      "2026-01-15  $504.57  shopping_clothing"
     ]
   }
 ]""",
-    "output": """{"salary_ids":[601905],"excluded_ids":[601784,432517],"notes":"Axiom Healthcare is clear payroll; Justplay app payouts and Instacash fee rebates are not wage payroll."}""",
+    "output": """{"salary_ids":[5487,601905,588112],"excluded_ids":[],"notes":"Two streams have multi-cycle wage recurrence; the 2-line payroll-labeled stream stays included despite the >=3-credit rule because the name indicates it is for payroll."}""",
   },
   {
     "batch": 2,
-    "name": "photo_batch_2_chase_travel_at_work_mypay",
+    "name": "photo_batch_2_autopay_card_loan_transfers",
+    "input": """[
+  {
+    "id": 367,
+    "name": "Autopay",
+    "transactions": [
+      "2026-04-13  $327.10  transfer",
+      "2026-03-17  $111.30  transfer",
+      "2026-03-13  $1063.74  transfer",
+      "2026-02-13  $918.54  transfer",
+      "2026-01-13  $1066.80  transfer"
+    ]
+  },
+  {
+    "id": 9451,
+    "name": "Card Payment from Secured Account",
+    "transactions": [
+      "2026-04-02  $263.72  transfer",
+      "2026-03-14  $839.18  transfer",
+      "2026-02-02  $67.88  transfer"
+    ]
+  },
+  {
+    "id": 506503,
+    "name": "Social Finance Personal Loan",
+    "transactions": [
+      "2026-02-18  $4500.50  transfer"
+    ]
+  }
+]""",
+    "output": """{"salary_ids":[],"excluded_ids":[367,9451,506503],"notes":"Autopay/card-payment/loan settlement patterns are transfer-style flows, not payroll cadence."}""",
+  },
+  {
+    "batch": 3,
+    "name": "photo_batch_3_chase_zelle_instacash",
     "input": """[
   {
     "id": 24951,
@@ -219,136 +254,70 @@ TEST_CASES = [
       "2026-04-13  -$824.93  leisure_travel_vacations",
       "2026-04-12  -$875.95  leisure_travel_vacations",
       "2026-04-12  $521.93  leisure_travel_vacations",
-      "2026-04-12  -$824.53  leisure_travel_vacations",
-      "2026-03-10  -$721.93  leisure_travel_vacations",
-      "2025-12-14  -$122.11  leisure_travel_vacations",
-      "2025-10-14  $348.46  leisure_travel_vacations",
-      "2025-10-14  -$164.75  leisure_travel_vacations",
-      "2025-10-14  -$607.70  leisure_travel_vacations",
-      "2025-10-14  $494.25  leisure_travel_vacations"
+      "2026-04-12  -$824.53  leisure_travel_vacations"
     ]
   },
   {
-    "id": 606645,
-    "name": "At Work Instapay",
+    "id": 17306,
+    "name": "Zelle from Marilyn R Velez",
     "transactions": [
-      "2026-04-12  $84.09  income_salary",
-      "2026-04-11  $127.11  income_salary",
-      "2026-04-05  $49.50  uncategorized",
-      "2026-04-01  $90.36  uncategorized",
-      "2026-03-27  $100.00  uncategorized",
-      "2026-03-23  $40.27  uncategorized",
-      "2026-02-06  $20.00  income_salary",
-      "2026-02-06  $200.00  income_salary",
-      "2026-01-28  $83.60  income_salary"
+      "2026-04-03  -$500.00  transfer",
+      "2026-03-03  $2200.00  transfer",
+      "2026-02-13  -$200.00  transfer",
+      "2026-02-02  $1600.00  transfer",
+      "2026-01-23  $70.00  transfer"
     ]
   },
   {
-    "id": 11564,
-    "name": "MyPay Advance",
+    "id": 119912,
+    "name": "MoneyLion Instacash",
     "transactions": [
-      "2026-04-09  $40.00  transfer",
-      "2026-03-29  $20.00  transfer",
-      "2026-03-24  $20.00  transfer",
-      "2026-03-16  $40.00  transfer",
-      "2026-03-10  $20.00  transfer",
-      "2026-02-25  $40.00  transfer",
-      "2026-02-14  $25.00  transfer"
+      "2026-04-05  $5.00  transfer",
+      "2026-03-28  $100.00  transfer",
+      "2026-03-28  $20.00  transfer",
+      "2026-03-27  -$300.00  transfer",
+      "2026-03-27  $100.00  transfer"
     ]
   }
 ]""",
-    "output": """{"salary_ids":[],"excluded_ids":[24951,606645,11564],"notes":"Chase Travel reward redemptions; At Work Instapay and MyPay advances are not wage payroll."}""",
-  },
-  {
-    "batch": 3,
-    "name": "photo_batch_3_labor_force_autopay_keybank_ach",
-    "input": """[
-  {
-    "id": 590149,
-    "name": "Labor Force Group Payroll",
-    "transactions": [
-      "2026-04-07  $100.07  income_salary",
-      "2026-03-31  $124.36  income_salary",
-      "2026-03-24  $344.95  income_salary",
-      "2026-03-17  $627.87  income_salary",
-      "2026-03-10  $505.50  income_salary"
-    ]
-  },
-  {
-    "id": 367,
-    "name": "Autopay",
-    "transactions": [
-      "2026-03-26  $181.00  transfer",
-      "2026-01-26  $188.00  transfer",
-      "2025-12-26  $181.00  transfer",
-      "2025-11-26  $193.00  transfer",
-      "2025-10-26  $186.00  transfer",
-      "2025-09-26  $194.00  transfer",
-      "2025-09-11  $155.00  transfer",
-      "2025-08-26  $194.00  transfer",
-      "2025-08-11  $155.00  transfer",
-      "2025-07-25  $188.00  transfer"
-    ]
-  },
-  {
-    "id": 5487,
-    "name": "ACH Credit: Keybank National Direct Deposit",
-    "transactions": [
-      "2026-03-13  $3809.69  income_salary",
-      "2026-03-06  $20375.10  income_salary",
-      "2026-02-27  $3808.50  income_salary",
-      "2026-02-13  $3808.49  income_salary",
-      "2026-01-30  $3859.50  income_salary",
-      "2026-01-16  $3808.50  income_salary"
-    ]
-  }
-]""",
-    "output": """{"salary_ids":[5487,590149],"excluded_ids":[367],"notes":"KeyBank ACH DIR DEP and Labor Force Group Payroll are clear payroll; card autopay is excluded."}""",
+    "output": """{"salary_ids":[],"excluded_ids":[24951,17306,119912],"notes":"Travel reversals, person-to-person Zelle exchanges, and Instacash advance/repay loops do not show employer-pay rhythm."}""",
   },
   {
     "batch": 4,
-    "name": "photo_batch_4_nys_keybank_mixed_fidelity",
+    "name": "photo_batch_4_walmart_cbplus_justplay",
     "input": """[
   {
-    "id": 4470,
-    "name": "NYS Department of Labor",
+    "id": 388,
+    "name": "Walmart",
     "transactions": [
-      "2024-07-10  $504.00  income_salary",
-      "2024-07-03  $504.00  income_salary",
-      "2024-06-28  $504.00  income_salary",
-      "2024-06-20  $504.00  income_salary",
-      "2024-06-12  $504.00  income_salary",
-      "2024-06-05  $504.00  income_salary",
-      "2024-05-30  $504.00  income_salary",
-      "2024-05-23  $504.00  income_salary",
-      "2024-05-15  $504.00  income_salary"
+      "2026-04-07  $250.00  income_salary",
+      "2026-04-07  -$18.00  meals_groceries",
+      "2026-04-06  $301.23  uncategorized",
+      "2026-04-03  -$2.28  meals_groceries",
+      "2026-04-01  -$21.69  meals_groceries",
+      "2026-04-01  -$2.15  meals_groceries"
     ]
   },
   {
-    "id": 5487,
-    "name": "Keybank National Direct Deposit",
+    "id": 601900,
+    "name": "CB Plus Loan MoneyLion Escrow Release",
     "transactions": [
-      "2025-10-10  -$7.41  income_salary",
-      "2025-01-03  $3726.10  income_salary",
-      "2024-12-20  $3715.67  income_salary",
-      "2024-12-06  $3273.96  income_salary",
-      "2024-11-22  $3273.95  income_salary",
-      "2024-11-08  $3715.68  income_salary"
+      "2026-03-27  $808.86  transfer"
     ]
   },
   {
-    "id": 4569,
-    "name": "Fidelity Investments",
+    "id": 601784,
+    "name": "Justplay",
     "transactions": [
-      "2024-06-27  $540.00  income_business",
-      "2024-06-12  $1750.00  income_business",
-      "2024-05-14  $1200.00  income_business",
-      "2024-04-24  $3500.00  income_business",
-      "2024-04-16  $7000.00  income_business"
+      "2026-03-23  $1.03  income_side_gig",
+      "2026-03-23  $3.52  income_side_gig",
+      "2026-03-20  $2.56  income_side_gig",
+      "2026-03-18  $3.08  income_side_gig",
+      "2026-03-18  $1.69  income_side_gig"
     ]
   }
 ]""",
-    "output": """{"salary_ids":[5487],"excluded_ids":[4470,4569],"notes":"KeyBank DIR DEP pattern is payroll; NYS DOL unemployment and Fidelity Moneyline are not employer payroll."}""",
+    "output": """{"salary_ids":[],"excluded_ids":[388,601900,601784],"notes":"Mixed retail/card activity, escrow-release transfer, and micro side-gig payouts are not stable wage deposits."}""",
   },
 ]
 
