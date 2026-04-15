@@ -87,21 +87,40 @@ class SalaryDetectionOptimizer:
       response_schema=OUTPUT_SCHEMA,
       safety_settings=SAFETY_SETTINGS,
       system_instruction=[types.Part.from_text(text=SYSTEM_PROMPT)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
     )
     output_text = ""
+    thought_summary = ""
     t0 = time.perf_counter()
     try:
-      response = self.client.models.generate_content(model=self.model_name, contents=contents, config=config)
+      for chunk in self.client.models.generate_content_stream(
+        model=self.model_name,
+        contents=contents,
+        config=config,
+      ):
+        if chunk.text is not None:
+          output_text += chunk.text
+        if hasattr(chunk, "candidates") and chunk.candidates:
+          for candidate in chunk.candidates:
+            if hasattr(candidate, "content") and candidate.content:
+              if hasattr(candidate.content, "parts") and candidate.content.parts:
+                for part in candidate.content.parts:
+                  if hasattr(part, "thought") and part.thought:
+                    if hasattr(part, "text") and part.text:
+                      thought_summary += part.text
     except Exception as e:
-      print(f"detect_salary_optimizer generate_content failed: {e}")
+      print(f"detect_salary_optimizer generate_content_stream failed: {e}")
       _ = time.perf_counter() - t0
       return ""
     _ = time.perf_counter() - t0
-    if response.candidates:
-      for part in response.candidates[0].content.parts:
-        if part.text:
-          output_text += part.text
+    if thought_summary.strip():
+      print(f"{'=' * 80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
     return output_text
 
 
