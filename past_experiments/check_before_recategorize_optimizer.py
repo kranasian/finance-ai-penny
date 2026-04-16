@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from google import genai
 from google.genai import types
 import json
@@ -38,21 +40,27 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """Return only the JSON object. Set `rules_satisfied` then `notes`; they must agree (true ↔ success wording, false ↔ one failure reason).
+SYSTEM_PROMPT = """Return only JSON with `rules_satisfied` and `notes`.
+Set `rules_satisfied` first; `notes` must match it (true=all clear, false=failures).
+Ignore category labels.
 
-Ignore category labels when interpreting rules.
+Rules:
+1) Blank request, no bullets, only "(+N more transactions.)", no mappable payee/amount/date rule, or rules only in [...] with no {...} => false.
+2) Validate every bullet line (ignore +more line) against every mapped rule:
+   - name contains/exact (case-insensitive; exact means full payee),
+   - date constraints,
+   - amount constraints,
+   - account only if request says account_id/account id/posts to account.
+3) Account is optional by default. Require account checks only when the request includes an account rule (account_id/account id/posts to account).
+4) If account is in scope, each line must explicitly include account info (e.g., "(Account 20)"); if absent or "Account not given", mark missing-account failure.
+5) Any line error, mismatch, or missing required field/sentinel (e.g., "Amount not given") => false.
+6) If a required field is missing, record that missing-field reason and skip dependent checks for that field.
+7) True only if all listed lines pass all mapped rules.
 
-First failing gate → false with a matching note:
-A) Blank request → false; never infer rules from `# Transactions` alone.
-B) No bullets, or only “(+N more transactions.)” → false.
-C) No mappable payee/amount/date rules (treat account as required only if text says account_id, account id, or posts to account) → false.
-D) Structured rules only in [...] without a {...} block → false.
-E) Each bullet (not the +more line): apply all mapped rules—contains vs exact name (case-insensitive; exact = full payee); each line’s date and amount satisfy the request’s rules. If account is in scope, (Account not given) is missing; if not in scope, ignore absent Account tails.
-F) Sentinels such as Amount not given block any check that needs that value → false.
-
-If every line passes → true + short success note.
-
-Notes: one sentence, fact-only; use $ and digits as in the request (no spelled-out dollars or years). Aim ≤100 chars. Never say categorized, processed, or successfully. No snake_case; say at most, at least, exactly—not symbols."""
+Notes:
+- One line, fact-only, <=140 chars (target <=100), use $ and digits.
+- If false, list all failure reasons found (compact; separated by semicolons).
+- Never say categorized, processed, successfully; no snake_case; use words like at most/at least/exactly (not symbols)."""
 
 
 TEST_CASES = [
@@ -328,11 +336,15 @@ class UpdateTransactionCategoryVerifyOptimizer:
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
       response_mime_type="application/json",
       response_schema=OUTPUT_SCHEMA,
     )
     output_text = ""
+    thought_summary = ""
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -340,6 +352,19 @@ class UpdateTransactionCategoryVerifyOptimizer:
     ):
       if chunk.text is not None:
         output_text += chunk.text
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    thought_summary += part.text
+    if thought_summary.strip():
+      print(f"{'=' * 80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
     return output_text
 
 
