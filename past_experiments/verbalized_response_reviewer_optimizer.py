@@ -18,10 +18,10 @@ Input is a list of conversation turns. The `conversation_history` is derived fro
 - The output is a JSON object where each key is a red flag key that specifies an issue in the `ai_review_response`, and the value is the rationale for choosing that flag. Multiple keys can be present if there are several issues. **However, if `good_response` is among the applicable keys, it *must* be the ONLY key present in the output.** The rationale should be concise but comprehensively explain why the red flag was chosen, making it easily understandable even without having to reference the list of guidelines. The output *must* be a JSON object.
 
 **Possible red flag keys (with definitions):**
-- `good_response`: The response is appropriate for the conversation. This includes straightforwardly answering the `Human`'s last inquiry, or clearly stating limitations (e.g., technical error, out of scope) in a well-worded and helpful manner, even if the user's request cannot be fulfilled. If `ai_review_response` contains a greeting (e.g., "Hey," "Hi," "Hello," "Good morning") AND ((it is the very first message in the entire exchange) OR (it is an immediate response to the Human's first message in the entire exchange)) AND no other red flags apply, then this *must* be `good_response`. If no greeting is present and no other red flag keys apply, then this *must* be `good_response`. This must be the only flag used if no other red flags apply.
+- `good_response`: The response is appropriate for the conversation. This includes straightforwardly answering the `Human`'s last inquiry, or clearly stating limitations (e.g., technical error, out of scope) in a well-worded and helpful manner, even if the user's request cannot be fulfilled. If no other red flags apply, then this *must* be `good_response`. This must be the only flag used if no other red flags apply.
 - `non_sense`: Irrelevant or illogical response, or response with inconsistent computations, or if the `ai_review_response` contradicts information previously provided by the AI in the conversation. If `ai_review_response` contradicts information previously provided by the AI in the conversation, then this *must* be `non_sense`, and `good_response` CANNOT be applied.
 - `repetitive_information`: Repeats information from within its own response without value/context change.
-- `incoherent_flow`: Leads to a dead end or breaks the conversation flow. This flag *must* be used if `ai_review_response` contains a greeting (e.g., "Hey," "Hi," "Hello," "Good morning") AND NOT ((it is the very first message in the entire exchange) OR (it is an immediate response to the Human's first message in the entire exchange)). If this `incoherent_flow` condition for a greeting is met, then `good_response` CANNOT be applied, even if other conditions for `good_response` might seem to apply.
+- `incoherent_flow`: Leads to a dead end or breaks the conversation flow.
 - `verbose`: Does not straightforwardly answer the `Human` last inquiry because of too many details or information unnecessary to the question.
 - `incomplete`: Too brief or lacks necessary information.
 """
@@ -111,11 +111,15 @@ output: """
       max_output_tokens=4096,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
     )
 
     # Generate response
     output_text = ""
+    thought_summary = ""
     try:
       for chunk in self.client.models.generate_content_stream(
         model=self.model_name,
@@ -124,6 +128,14 @@ output: """
       ):
         if chunk.text is not None:
           output_text += chunk.text
+        if hasattr(chunk, "candidates") and chunk.candidates:
+          for candidate in chunk.candidates:
+            if hasattr(candidate, "content") and candidate.content:
+              if hasattr(candidate.content, "parts") and candidate.content.parts:
+                for part in candidate.content.parts:
+                  if hasattr(part, "thought") and part.thought:
+                    if hasattr(part, "text") and part.text:
+                      thought_summary += part.text
     except Exception as e:
       error_msg = f"API Error: {str(e)}";
       print(f"\n{'='*80}");
@@ -140,6 +152,11 @@ output: """
     print("RESPONSE OUTPUT:")
     print(output_text.strip())
     print("="*80)
+    if thought_summary.strip():
+      print(f"{'=' * 80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
 
     # Try to parse as JSON, if it fails return as text
     try:

@@ -147,11 +147,15 @@ Output:"""
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
     )
 
     # Generate response
     output_text = ""
+    thought_summary = ""
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -159,6 +163,19 @@ Output:"""
     ):
       if chunk.text is not None:
         output_text += chunk.text
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    thought_summary += part.text
+    if thought_summary.strip():
+      print(f"{'=' * 80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
     
     # Check if response is empty
     if not output_text or not output_text.strip():
