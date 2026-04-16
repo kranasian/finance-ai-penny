@@ -30,7 +30,6 @@ from penny.tool_funcs.forecast_utils import forecast_dates_and_amount, utter_for
 from penny.tool_funcs.compare_income_or_spending import compare_income_or_spending
 from penny.tool_funcs.respond_to_app_inquiry import respond_to_app_inquiry
 from penny.tool_funcs.date_utils import (
-    get_date,
     get_start_of_month,
     get_end_of_month,
     get_start_of_year,
@@ -41,6 +40,11 @@ from penny.tool_funcs.date_utils import (
     get_date_string
 )
 from penny.tool_funcs.sandbox_logging import log as sandbox_log, clear_logs as clear_sandbox_logs, get_logs_as_string
+
+
+def _get_date_for_transaction_dataframe(year: int, month: int, day: int) -> pd.Timestamp:
+  """Midnight calendar date as ``Timestamp`` so ``df['date'] == get_date(y, m, d)`` matches ``datetime64[ns]`` columns."""
+  return pd.Timestamp(year=year, month=month, day=day).normalize()
 # Import planner skill functions
 from penny.tool_funcs.lookup_user_accounts_transactions_income_and_spending_patterns import lookup_user_accounts_transactions_income_and_spending_patterns
 from penny.tool_funcs.research_and_strategize_financial_outcomes import research_and_strategize_financial_outcomes
@@ -488,7 +492,7 @@ def _get_safe_globals(user_id,use_full_datetime=False):
     "utter_delta_from_now": utter_delta_from_now,
     "reminder_data": reminder_data,
     "log": sandbox_log,
-    "get_date": get_date,
+    "get_date": _get_date_for_transaction_dataframe,
     "get_start_of_month": get_start_of_month,
     "get_end_of_month": get_end_of_month,
     "get_start_of_year": get_start_of_year,
@@ -535,8 +539,13 @@ def _get_safe_globals_planner(user_id, use_full_datetime=False):
   return safe_globals_dict
 
 def _check_code_for_full_datetime(code_str: str) -> bool:
-  """Check if the code contains datetime.timedelta, datetime.date, or datetime.time"""
-  return "datetime.timedelta" in code_str or "datetime.date" in code_str or "datetime.time" in code_str
+  """Use the ``datetime`` module as global ``datetime`` when code needs submodule constructors."""
+  return (
+    "datetime.timedelta" in code_str
+    or "datetime.date" in code_str
+    or "datetime.time" in code_str
+    or "datetime.datetime" in code_str
+  )
 
 # Global PrintCollector instance for capturing print outputs
 _print_collector = None

@@ -1,11 +1,32 @@
 import sqlite3
 import os
 import pandas as pd
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Dict, Optional
 
+
+def _transaction_date_to_iso(value) -> str:
+  """Normalize transaction dates to ``YYYY-MM-DD`` strings.
+  """
+  if value is None:
+    return ""
+  if isinstance(value, date):
+    return value.strftime("%Y-%m-%d")
+  s = str(value).strip()
+  if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+    return s[:10]
+  return s
+
+
+def default_chatbot_db_path() -> str:
+  """Path to the default SQLite file next to this module (independent of process cwd)."""
+  return os.path.join(os.path.dirname(os.path.abspath(__file__)), "chatbot.db")
+
+
 class Database:
-  def __init__(self, db_path: str = "chatbot.db"):
+  def __init__(self, db_path: Optional[str] = None):
+    if db_path is None:
+      db_path = default_chatbot_db_path()
     self.db_path = db_path
     self.init_database()
   
@@ -294,7 +315,7 @@ class Database:
         'transaction_id': result[0],
         'user_id': result[1],
         'account_id': result[2],
-        'date': result[3],
+        'date': _transaction_date_to_iso(result[3]),
         'transaction_name': result[4],
         'amount': result[5],
         'category': result[6]
@@ -362,7 +383,7 @@ class Database:
         'transaction_id': result[0],
         'user_id': result[1],
         'account_id': result[2],
-        'date': result[3],
+        'date': _transaction_date_to_iso(result[3]),
         'transaction_name': result[4],
         'amount': result[5],
         'category': category_name,
@@ -386,7 +407,7 @@ class Database:
         'transaction_id': result[0],
         'user_id': result[1],
         'account_id': result[2],
-        'date': result[3],
+        'date': _transaction_date_to_iso(result[3]),
         'transaction_name': result[4],
         'amount': result[5],
         'category': result[6]
@@ -409,7 +430,7 @@ class Database:
         'transaction_id': result[0],
         'user_id': result[1],
         'account_id': result[2],
-        'date': result[3],
+        'date': _transaction_date_to_iso(result[3]),
         'transaction_name': result[4],
         'amount': result[5],
         'category': result[6]
@@ -550,7 +571,7 @@ class Database:
         'transaction_id': result[0],
         'user_id': result[1],
         'account_id': result[2],
-        'date': result[3],
+        'date': _transaction_date_to_iso(result[3]),
         'transaction_name': result[4],
         'amount': result[5],
         'category': result[6],

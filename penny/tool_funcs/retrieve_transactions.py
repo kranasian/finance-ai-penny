@@ -1,5 +1,6 @@
 from database import Database
 import json
+import os
 import pandas as pd
 import re
 from penny.tool_funcs.sandbox_logging import log
@@ -7,17 +8,41 @@ from penny.tool_funcs.sandbox_logging import log
 # Maximum number of transactions to return in transaction_names_and_amounts
 MAX_TRANSACTIONS = 10
 
+# Local SQLite demo DBs are seeded once; shift all dates forward when newest tx is older than this.
+_DEMO_TX_MAX_STALE_DAYS = 35
+
 
 def retrieve_transactions_function_code_gen(user_id: int = 1) -> pd.DataFrame:
   """Function to retrieve transactions from the database for a specific user"""
   db = Database()
   transactions = db.get_transactions_by_user(user_id=user_id)
   df = pd.DataFrame(transactions)
-  
-  # Convert date column to datetime for proper comparisons
-  if 'date' in df.columns and len(df) > 0:
-    df['date'] = pd.to_datetime(df['date'])
-  
+
+  if "date" in df.columns and not df.empty:
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
+    if not df.empty:
+      if pd.api.types.is_datetime64tz_dtype(df["date"]):
+        df["date"] = df["date"].dt.tz_convert(None)
+      df["date"] = df["date"].dt.normalize()
+      if os.environ.get("PENNY_DISABLE_DEMO_TX_DATE_ROLL", "").lower() not in ("1", "true", "yes"):
+        max_d = df["date"].max()
+        today = pd.Timestamp.now().normalize()
+        if max_d < today - pd.Timedelta(days=_DEMO_TX_MAX_STALE_DAYS):
+          delta = today - max_d
+          df = df.copy()
+          # Seeded lookup amount-band fixtures (user_seeder) keep literal calendar dates for tests.
+          if "transaction_id" in df.columns:
+            is_lookup_fixture = df["transaction_id"].between(900001, 900009, inclusive="both")
+            df.loc[~is_lookup_fixture, "date"] = df.loc[~is_lookup_fixture, "date"] + delta
+          else:
+            df["date"] = df["date"] + delta
+          log(
+            f"**Demo date roll** for `U-{user_id}`: shifted transaction dates by {delta.days} days "
+            f"(max was {max_d.date()}, now {df['date'].max().date()}); "
+            f"ids 900001–900009 unchanged."
+          )
+
   cols_str = "`, `".join(df.columns)
   log(f"**Retrieved All Transactions** of `U-{user_id}`: `df: {df.shape}` w/ **cols**:\n  - `{cols_str}`")
   return df
@@ -33,8 +58,8 @@ def retrieve_income_transactions_function_code_gen(user_id: int = 1) -> pd.DataF
   
   # Filter for income categories
   income_categories = ['income_salary', 'income_sidegig', 'income_business', 'income_interest', 'income']
-  income_df = df[df['category'].isin(income_categories)]
-  
+  income_df = df[df['category'].isin(income_categories)].copy()
+
   # Flip amount for income transactions
   income_df['amount'] = income_df['amount'] * -1
   

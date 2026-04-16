@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time
 from dateutil.relativedelta import relativedelta
 import calendar
 import pandas as pd
@@ -27,10 +27,10 @@ def get_start_of_month(date: datetime) -> datetime:
 
 
 def get_end_of_month(date: datetime) -> datetime:
-    """Returns the last day of the month for a given date."""
+    """Returns the last instant of the last calendar day of the month (inclusive month filters)."""
     date_obj = pd.to_datetime(date)
     end = date_obj.replace(day=1) + pd.offsets.MonthEnd()
-    return datetime.combine(end.date(), datetime.min.time())
+    return datetime.combine(end.date(), time(23, 59, 59, 999999))
 
 
 def get_start_of_year(date: datetime) -> datetime:

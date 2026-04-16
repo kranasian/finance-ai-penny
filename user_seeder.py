@@ -3,16 +3,22 @@ import os
 import random
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
-from database import Database
+from database import Database, default_chatbot_db_path, _transaction_date_to_iso
 
 # Global transaction ID counters to ensure uniqueness across all users
 _transaction_id_counter = 10000
 _subscription_transaction_id_counter = 20000
 
-def reset_database(db_path: str = "chatbot.db"):
-  """Reset the database by dropping and recreating all tables"""
+def reset_database(db_path=None):
+  """Reset the database by dropping and recreating all tables.
+
+  If ``db_path`` is omitted, uses the same default file as ``Database()`` (beside ``database.py``).
+  """
   global _transaction_id_counter, _subscription_transaction_id_counter
-  
+
+  if db_path is None:
+    db_path = default_chatbot_db_path()
+
   # Remove existing database file
   if os.path.exists(db_path):
     os.remove(db_path)
@@ -270,7 +276,7 @@ def create_sample_transactions(user_id: int, account_ids: list, transaction_coun
       ('Target', 'TARGET STORE', 75.00),
       ('Amazon', 'AMAZON.COM', 45.00),
       ('Nike Store', 'NIKE INC', 120.00),
-      ('Macy\'s', 'MACYS DEPARTMENT', 85.00)
+      ('Macy\'s', 'MACYS DEPARTMENT', 85.4)
     ],
     'shopping_gadgets': [
       ('Best Buy', 'BEST BUY STORE', 299.99),
@@ -902,6 +908,77 @@ def create_subscription_transactions(user_id: int, account_ids: list, months: in
   
   return transaction_count
 
+
+def _lookup_amount_band_fixtures_match_current_shape(db: Database) -> bool:
+  """True when fixture 900002 is the realistic LUR row (not legacy placeholder seed data)."""
+  row = db.get_transaction(900002)
+  if row is None:
+    return False
+  name = (row.get("transaction_name") or "").upper()
+  if "WHOLE FOODS" not in name:
+    return False
+  return _transaction_date_to_iso(row.get("date")) == "2026-01-22"
+
+
+def create_lookup_amount_band_fixtures(db: Database, user_id: int, account_id: int) -> int:
+  """Insert spending rows for half-dollar band [N-0.5, N+0.5) tests (lookup_user_data_optimizer).
+
+  Uses fixed IDs 900001–900009. Each row has a distinct calendar date and a realistic statement-style name.
+  Dates are all strictly before the lookup optimizer ``|TODAY_DATE|`` anchor (2026-04-15) so prompts are not future-dated.
+  """
+  global _transaction_id_counter
+  rows = [
+    (900001, "MICROSOFT*365 PERSONAL", 84.49, "2026-01-14", "bills_service_fees"),
+    (900002, "WHOLE FOODS MKT #10432", 84.5, "2026-01-22", "meals_groceries"),
+    (900003, "TRADER JOE'S #512 BOSTON", 85.0, "2026-02-04", "meals_groceries"),
+    (900004, "TARGET T-1892 BROOKLYN", 85.49, "2026-02-18", "shopping_clothing"),
+    (900005, "SHELL OIL 57443421009", 85.5, "2026-03-02", "transportation_car"),
+    (900006, "UBER EATS*P1234 HELP.UBER.COM", 86.0, "2026-03-09", "meals_delivered_food"),
+    (900007, "STARBUCKS STORE 92841", 83.5, "2026-03-21", "meals_dining_out"),
+    (900008, "SPOTIFY USA", 86.5, "2026-04-02", "bills_service_fees"),
+    (900009, "COSTCO WHSE #0123", 83.49, "2026-04-10", "meals_groceries"),
+  ]
+  max_tid = _transaction_id_counter
+  for tid, name, amount, fixture_date, category in rows:
+    db.create_transaction(user_id, account_id, tid, fixture_date, name, amount, category)
+    max_tid = max(max_tid, tid + 1)
+  _transaction_id_counter = max(_transaction_id_counter, max_tid)
+  return len(rows)
+
+
+def ensure_lookup_amount_band_fixtures(db: Database = None) -> bool:
+  """Ensure rows 900001–900009 exist on HeavyDataUser (DBs seeded before fixtures were added).
+
+  Re-seeds when any id is missing **or** existing rows are legacy placeholders (same old test names/dates).
+  """
+  if db is None:
+    db = Database()
+  if (
+    all(db.get_transaction(tid) is not None for tid in range(900001, 900010))
+    and _lookup_amount_band_fixtures_match_current_shape(db)
+  ):
+    return True
+  heavy = db.get_user("HeavyDataUser")
+  if not heavy:
+    print(
+      "ensure_lookup_amount_band_fixtures: HeavyDataUser not found. "
+      "Run seed_users() from the finance-ai-penny repo root (with venv)."
+    )
+    return False
+  accounts = db.get_accounts_by_user(heavy["id"])
+  if not accounts:
+    print("ensure_lookup_amount_band_fixtures: HeavyDataUser has no accounts; run seed_users() first.")
+    return False
+  account_id = accounts[0]["account_id"]
+  conn = sqlite3.connect(db.db_path)
+  conn.execute("DELETE FROM transactions WHERE transaction_id >= 900001 AND transaction_id <= 900009")
+  conn.commit()
+  conn.close()
+  create_lookup_amount_band_fixtures(db, heavy["id"], account_id)
+  print("ensure_lookup_amount_band_fixtures: wrote LUR amount-band rows 900001–900009 for HeavyDataUser.")
+  return True
+
+
 def seed_users():
   """Seed the database with test users, accounts, and transactions"""
   print("Starting user seeding process...")
@@ -934,7 +1011,8 @@ def seed_users():
   last_year_start = datetime.now() - relativedelta(years=1)
   months_diff = 12
   heavy_transactions_last_year = create_sample_transactions(heavy_user_id, heavy_accounts, 500, months_diff, start_date=last_year_start)
-  
+  lookup_band_fixture_count = create_lookup_amount_band_fixtures(db, heavy_user_id, heavy_accounts[0])
+
   # Create forecast data for HeavyDataUser
   forecast_count = create_sample_forecasts(heavy_user_id)
   
@@ -966,7 +1044,8 @@ def seed_users():
   print(f"  - {subscription_transaction_count} subscription transactions (last 6 months)")
   print(f"  - {subscription_transaction_count_last_year} subscription transactions (last year)")
   print(f"  - {len(negative_savings_transactions)} transactions for month with negative savings ({months_ago_for_negative_savings} months ago)")
-  
+  print(f"  - {lookup_band_fixture_count} lookup amount-band fixture transactions (realistic names, distinct 2026 dates)")
+
   print("\nUser seeding completed successfully!")
   
   # Verify the seeding
