@@ -16,23 +16,30 @@ load_dotenv()
 
 DEFAULT_MODEL = "gemini-flash-lite-latest"
 
-SYSTEM_PROMPT = """JSON in: groups `{id, name, transactions[]}`; each line is `DATE  $AMOUNT  category_token`.
+SYSTEM_PROMPT = """Input: groups `{id, name, transactions[]}` with lines `DATE  $AMOUNT  category_token`.
 
-Return `shelter_ids` (rent or mortgage **principal** streams) and `excluded_ids` (everything else).
+Output JSON with `shelter_ids` (rent/mortgage principal outflow streams) and `excluded_ids` (everything else).
 
-**Primary:** each group’s own calendar spacing + dollar bands—**judge streams independently**; never demote one group because another in the same payload also looks like housing.
+Amount direction: `+$` = outflow, `-$` = inflow. Rent/mortgage must be outflows.
 
-Favor **~monthly** debits at **housing-scale** dollars: stable low-thousands with modest drift still counts as rent-like; **fixed** monthlies at mortgage-typical dollars count when naming or context does not scream non-housing debt.
+Classify each group independently using cadence + amount bands first; names are secondary tie-breakers.
 
-**Caution on small fixed monthlies:** a tight recurring **few-hundred-dollar** line whose `name` is a **generic Loan** (no Mortgage/Mtg/Rent/landlord wording) is usually **consumer/installment**, not shelter principal—exclude even if perfectly periodic.
+If category is `shelter_home`, default to shelter. Override only with strong contrary evidence (consistently tiny amounts, retail-like scatter, or clear non-housing context).
 
-Disfavor sub-$200 erratic ladders, internal sweep patterns, one-off five-figure checks without a rent rhythm, retail-scatter sizes, issuer card-pay bands.
+If category is not `income_salary`, still check for salary-like inflow patterns (negative amounts with paycheck-like recurrence/amount consistency) and exclude those from shelter.
 
-**Category tokens are unreliable**—do not let them override dates+dollars. **Names are secondary** tie-breakers when rhythm+size collide (Mortgage/Mtg vs Loan, Rent/Apts vs plain Transfer).
+Favor housing-like outflows that recur monthly OR as split payments within a month (e.g., two recurring amounts). Housing scale is often hundreds-to-low-thousands with some drift.
 
-Exclude travel lodging, property-tax-only workflows, obvious internal transfers, credit-card pay streams.
+Do not classify as shelter from size alone. If the name is not clearly housing-related, require both: (1) somewhat large outflow amounts and (2) recurring payment cadence.
 
-**Notes:** ≤3 sentences; never numeric ids; cite **cadence + $** (name words only if timing is ambiguous). Forbidden phrasing: "is rent", "is not rent", "is mortgage", "transaction is", or close variants."""
+Exclude travel/lodging, internal transfers/sweeps, credit-card payments, tax-only flows, retail/micro-spend scatter, and generic small-loan installment patterns.
+
+When outflows repeat on a monthly rhythm (single amount or two alternating amounts) with only minor extra charges/noise, keep as possible shelter even if the name is generic like "Payment".
+
+Tie-breaker: if a group has no inflows and shows the same outflow amount near the same day-of-month for 2+ months, do not exclude solely for being labeled transfer/uncategorized; treat as likely shelter unless explicit non-housing evidence exists.
+
+
+Notes: max 3 sentences, no numeric ids, explain cadence + amounts (name words only when cadence is ambiguous)."""
 
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
@@ -141,7 +148,7 @@ TEST_CASES = [
     "input": """[
   {
     "id": 3907,
-    "name": "Kaiser Permanente (#3907)",
+    "name": "Kaiser Permanente",
     "transactions": [
       "2026-04-01  $916.55  bills_insurance",
       "2026-03-04  $916.55  bills_insurance",
@@ -151,7 +158,7 @@ TEST_CASES = [
   },
   {
     "id": 24951,
-    "name": "Chase Travel (#24951)",
+    "name": "Chase Travel",
     "transactions": [
       "2026-04-13  -$824.53  leisure_travel_vacations",
       "2026-04-13  $824.93  leisure_travel_vacations",
@@ -162,7 +169,7 @@ TEST_CASES = [
   },
   {
     "id": 382819,
-    "name": "Bilt Rent - Avalonbay (#382819)",
+    "name": "Bilt Rent - Avalonbay",
     "transactions": [
       "2026-01-05  $3898.52  shelter_home"
     ]
@@ -176,21 +183,25 @@ TEST_CASES = [
     "input": """[
   {
     "id": 546756,
-    "name": "Viewparadise (#546756)",
+    "name": "Viewparadise",
     "transactions": [
       "2026-03-09  $3036.00  leisure_entertainment"
     ]
   },
   {
     "id": 4672,
-    "name": "ACH Hold: Goldman Sachs Bank Collection (#4672)",
+    "name": "Payment",
     "transactions": [
-      "2026-04-14  $3000.00  transfer"
+      "2026-03-30  $2000.00  transfer",
+      "2026-03-15  $1500.00  transfer",
+      "2026-02-28  $2000.00  transfer",
+      "2026-02-20  $50.00  transfer",
+      "2026-02-15  $1500.00  transfer",
     ]
   },
   {
     "id": 42849,
-    "name": "Zelle from Marilyn R Velez (#42849/#17306)",
+    "name": "Zelle from Marilyn R Velez",
     "transactions": [
       "2026-04-03  $500.00  transfer",
       "2026-03-03  -$2200.00  transfer",
@@ -200,7 +211,7 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"shelter_ids":[],"excluded_ids":[546756,4672,42849],"notes":"These lines are one-off or mixed-direction transfer activity without repeated monthly housing cadence, so no rent or mortgage principal stream is identified."}""",
+    "output": """{"shelter_ids":[4672],"excluded_ids":[546756,42849],"notes":"Payment shows bimonthly rent or mortgage payments at different amounts, with a payment for another purpose in between. Viewparadise and Zelle from Marilyn R Velez are lines are one-off or mixed-direction transfer activity without repeated monthly housing cadence, so no rent or mortgage principal stream is identified."}""",
   },
   {
     "batch": 3,
@@ -208,7 +219,7 @@ TEST_CASES = [
     "input": """[
   {
     "id": 103619,
-    "name": "AVA Commons (#103619)",
+    "name": "AVA Commons",
     "transactions": [
       "2026-03-09  $2887.62  shelter_home",
       "2026-03-05  $1007.95  shelter_home",
@@ -219,7 +230,7 @@ TEST_CASES = [
   },
   {
     "id": 388,
-    "name": "Walmart / Walmart Payroll (#388/#606675)",
+    "name": "Walmart / Walmart Payroll",
     "transactions": [
       "2026-04-07  -$250.00  income_salary",
       "2026-04-07  $18.00  meals_groceries",
@@ -230,17 +241,17 @@ TEST_CASES = [
   },
   {
     "id": 4771,
-    "name": "ATM Withdrawal / Out-of-Network Fee (#4771/#242889)",
+    "name": "Chase Payment",
     "transactions": [
-      "2026-04-12  $40.00  uncategorized",
-      "2026-03-24  $182.95  uncategorized",
-      "2026-03-24  $2.50  bills_service_fees",
-      "2026-03-23  $200.00  uncategorized",
-      "2026-03-16  $202.50  uncategorized"
+      "2026-04-15  $11.00  uncategorized",
+      "2026-04-12  $500.00  uncategorized",
+      "2026-03-15  $40.00  uncategorized",
+      "2026-03-12  $500.00  uncategorized",
+      "2026-02-12  $500.00  transfer",
     ]
   }
 ]""",
-    "output": """{"shelter_ids":[103619],"excluded_ids":[388,4771],"notes":"AVA Commons shows recurring housing-scale debits across months; Walmart and ATM groups are payroll/retail/cash activity without rent or mortgage recurrence."}""",
+    "output": """{"shelter_ids":[103619,4771],"excluded_ids":[388],"notes":"AVA Commons shows recurring housing-scale debits across months; Walmart is payroll/retail/cash activity without rent or mortgage recurrence; Chase Payment shows monthly payments possibly for mortgage."}""",
   },
   {
     "batch": 4,
@@ -248,7 +259,7 @@ TEST_CASES = [
     "input": """[
   {
     "id": 119912,
-    "name": "MoneyLion Instacash (#119912)",
+    "name": "MoneyLion Instacash",
     "transactions": [
       "2026-04-05  -$5.00  transfer",
       "2026-03-28  -$100.00  transfer",
@@ -259,7 +270,7 @@ TEST_CASES = [
   },
   {
     "id": 617991,
-    "name": "Moneylion Turbo Transfer to ***8583 (#617991)",
+    "name": "Moneylion Turbo Transfer to ***8583",
     "transactions": [
       "2026-03-27  $300.00  uncategorized",
       "2026-03-27  $200.00  uncategorized",
@@ -269,7 +280,7 @@ TEST_CASES = [
   },
   {
     "id": 1494,
-    "name": "AliExpress (#1494)",
+    "name": "AliExpress",
     "transactions": [
       "2026-04-04  $0.11  uncategorized",
       "2026-03-24  $4.50  uncategorized",

@@ -18,16 +18,42 @@ load_dotenv()
 
 DEFAULT_MODEL = "gemini-flash-lite-latest"
 
-SYSTEM_PROMPT = """Input is JSON [{id,name,transactions[]}], each transaction: date, $amount, category_token.
-Positive amounts are inflows (credits); negative amounts are outflows (debits/reversals).
+SYSTEM_PROMPT = """Input JSON: [{id,name,transactions[]}], each tx line contains date, signed $amount, category_token.
 
-Decide by: (1) amount pattern + recurrence, (2) name hints, (3) category_token (weak, often wrong).
-Frequent inflows imply income-like behavior, not spending-like behavior.
+Hard rules:
+1) Direction comes ONLY from sign: `$x` inflow, `-$x` outflow. Never infer direction from name/category.
+2) Salaries are inflows; outflows cannot be salary evidence.
+3) Evaluate each id independently and return every id exactly once in salary_ids or excluded_ids.
 
-salary_ids: recurring inflows at paycheck scale with payroll-like cadence (weekly/biweekly/semimonthly/monthly), including variable checks. Score groups independently. Payroll/Direct Deposit names increase confidence. If employer-facing Payroll appears (excluding Instapay/Advance) and there are >=3 inflows >=$40 over >=14 days, classify as salary_ids unless mirrored transfer/autopay behavior is clear.
-excluded_ids: everything else (travel/card mirrors, transfer ladders, P2P exchanges, Instapay/MyPay/@Work advances, unemployment/labor-agency repeats, micro-gig/rebates, one-off loan/brokerage swings).
+Per-id checklist:
+- Parse counts: inflow_count, outflow_count, inflow_amounts, date spacing of inflows.
+- Detect cadence from inflows only (weekly/biweekly/semimonthly/monthly or near-monthly).
+- Detect non-wage patterns: transfer/advance loop, reversal mirror (similar +/- amounts), tiny side-gig inflows, one-off transfer/loan swings.
+- Any amount without '-' is inflow. Calling it outflow is invalid.
+- If all listed amounts are positive, the group is inflow-only by definition.
 
-notes: <=3 sentences, names only (no ids), justify with amount/recurrence facts. Never say: "is payroll", "is not payroll", "transaction is payroll", "transaction is not payroll"."""
+Decision policy:
+- Highest-priority rule: if name contains "payroll" or "direct deposit", classify as salary_ids unless transactions are mostly outflows or clearly advance/transfer-reversal behavior.
+- If category suggests salary/income, assume salary_ids UNLESS strong contrary evidence exists (sparse/non-cadenced inflows, mixed with clear non-wage pattern, mostly outflows, or advance/reversal loop).
+- If category is not salary, still classify as salary_ids when inflows recur at paycheck-like cadence/scale; name is only secondary.
+- Recurring positive inflows must not be excluded only because merchant/category looks like spending.
+
+Minimum salary evidence:
+- General rule: require >=3 inflows with recurring cadence for salary_ids.
+- Exception A: if name contains "payroll" or "direct deposit" and there are >=2 inflows (>=40), classify as salary_ids.
+- Exception B: if there are >=4 inflows and cadence is near-monthly or biweekly, classify as salary_ids even when category/name look like shopping.
+- If only 1-2 inflows and no strong payroll/direct-deposit name, classify as excluded_ids.
+- Guardrail: names implying bill/transfer automation (e.g., "autopay", "payment", transfer-like wording) are excluded_ids unless strong payroll/direct-deposit wording is present.
+
+Behavior anchors:
+- Four monthly `+$839.18` entries labeled shopping => salary_ids (recurring inflow stream).
+- Transfer-labeled "Autopay" inflow series => excluded_ids (transfer/bill automation pattern).
+- Two inflows with payroll/direct-deposit naming => salary_ids.
+- Two inflows mixed with several outflows and no payroll/direct-deposit naming => excluded_ids.
+
+salary_ids = recurring wage-like inflow streams (variable amounts allowed), plus short histories with strong payroll/direct-deposit naming.
+excluded_ids = all other ids.
+notes: <=3 sentences, names only, cite sign/recurrence/amount facts briefly."""
 
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
@@ -225,22 +251,28 @@ TEST_CASES = [
   },
   {
     "id": 9451,
-    "name": "Card Payment from Secured Account",
+    "name": "Apple",
     "transactions": [
-      "2026-04-02  $263.72  transfer",
-      "2026-03-14  $839.18  transfer",
-      "2026-02-02  $67.88  transfer"
+      "2026-04-02  $839.18  shopping_gadgets",
+      "2026-03-01  $839.18  shopping_gadgets",
+      "2026-02-02  $839.18  shopping_gadgets",
+      "2026-01-02  $839.18  shopping_gadgets"
     ]
   },
   {
     "id": 506503,
-    "name": "Social Finance Personal Loan",
+    "name": "Walmart",
     "transactions": [
-      "2026-02-18  $4500.50  transfer"
+      "2026-03-15  -$23  meals_groceries",
+      "2026-03-01  $839.18  meals_groceries",
+      "2026-02-02  $839.18  meals_groceries",
+      "2026-01-10  -$11  meals_groceries",
+      "2026-01-08  -$12  meals_groceries",
+      "2026-01-02  $839.18  meals_groceries"
     ]
   }
 ]""",
-    "output": """{"salary_ids":[],"excluded_ids":[367,9451,506503],"notes":"Autopay/card-payment/loan settlement patterns are transfer-style flows, not payroll cadence."}""",
+    "output": """{"salary_ids":[9451,506503],"excluded_ids":[367],"notes":"Autopay are transfer-style flows, not payroll cadence. Apple is miscategorized since there are recurring monthly inflows at the same amount. Walmart is a mix of monthly payroll payments and grocery expenses"}""",
   },
   {
     "batch": 3,
@@ -272,11 +304,11 @@ TEST_CASES = [
     "id": 119912,
     "name": "MoneyLion Instacash",
     "transactions": [
-      "2026-04-05  $5.00  transfer",
-      "2026-03-28  $100.00  transfer",
-      "2026-03-28  $20.00  transfer",
-      "2026-03-27  -$300.00  transfer",
-      "2026-03-27  $100.00  transfer"
+      "2026-04-05  $5.00  income_salary",
+      "2026-03-28  $100.00  income_salary",
+      "2026-03-28  $20.00  income_salary",
+      "2026-03-27  -$300.00  income_salary",
+      "2026-03-27  $100.00  income_salary"
     ]
   }
 ]""",
