@@ -22,21 +22,23 @@ Output JSON with `shelter_ids` (rent/mortgage principal outflow streams) and `ex
 
 Amount direction: `+$` = outflow, `-$` = inflow. Rent/mortgage must be outflows.
 
-Classify each group independently using cadence + amount bands first; names are secondary tie-breakers.
+Classify each group independently from outflow dates, outflow amounts, and name text. Ignore non-`shelter_home` category tokens for the housing decision (they are often mislabeled); never pick shelter because a line says insurance, travel, entertainment, etc. When excluding, anchor reasons in dates, amounts, in/out mix, and names—not mainly in a non-`shelter_home` category token.
 
-If category is `shelter_home`, default to shelter. Override only with strong contrary evidence (consistently tiny amounts, retail-like scatter, or clear non-housing context).
+Call a stream `recurring` only when there are at least three outflows and their dates show a rough schedule. Cadence can be weekly, biweekly, monthly, bimonthly, quarterly, or any other stable spacing or calendar anchor pattern (day-of-week, day-of-month, paired draws inside a cycle, etc.)—it does not have to be monthly. Twice-per-month splits that repeat across months (two housing-scale debits per month on similar anchors) are a valid cadence. When judging that schedule, ignore small odd outflows sandwiched between repeating larger housing-scale debits. Fewer than three outflows cannot establish a date pattern—treat those streams as not recurring for this task. One-off debits or irregular scatter are not recurring. Apply that recurring gate when inferring shelter from amounts/names alone; do not use it to veto a `shelter_home` default.
+
+If any line is `shelter_home`, treat that tag as truth for rent/mortgage and default the whole group to shelter unless outflow amounts, the outflow date pattern, or the transaction/group name strongly suggests otherwise (e.g., lodging/travel reversal churn, micro-spend, or an explicit non-housing merchant). Messy spacing, split amounts, or a weak cadence alone is not enough to override.
 
 If category is not `income_salary`, still check for salary-like inflow patterns (negative amounts with paycheck-like recurrence/amount consistency) and exclude those from shelter.
 
-Favor housing-like outflows that recur monthly OR as split payments within a month (e.g., two recurring amounts). Housing scale is often hundreds-to-low-thousands with some drift.
+Favor housing-scale outflows (often hundreds-to-low-thousands with drift) only when combined with recurring date patterns as above.
 
-Do not classify as shelter from size alone. If the name is not clearly housing-related, require both: (1) somewhat large outflow amounts and (2) recurring payment cadence.
+Do not classify as shelter from amount size alone or from a wrong category. If the name is not clearly housing-related, require both: (1) housing-scale outflows and (2) recurring date pattern among those outflows.
 
-Exclude travel/lodging, internal transfers/sweeps, credit-card payments, tax-only flows, retail/micro-spend scatter, and generic small-loan installment patterns.
+Exclude travel/lodging-style reversal clusters, same-day wash transfers and P2P-style pulsing where inflows cancel outflows without a stable rent-like rhythm, credit-card payments, tax-only flows, retail/micro-spend scatter, and generic small-loan installment patterns. `shelter_utilities` marks utilities (energy, water, etc.), not rent or mortgage—do not place utilities-only groups in `shelter_ids` based on that tag alone. The token `transfer` is often mislabeled rent; never drop shelter on that label alone.
 
-When outflows repeat on a monthly rhythm (single amount or two alternating amounts) with only minor extra charges/noise, keep as possible shelter even if the name is generic like "Payment".
+When three or more outflows repeat on any plausible payment cadence as above (single amount or two alternating housing-scale amounts within the cycle) with only minor extra charges/noise, keep as possible shelter even if the name is generic like "Payment" or lines are tagged `transfer`.
 
-Tie-breaker: if a group has no inflows and shows the same outflow amount near the same day-of-month for 2+ months, do not exclude solely for being labeled transfer/uncategorized; treat as likely shelter unless explicit non-housing evidence exists.
+Tie-breaker: if a group has no inflows and shows the same outflow amount—or the same repeating pair of outflow amounts—on a recognizable repeating schedule across at least three such outflows, do not exclude solely for being labeled transfer/uncategorized; treat as likely shelter unless explicit non-housing evidence exists.
 
 
 Notes: max 3 sentences, no numeric ids, explain cadence + amounts (name words only when cadence is ambiguous)."""
