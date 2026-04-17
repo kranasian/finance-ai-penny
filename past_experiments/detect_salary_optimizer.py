@@ -27,21 +27,24 @@ Hard rules:
 
 Per-id checklist:
 - Parse counts: inflow_count, outflow_count, inflow_amounts, date spacing of inflows.
-- Detect cadence from inflows only (weekly/biweekly/semimonthly/monthly or near-monthly).
+- **If all inflows share one calendar date, that is not recurring income** (one posting day, not a paycheck schedule over time)—do not treat same-day duplicates as cadence.
+- **Different calendar dates alone are not “recurring”:** recurrence needs a **rough repeating gap pattern** between **sorted** +inflow dates—e.g. ~7±3d weekly, ~14±4d biweekly, ~15–17d semimonthly pairs, ~28–35d monthly (allow a few days slack; amounts can vary modestly). **Irregular/random spacing** across dates does **not** qualify as salary cadence unless Exception A (payroll/direct-deposit name) applies with its own date rules.
+- Detect cadence from inflows only (weekly/biweekly/semimonthly/monthly or near-monthly) **as approximate interval families**, not as “any multi-date scatter.”
 - Detect non-wage patterns: transfer/advance loop, reversal mirror (similar +/- amounts), tiny side-gig inflows, one-off transfer/loan swings.
 - Any amount without '-' is inflow. Calling it outflow is invalid.
 - If all listed amounts are positive, the group is inflow-only by definition.
 
 Decision policy:
-- Highest-priority rule: if name contains "payroll" or "direct deposit", classify as salary_ids unless transactions are mostly outflows or clearly advance/transfer-reversal behavior.
-- If category suggests salary/income, assume salary_ids UNLESS strong contrary evidence exists (sparse/non-cadenced inflows, mixed with clear non-wage pattern, mostly outflows, or advance/reversal loop).
-- If category is not salary, still classify as salary_ids when inflows recur at paycheck-like cadence/scale; name is only secondary.
+- Highest-priority rule: if name contains "payroll" or "direct deposit", classify as salary_ids unless transactions are mostly outflows, clearly advance/transfer-reversal behavior, or **all inflows share one calendar date** (same-day clusters are not recurring income).
+- If category suggests salary/income, assume salary_ids UNLESS strong contrary evidence exists (sparse inflows, **no rough paycheck gap pattern** across +dates, mixed with clear non-wage pattern, mostly outflows, or advance/reversal loop).
+- If category is not salary, still classify as salary_ids when +inflows show a **rough paycheck-like gap pattern** (not merely different dates) and wage-like scale; name is only secondary.
 - Recurring positive inflows must not be excluded only because merchant/category looks like spending.
 
 Minimum salary evidence:
-- General rule: require >=3 inflows with recurring cadence for salary_ids.
-- Exception A: if name contains "payroll" or "direct deposit" and there are >=2 inflows (>=40), classify as salary_ids.
-- Exception B: if there are >=4 inflows and cadence is near-monthly or biweekly, classify as salary_ids even when category/name look like shopping.
+- **Same-day veto:** If **every** inflow line shares the **same calendar date** (YYYY-MM-DD), that pattern is **not recurring income**; **do not** classify as salary_ids on recurrence/cadence or on Exception A/B below—same-day clusters are excluded_ids for wage-recurrence purposes.
+- General rule: require >=3 inflows with **recurring cadence** for salary_ids: **>=2 different calendar dates** **and** sorted +inflow gaps that **roughly** fit one paycheck rhythm (weekly/biweekly/semimonthly/monthly bands above)—**not** “different dates only.”
+- Exception A: if name contains "payroll" or "direct deposit" and there are >=2 inflows (>=40) on **>=2 different calendar dates**, classify as salary_ids (name shortcut still **does not** bypass **same-day veto**).
+- Exception B: if there are >=4 inflows on **>=2 different calendar dates** and **gap pattern** is near-monthly or biweekly (rough interval consistency), classify as salary_ids even when category/name look like shopping.
 - If only 1-2 inflows and no strong payroll/direct-deposit name, classify as excluded_ids.
 - Guardrail: names implying bill/transfer automation (e.g., "autopay", "payment", transfer-like wording) are excluded_ids unless strong payroll/direct-deposit wording is present.
 
@@ -50,17 +53,19 @@ Behavior anchors:
 - Transfer-labeled "Autopay" inflow series => excluded_ids (transfer/bill automation pattern).
 - Two inflows with payroll/direct-deposit naming => salary_ids.
 - Two inflows mixed with several outflows and no payroll/direct-deposit naming => excluded_ids.
+- Many identical inflows **all on the same calendar date** => excluded_ids (same day is not recurring income cadence).
+- +Inflows on **several different dates** but **irregular gaps** (no rough weekly/biweekly/monthly family) => excluded_ids unless Exception A applies.
 
-salary_ids = recurring wage-like inflow streams (variable amounts allowed), plus short histories with strong payroll/direct-deposit naming.
+salary_ids = recurring wage-like inflow streams (variable amounts allowed) across **>=2 calendar dates** with a **rough interval pattern**, plus short histories with strong payroll/direct-deposit naming when dates differ; **same-date-only inflows are never recurring income** for this purpose.
 excluded_ids = all other ids.
-notes: <=3 sentences, names only, cite sign/recurrence/amount facts briefly."""
+notes: <=3 sentences, names only, cite sign/gap-pattern/recurrence/amount facts briefly (note same-day-only or irregular spacing when relevant)."""
 
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
-  required=["salary_ids", "excluded_ids", "notes"],
+  required=["salary_transaction_ids", "excluded_transaction_ids", "notes"],
   properties={
-    "salary_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
-    "excluded_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
+    "salary_transaction_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
+    "excluded_transaction_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
     "notes": types.Schema(type=types.Type.STRING),
   },
 )
@@ -74,22 +79,22 @@ SAFETY_SETTINGS = [
 
 
 def _compare_id_sets(actual_text: str, ideal_text: str) -> tuple[bool, str]:
-  """Compare salary_ids and excluded_ids only (ignores notes wording)."""
+  """Compare salary_transaction_ids and excluded_transaction_ids only (ignores notes wording)."""
   try:
     actual = json.loads(actual_text or "{}")
     ideal = json.loads(ideal_text or "{}")
   except json.JSONDecodeError as exc:
     return False, f"invalid JSON ({exc})"
-  a_s = set(actual.get("salary_ids", []))
-  a_e = set(actual.get("excluded_ids", []))
-  i_s = set(ideal.get("salary_ids", []))
-  i_e = set(ideal.get("excluded_ids", []))
+  a_s = set(actual.get("salary_transaction_ids", []))
+  a_e = set(actual.get("excluded_transaction_ids", []))
+  i_s = set(ideal.get("salary_transaction_ids", []))
+  i_e = set(ideal.get("excluded_transaction_ids", []))
   if a_s != i_s or a_e != i_e:
     return (
       False,
-      f"salary_ids model={sorted(a_s)} ideal={sorted(i_s)}; excluded_ids model={sorted(a_e)} ideal={sorted(i_e)}",
+      f"salary_transaction_ids model={sorted(a_s)} ideal={sorted(i_s)}; excluded_transaction_ids model={sorted(a_e)} ideal={sorted(i_e)}",
     )
-  return True, "salary_ids and excluded_ids match reference"
+  return True, "salary_transaction_ids and excluded_transaction_ids match reference"
 
 
 class SalaryDetectionOptimizer:
@@ -232,7 +237,7 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"salary_ids":[5487,601905,588112],"excluded_ids":[],"notes":"Two streams have multi-cycle wage recurrence; the 2-line payroll-labeled stream stays included despite the >=3-credit rule because the name indicates it is for payroll."}""",
+    "output": """{"salary_transaction_ids":[5487,601905,588112],"excluded_transaction_ids":[],"notes":"5487: five +inflows on staggered dates with large amounts and biweekly-like gaps; non-transfer name. 588112: two +inflows ≥$40 on two dates; income_salary tags trusted. 601905: six +lines on six dates, three identical +$1000.00 ~14d apart—cadence from amounts/dates; categories secondary."}""",
   },
   {
     "batch": 2,
@@ -272,7 +277,7 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"salary_ids":[9451,506503],"excluded_ids":[367],"notes":"Autopay are transfer-style flows, not payroll cadence. Apple is miscategorized since there are recurring monthly inflows at the same amount. Walmart is a mix of monthly payroll payments and grocery expenses"}""",
+    "output": """{"salary_transaction_ids":[9451,506503],"excluded_transaction_ids":[367],"notes":"367: transfer-like Autopay name → excluded regardless of + cadence. 9451: four identical +$839.18 on four month-spaced dates; non-transfer name. 506503: same +$839.18 monthly cadence with small -$ debits; non-transfer name—wage logic from +series/dates."}""",
   },
   {
     "batch": 3,
@@ -291,13 +296,12 @@ TEST_CASES = [
   },
   {
     "id": 17306,
-    "name": "Zelle from Marilyn R Velez",
+    "name": "McDonald's",
     "transactions": [
-      "2026-04-03  -$500.00  transfer",
-      "2026-03-03  $2200.00  transfer",
-      "2026-02-13  -$200.00  transfer",
-      "2026-02-02  $1600.00  transfer",
-      "2026-01-23  $70.00  transfer"
+      "2026-04-02  $2200.00  meals_dining_out",
+      "2026-03-02  $2200.00  meals_dining_out",
+      "2026-02-02  $2200.00  meals_dining_out",
+      "2026-01-02  $2200.00  meals_dining_out"
     ]
   },
   {
@@ -312,44 +316,25 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"salary_ids":[],"excluded_ids":[24951,17306,119912],"notes":"Travel reversals, person-to-person Zelle exchanges, and Instacash advance/repay loops do not show employer-pay rhythm."}""",
+    "output": """{"salary_transaction_ids":[17306],"excluded_transaction_ids":[24951,119912],"notes":"24951: same-day +/- mirror amounts—reversal shape from signs/amounts. 17306: four +$2200.00 on four month-spaced dates; non-transfer name—monthly cadence from amounts/dates; dining tags secondary. 119912: transfer-like Instacash name plus large -$300 with small +—advance/repay override despite salary tags."}""",
   },
   {
     "batch": 4,
-    "name": "photo_batch_4_walmart_cbplus_justplay",
+    "name": "photo_batch_4_same_day_same_amount_direct_deposit",
     "input": """[
   {
-    "id": 388,
-    "name": "Walmart",
+    "id": 900001,
+    "name": "ACH Credit Fidelity Direct Deposit",
     "transactions": [
-      "2026-04-07  $250.00  income_salary",
-      "2026-04-07  -$18.00  meals_groceries",
-      "2026-04-06  $301.23  uncategorized",
-      "2026-04-03  -$2.28  meals_groceries",
-      "2026-04-01  -$21.69  meals_groceries",
-      "2026-04-01  -$2.15  meals_groceries"
-    ]
-  },
-  {
-    "id": 601900,
-    "name": "CB Plus Loan MoneyLion Escrow Release",
-    "transactions": [
-      "2026-03-27  $808.86  transfer"
-    ]
-  },
-  {
-    "id": 601784,
-    "name": "Justplay",
-    "transactions": [
-      "2026-03-23  $1.03  income_side_gig",
-      "2026-03-23  $3.52  income_side_gig",
-      "2026-03-20  $2.56  income_side_gig",
-      "2026-03-18  $3.08  income_side_gig",
-      "2026-03-18  $1.69  income_side_gig"
+      "2026-04-17  $2500.00  income_salary",
+      "2026-04-17  $2500.00  income_salary",
+      "2026-04-17  $2500.00  income_salary",
+      "2026-04-17  $2500.00  income_salary",
+      "2026-04-17  $2500.00  income_salary"
     ]
   }
 ]""",
-    "output": """{"salary_ids":[],"excluded_ids":[388,601900,601784],"notes":"Mixed retail/card activity, escrow-release transfer, and micro side-gig payouts are not stable wage deposits."}""",
+    "output": """{"salary_transaction_ids":[],"excluded_transaction_ids":[900001],"notes":"900001: non-transfer name but five +$2500.00 on one calendar date—no multi-date cadence; salary tags do not override same-date-only stack."}""",
   },
 ]
 
