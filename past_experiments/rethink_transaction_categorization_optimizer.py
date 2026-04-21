@@ -17,7 +17,7 @@ JSON array of transaction groups. Each entry contains:
 - `transactions`: Array with `transaction_id`, `transaction_text` (raw bank statement text), and `amount`
 
 ## Rational Basis for Category
-Choose the category only from evidence in: establishment_name, establishment_description, transaction_text, and/or amount. Do not guess. If there is no clear evidence tying the transaction to a specific subcategory from the list below, use `unknown`. Income categories (e.g. income_business, income_salary, income_side_gig) are only for inflows that represent earnings. A purchase or payment (positive amount, outflow) must never be categorized as any income category—use an expense or transfer category instead.
+Choose the category only from evidence in: establishment_name, establishment_description, transaction_text, and/or amount. Do not guess. Assume the subcategory list in this prompt is comprehensive enough that every transaction should map to at least one listed subcategory unless an explicit `unknown` condition applies. Income categories (e.g. income_business, income_salary, income_side_gig) are only for inflows that represent earnings. A purchase or payment (positive amount, outflow) must never be categorized as any income category—use an expense or transfer category instead.
 
 ## Inflows (negative amount)
 Negative amounts are inflows. Not all inflows are income. Refunds, returns, or reversals of a prior expense should be categorized as the same (or appropriate) expense subcategory when identifiable; use income categories only when the inflow clearly represents earnings (e.g. salary, interest, business revenue).
@@ -68,6 +68,10 @@ Negative amounts are inflows. Not all inflows are income. Refunds, returns, or r
 3. **Amount Context**: Large amounts may indicate services/procedures; small amounts may indicate supplies/incidentals. Negative amounts represent inflows (e.g., income, refunds), while positive amounts represent outflows (e.g., purchases, expenses).
 4. **Consistency**: Similar transactions should typically share the same category, unless amounts suggest otherwise.
 5. **Reasoning**: When writing reasoning, ONLY state positive evidence for the chosen category. DO NOT mention what categories are available/unavailable or why others don't fit.
+6. **Deterministic Decision Order**:
+   - First decide whether transfer-same-person evidence is explicit.
+   - If not explicit, classify by purpose-specific subcategory when purpose is clear.
+   - Use `unknown` only for the allowed unknown conditions below.
 
 ## Confidence Levels
 - **high**: Strong evidence from transaction text, establishment, and amount align clearly
@@ -76,17 +80,28 @@ Negative amounts are inflows. Not all inflows are income. Refunds, returns, or r
 
 ## Critical Rules
 - **Subcategory only**: Your output `category` MUST NEVER be a parent category (e.g., `income`, `meals`, `leisure`, `bills`, `shelter`, `education`, `shopping`, `transportation`, `health`). You MUST always select a specific subcategory (e.g., `shopping_clothing` is allowed, but `shopping` is forbidden). This applies even if the parent category is the only one that seems to fit—in that case, use `unknown`.
-- **Unknown Category**: Use `unknown` ONLY if none of the specific subcategories listed in this prompt match the transaction. If you are unsure or if only a parent category seems to match, use `unknown`.
+- **Unknown Category**: Use `unknown` ONLY in these cases:
+    1. The transaction purpose is too vague to understand what it is for.
+    2. The establishment's scope is too broad to map confidently to just one subcategory.
 - **Match Best Subcategory**: Choose the subcategory from this prompt that most specifically describes the transaction. Prefer the most specific child category over broader labels.
 - **CRITICAL ID Matching**: The `transaction_id` in your output response MUST be an EXACT, character-for-character copy of the `transaction_id` from the input. Your output MUST ONLY contain: `transaction_id`, `reasoning`, `category`, and `confidence`.
 - **CRITICAL Transfer Rule**: `transfer` ONLY when (a) money moves between the same person's own accounts (e.g. Transfer To Checking, Transfer From Savings, ACH between own accounts), or (b) payment is toward that person's own debt, mortgage, or other liability (e.g. credit card payment to own card, loan payment to own loan, mortgage payment to own mortgage).
+- **CRITICAL Transfer Evidence Rule**: Use `transfer` only when same-person ownership is explicit or strongly implied by direct evidence in transaction text and merchant context (e.g. "to own credit card", "from my savings", payment to card servicer for user's liability). If same-person ownership is not explicit/inferable, use `unknown`.
+- **Do Not Infer Ownership from Generic Transfer Wording**: Phrases like "transfer from savings", "transfer to checking", masked account numbers, or generic "internal transfer" descriptions are NOT sufficient by themselves to prove same-person ownership. Without explicit ownership evidence, output `unknown`.
 - **CRITICAL Bank/Person-to-Person (P2P) Rule**: For transfers or P2P payments (Zelle, Venmo, PayPal, Cash App, etc.):
     1. If the transfer is to an account belonging to the **SAME person**, use `transfer`.
     2. If the transfer is to **ANOTHER person**:
         - If the purpose is **specified** (e.g., "for dinner", "rent"), select the subcategory matching that purpose.
         - If the purpose is **unspecified**, use `unknown`.
     3. If you are **unsure** whether it is to the same person or another person, use `unknown`.
+    4. If sender/recipient identity relation (same person vs another person) is not explicitly inferable, use `unknown`.
+    5. Example handling:
+        - "Transfer from SV ***2131" -> `unknown` (could be another person's account; same-person ownership not established).
+        - "Credit Card Payment" -> `transfer` (typically payment toward own liability unless evidence indicates otherwise).
+        - "Transfer From Savings 0012" without explicit ownership -> `unknown`.
+- **Transfer Ambiguity Precedence**: When transfer ownership evidence conflicts (or is weak) across fields, prioritize ambiguity handling and output `unknown` rather than `transfer`.
 - **Category Selection**: The `category` value in your output MUST be an exact character-for-character copy of one subcategory listed in this prompt, or the literal `unknown`. Do not alter spelling, casing, or wording. Parent categories are forbidden. For general-purpose marketplaces (e.g. Amazon, Shopee, Walmart) when the specific purchase is unknown, use `unknown`. When a transaction is clearly general shopping (e.g. a retail store where the specific product is not stated), choose the most plausible shopping subcategory based on establishment type, description, or amount—and state that basis briefly in reasoning (e.g. "General retail; clothing store description suggests shopping_clothing."). Do not use a parent shopping category when a subcategory is available. **Outflows (positive amount)**: Never use income_side_gig, income_business, or income_salary for a payment or purchase—only for money received as earnings. Use an expense or transfer category for outflows.
+- **Evidence Priority**: Prefer direct evidence from `transaction_text`, then establishment name/description, then amount heuristics. Do not let broad or generic establishment descriptions override direct transfer-identity ambiguity in the transaction text.
 - **CRITICAL Reasoning Rule**: Reasoning must be concise. State ONLY positive evidence that supports the chosen category. Do not mention available options, subcategory lists, or other categories. For `unknown`, state briefly why purpose cannot be determined.
 - **Consistency**: Similar transactions should typically share the same category, unless amounts suggest otherwise.
 - When uncertain but a category is plausible, use "medium" or "low" confidence and briefly explain the uncertainty
@@ -111,7 +126,6 @@ RESPONSE_SCHEMA = {
       "confidence": {"type": "string"},
     },
     "required": ["transaction_id", "reasoning", "category", "confidence"],
-    "additionalProperties": False,
   },
 }
 
@@ -361,8 +375,8 @@ TEST_CASES = [
     ]
   },
   {
-    "establishment_name": "Transfer From Savings",
-    "establishment_description": "Internal transfer between own bank accounts.",
+    "establishment_name": "Transfer From SV ***0012",
+    "establishment_description": "Internal transfer from a savings account.",
     "transactions": [
       {
         "transaction_id": 7002003,
@@ -387,8 +401,8 @@ TEST_CASES = [
   },
   {
     "transaction_id": 7002003,
-    "reasoning": "The text indicates an internal transfer from the user's savings account.",
-    "category": "transfer",
+    "reasoning": "Unclear what the transaction is for.",
+    "category": "unknown",
     "confidence": "high"
   }
 ]""",
