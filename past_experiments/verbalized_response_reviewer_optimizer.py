@@ -8,28 +8,74 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """**Objective:** Evaluate the `ai_review_response` for red flags against the conversation history, prioritizing its *appropriateness*.
+SYSTEM_PROMPT = """**Objective:** Evaluate `ai_review_response` for red flags against prior turns, prioritizing response appropriateness to the latest Human intent.
 
 **Input:**
-
-Input is a list of conversation turns. The `conversation_history` is derived from all elements in the input list *except* the final element, which is always the `ai_review_response`.
+Input is a list of conversation turns. `conversation_history` is all elements except the last; the last is always `ai_review_response`.
 
 **Output:**
-- The output is a JSON object where each key is a red flag key that specifies an issue in the `ai_review_response`, and the value is the rationale for choosing that flag. Multiple keys can be present if there are several issues. **However, if `good_response` is among the applicable keys, it *must* be the ONLY key present in the output.** The rationale should be concise but comprehensively explain why the red flag was chosen, making it easily understandable even without having to reference the list of guidelines. The output *must* be a JSON object.
+- Return a JSON object where each key is a red-flag key and each value is a concise rationale.
+- Multiple keys are allowed only when truly necessary.
+- If `good_response` applies, it must be the ONLY key.
+- Prefer exactly one best-fitting key in normal cases.
+- Keep rationale to one sentence, grounded in explicit evidence from the input turns.
 
-**Possible red flag keys (with definitions):**
-- `good_response`: The response is appropriate for the conversation. This includes straightforwardly answering the `Human`'s last inquiry, or clearly stating limitations (e.g., technical error, out of scope) in a well-worded and helpful manner, even if the user's request cannot be fulfilled. If no other red flags apply, then this *must* be `good_response`. This must be the only flag used if no other red flags apply.
-- `non_sense`: Irrelevant or illogical response, or response with inconsistent computations, or if the `ai_review_response` contradicts information previously provided by the AI in the conversation. If `ai_review_response` contradicts information previously provided by the AI in the conversation, then this *must* be `non_sense`, and `good_response` CANNOT be applied.
-- `repetitive_information`: Repeats information from within its own response without value/context change.
-- `incoherent_flow`: Leads to a dead end or breaks the conversation flow.
-- `verbose`: Does not straightforwardly answer the `Human` last inquiry because of too many details or information unnecessary to the question.
-- `incomplete`: Too brief or lacks necessary information.
+**Decision rules (apply strictly):**
+1) Judge response quality using only the conversation context provided. Do not assume missing backend/system limitations unless explicitly mentioned.
+2) A polite processing acknowledgment (e.g., "give me a moment while I check") is `good_response` when it is context-appropriate and not contradictory.
+3) A clear technical-error limitation message is `good_response` if it is transparent and helpful.
+4) If AI repeats earlier AI wording verbatim or near-verbatim instead of paraphrasing in a continuing conversation, use `repetitive_information`.
+5) Use `verbose` when response includes unnecessary internal/extra details (e.g., transaction IDs, unrelated categories, long assistant self-introductions, or leading with unrequested breakdown before the requested top-line answer).
+6) Label precedence when overlapping: contradiction/illogical -> `non_sense`; missing requested parts -> `incomplete`; unnecessary added detail -> `verbose`; exact/near-exact historical repetition -> `repetitive_information`; otherwise `good_response`.
+7) If the user asks for a single top-line value (for example "how much/total/forecasted spending"), label `verbose` when the response leads with unrequested category/itemized breakdown or gives an overly detailed breakdown. A brief breakdown may be acceptable only when it comes after the requested top-line value.
+
+**Red flag keys:**
+- `good_response`: Appropriate, direct response or valid limitation/processing communication. Use this when no other red flag applies.
+- `non_sense`: Illogical/irrelevant response, invalid reasoning, or contradiction with earlier AI statements.
+- `repetitive_information`: Repetition without added value, including repeating prior AI phrasing from conversation history.
+- `incoherent_flow`: Breaks conversation progression or causes a conversational dead end.
+- `verbose`: Includes unnecessary detail that weakens directness to the user's request.
+- `incomplete`: Fails to answer all requested parts and does not provide a clear reason for missing parts.
 """
+
+OUTPUT_SCHEMA = types.Schema(
+  type=types.Type.OBJECT,
+  properties={
+    "good_response": types.Schema(type=types.Type.STRING),
+    "non_sense": types.Schema(type=types.Type.STRING),
+    "repetitive_information": types.Schema(type=types.Type.STRING),
+    "incoherent_flow": types.Schema(type=types.Type.STRING),
+    "verbose": types.Schema(type=types.Type.STRING),
+    "incomplete": types.Schema(type=types.Type.STRING),
+  },
+)
+
+CONFIG = {
+  "json": True,
+  "sanitize": True,
+  "gen_config": {
+    "top_k": 40,
+    "top_p": 0.95,
+    "temperature": 0.1,
+    "thinking_budget": 1024,
+    "max_output_tokens": 1152,
+  },
+  "model_name": "gemini-flash-lite-latest",
+  "check_template": "Chk:VerbalizedResponseReviewer",
+}
+
+def _compare_flag_keys(actual: dict, ideal: dict) -> tuple[bool, str]:
+  """Compare output by red-flag keys only (ignores rationale wording)."""
+  actual_keys = set(actual.keys())
+  ideal_keys = set(ideal.keys())
+  if actual_keys != ideal_keys:
+    return False, f"model_keys={sorted(actual_keys)} ideal_keys={sorted(ideal_keys)}"
+  return True, f"matching keys: {sorted(actual_keys)}"
 
 class VerbalizedResponseReviewer:
   """Handles all Gemini API interactions for checking AI responses for red flags"""
   
-  def __init__(self, model_name="gemini-flash-lite-latest"):
+  def __init__(self, model_name=CONFIG["model_name"]):
     """Initialize the Gemini agent with API configuration for checking AI response red flags"""
     # API Configuration
     api_key = os.getenv('GEMINI_API_KEY')
@@ -38,14 +84,17 @@ class VerbalizedResponseReviewer:
     self.client = genai.Client(api_key=api_key)
     
     # Model Configuration
-    self.thinking_budget = 1024
+    self.thinking_budget = CONFIG["gen_config"]["thinking_budget"]
     self.model_name = model_name
+    self.check_template = CONFIG["check_template"]
+    self.json_enabled = CONFIG["json"]
+    self.sanitize_enabled = CONFIG["sanitize"]
     
     # Generation Configuration Constants
-    self.top_k = 40
-    self.top_p = 0.95
-    self.temperature = 0.1
-    self.max_output_tokens = 4096
+    self.top_k = CONFIG["gen_config"]["top_k"]
+    self.top_p = CONFIG["gen_config"]["top_p"]
+    self.temperature = CONFIG["gen_config"]["temperature"]
+    self.max_output_tokens = CONFIG["gen_config"]["max_output_tokens"]
     
     # Safety Settings
     self.safety_settings = [
@@ -107,8 +156,11 @@ output: """
     
     generate_content_config = types.GenerateContentConfig(
       temperature=self.temperature,
+      top_k=self.top_k,
       top_p=self.top_p,
-      max_output_tokens=4096,
+      max_output_tokens=self.max_output_tokens,
+      response_mime_type="application/json",
+      response_schema=OUTPUT_SCHEMA,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
       thinking_config=types.ThinkingConfig(
@@ -192,181 +244,116 @@ output: """
       return {"raw_output": output_text.strip(), "parse_error": str(e)}
 
 
-BATCHES = {
-  "initial_greeting_good": [
-    {
-      "Human": "Hello, how are you doing today? 👋"
-    },
-    {
-      "ai_review_response": "Hello there! I'm doing great, thanks for asking! How can I help you out today? ✨"
-    }
-  ],
-  "initial_greeting_human_first_good": [
-    {
-      "Human": "How much did I earn last year?"
-    },
-    {
-      "ai_review_response": "Hey there! 😊 Last year, you earned $58,000💰"
-    }
-  ],
-  "initial_greeting_human_first_good_2": [
-    {
-      "Human": "How much did I spend last year?"
-    },
-    {
-      "ai_review_response": "Hey there! 😊 Last year, you spent $40,000💰"
-    }
-  ],
-  "no_greeting_good": [
-    {
-      "Human": "How much cash do I have in my accounts? 💸"
-    },
-    {
-      "AI": "Let me quickly check your accounts for you! Just a moment. ⏳"
-    },
-    {
-      "Human": "What's my total cash balance right now?"
-    },
-    {
-      "ai_review_response": "You've got a grand total of $27,593 across your checking and savings accounts! 💰"
-    }
-  ],
-  "unnecessary_greeting_bad": [
-    {
-      "Human": "Can you tell me about my recent transactions? 🧾"
-    },
-    {
-      "AI": "Absolutely! I can certainly help you with that. 👍"
-    },
-    {
-      "Human": "What were the latest 5 transactions I made?"
-    },
-    {
-      "ai_review_response": "Hello! ✨ Here are your recent transactions: ... (This is an example, actual transactions would be listed here) "
-    }
-  ],
-  "ai_contradiction_non_sense": [
-   {
-      "Human": "What's my current account balance, please? 🤔"
-    },
-    {
-      "AI": "Your current balance is exactly $1,000. 🏦"
-    },
-    {
-      "Human": "And what was it after my very last transaction?"
-   },
-    {
-      "ai_review_response": "Oops, my apologies! Your current balance is actually $500. 😅 The previous balance I mentioned was incorrect. My mistake! 🙏"
-    }
-   ],
-  "good_disclaimer": [
-    {
-      "Human": "Can you transfer some funds to my friend's international bank account for me? 🌍"
-    },
-    {
-      "ai_review_response": "I truly apologize, but I'm currently unable to perform international fund transfers due to some system limitations at the moment. 😟 Please try again a bit later or reach out to our support team for assistance! 🙏"
-    }
-  ],
-  "incomplete_response_bad": [
-    {
-      "Human": "Could you give me a summary of my financial activity for the last quarter? 📊"
-    },
-    {
-      "ai_review_response": "Okay, I'm taking a look at your activity now. You definitely had several transactions! 🤔"
-    }
-  ],
-  "greeting_ai_human_bad": [
-    {
-      "AI": "How can I help you out today? 💁‍♀️"
-    },
-    {
-      "Human": "What's my current account balance? 💰"
-    },
-    {
-      "ai_review_response": "Hello! Your balance is $1000. 🏦"
-    }
-  ],
-  "greeting_human_ai_human_bad": [
-    {
-      "Human": "Hi there, how are you doing? 👋"
-    },
-    {
-      "AI": "I'm doing wonderfully, thanks for asking! How can I assist you today? ✨"
-    },
-    {
-      "Human": "What's the weather like outside right now? ☀️"
-    },
-    {
-      "ai_review_response": "Hey there! The weather is absolutely sunny and beautiful! \ud83c\udf1e"
-    }
-  ],
-  "greeting_human_ai_bad": [
-    {
-      "Human": "Tell me a fun joke! 😂"
-    },
-    {
-      "AI": "Sure thing, I've got a great one for you! Get ready to laugh! \ud83d\ude06"
-    },
-    {
-      "ai_review_response": "Good morning! Why don't scientists trust atoms? Because they make up everything! ⚛️"
-    }
-  ],
-  "cash_flow_incoherent_greeting_bad": [
-    {
-      "Human": "what was my salary last year"
-    },
-    {
-      "AI": "Okay, so for your cash flow prediction for the next 3 months, here's the scoop! ✨\nYour projected income for September, October, and November 2025 is looking good at $8,870. And your projected spending for August, September, and October 2025 is $8,567.\nSince the income and spending forecasts cover slightly different months, I can't give you a direct combined difference for the exact same three-month period. But we can definitely look at each one individually and make sure you're on track! 👍"
-    },
-    {
-      "Human": "Predict my cash flow situation for the next 3 months."
-    },
-    {
-      "ai_review_response": "Hey there! ✨ For the next 3 months (Sept-Nov 2025), your projected income is $9,882! \ud83d\udcb0 Your projected spending for Sept & Oct 2025 is $6,255. That means you're looking at a positive difference of $646 for those two months! \ud83d\udc4d We don't have November spending yet, but this is a great start! \ud83d\ude0a"
-    }
-  ],
-  "greeting_ai_ai_ai_human_bad": [
-    {
-      "AI": "Hello! How can I assist you today? 🙋‍♀️"
-    },
-    {
-      "AI": "I'm ready when you are! Just tell me what you need. 😊"
-    },
-    {
-      "AI": "Still here, eager to help! What's on your mind? ✨"
-    },
-    {
-      "Human": "What's my account balance?"
-    },
-    {
-      "ai_review_response": "Hey there! Your current balance is $1,500. 💰"
-    }
-  ],
-  "incomplete_response_no_answer": [
-    {
-      "Human": "Can you summarize my investments for the last quarter, including returns and growth percentages? 📈"
-    },
-    {
-      "ai_review_response": "I'm currently gathering your investment data. It looks like you have a diverse portfolio! 🤔"
-    }
-  ],
-  "verbose_over_explanation": [
-    {
-      "Human": "What was my highest expense last month? 💸"
-    },
-    {
-      "ai_review_response": "To give you the most accurate answer, I need to access your transaction history. After carefully analyzing all your spending categories and cross-referencing them with various vendors, I can confidently tell you that your highest expense last month was $300 at 'Fancy Dinner Restaurant'. 🍽️"
-    }
-  ],
-  "verbose_transaction_ids": [
-    {
-      "Human": "List my last 3 transactions. 🧾"
-    },
-    {
-      "ai_review_response": "Here are your last 3 transactions: 💳\n1. Coffee Shop (ID: 7890) - $5.50\n2. Grocery Store (ID: 1234) - $75.20\n3. Online Shopping (ID: 5678) - $45.99"
-    }
-  ]
-}
+TEST_CASES = [
+  {
+    "name": "complex_request_processing_ack_good_response",
+    "input": [
+      {
+        "Human": "Can you compare my total income, total expenses, and savings rate for each quarter last year, then highlight the quarter with the biggest change and explain why?"
+      },
+      {
+        "ai_review_response": "Absolutely, I can do that. Give me a moment to process all four quarters and I’ll get back to you with a clear breakdown. ⏳"
+      }
+    ],
+    "output": {"good_response": "The response appropriately acknowledges the complex request and communicates a valid short processing delay."},
+  },
+  {
+    "name": "food_spend_partial_answer_incomplete",
+    "input": [
+      {
+        "Human": "How much did I spend on food last month and this month?"
+      },
+      {
+        "ai_review_response": "You spent $412 on food last month."
+      }
+    ],
+    "output": {"incomplete": "Only one part of a two-part request was answered, with no explanation for the missing current-month value."},
+  },
+  {
+    "name": "account_balance_technical_error_good_response",
+    "input": [
+      {
+        "Human": "Can you show me all my current account balances?"
+      },
+      {
+        "ai_review_response": "I’m sorry — I’m having a technical issue retrieving live balances right now. Please try again in a bit, and I’ll fetch them as soon as the connection is restored."
+      }
+    ],
+    "output": {"good_response": "A clear and polite technical-error explanation is a valid response when data cannot be retrieved."},
+  },
+  {
+    "name": "historical_repeat_repetitive_information",
+    "input": [
+      {
+        "Human": "Can you remind me what my emergency fund target is?"
+      },
+      {
+        "AI": "Your emergency fund target is $12,000 based on your current monthly expenses."
+      },
+      {
+        "Human": "Got it. And how much have I already saved toward that?"
+      },
+      {
+        "AI": "You’ve currently saved $8,600 toward that emergency fund goal."
+      },
+      {
+        "Human": "Before that, what did you say my emergency fund target was again?"
+      },
+      {
+        "ai_review_response": "Your emergency fund target is $12,000 based on your current monthly expenses."
+      }
+    ],
+    "output": {"repetitive_information": "The response repeats the same earlier AI wording verbatim instead of paraphrasing."},
+  },
+  {
+    "name": "transactions_with_internal_ids_verbose",
+    "input": [
+      {
+        "Human": "Can you list my transactions from yesterday?"
+      },
+      {
+        "ai_review_response": "Sure — yesterday you had: 1) Grocery Mart (ID: 84192) - $64.20, 2) Coffee Spot (ID: 84195) - $5.80, 3) Ride Share (ID: 84201) - $14.40."
+      }
+    ],
+    "output": {"verbose": "Internal identifiers are unnecessary for the user-facing answer and add excess detail."},
+  },
+  {
+    "name": "forecast_category_then_total_verbose",
+    "input": [
+      {
+        "Human": "What’s my forecasted spending next month?"
+      },
+      {
+        "ai_review_response": "Next month forecast by category: groceries $420, dining $280, transport $190, subscriptions $95, utilities $240, entertainment $160. Total forecasted spending is $1,385."
+      }
+    ],
+    "output": {"verbose": "The response should present the requested total first; category breakdown before the total adds unnecessary detail."},
+  },
+  {
+    "name": "donation_with_extra_categories_verbose",
+    "input": [
+      {
+        "Human": "How much did I spend on donations last week?"
+      },
+      {
+        "ai_review_response": "You spent $85 on donations last week. Similar amounts from other categories: books $79, coffee $82, parking $88, and streaming $83."
+      }
+    ],
+    "output": {"verbose": "The user only asked for donation spending, so other categories are unnecessary additions."},
+  },
+  {
+    "name": "long_self_intro_before_answer_verbose",
+    "input": [
+      {
+        "Human": "What was my highest expense this week?"
+      },
+      {
+        "ai_review_response": "Hi! I’m Penny, your AI financial assistant. I help you track spending, monitor cash flow, understand trends, and make better money decisions. I can summarize transactions, spot unusual activity, and answer budget questions quickly. I’m designed to keep responses clear, practical, and personalized to your data. I’m always here to support your financial planning journey. Your highest expense this week was $310 at Midtown Grocer."
+      }
+    ],
+    "output": {"verbose": "A long self-introduction is unnecessary and distracts from the direct answer."},
+  },
+]
 
 def test_with_inputs(input_list, reviewer=None):
   """
@@ -385,17 +372,32 @@ def test_with_inputs(input_list, reviewer=None):
   return reviewer.evaluate_response(json.dumps(input_list, indent=2))
 
 
-def run_batch_test(batch_id: str, reviewer=None):
+def _find_test_case(case_name: str):
+  return next((case for case in TEST_CASES if case["name"] == case_name), None)
+
+
+def run_batch_test(case_name: str, reviewer=None):
   """
   Run a specific test batch.
   """
-  if batch_id not in BATCHES:
-    raise ValueError(f"Batch '{batch_id}' not found. Available batches: {list(BATCHES.keys())}")
+  test_case = _find_test_case(case_name)
+  if test_case is None:
+    available_case_names = [case["name"] for case in TEST_CASES]
+    raise ValueError(f"Batch '{case_name}' not found. Available batches: {available_case_names}")
   
   print(f"\n{'='*80}")
-  print(f"RUNNING BATCH: {batch_id}")
+  print(f"RUNNING BATCH: {case_name}")
   print(f"{'='*80}\n")
-  return test_with_inputs(BATCHES[batch_id], reviewer)
+  result = test_with_inputs(test_case["input"], reviewer)
+  ideal_output = test_case["output"]
+  print("IDEAL OUTPUT (REFERENCE):")
+  print(json.dumps(ideal_output, indent=2))
+  print("-" * 80)
+  key_match, details = _compare_flag_keys(result, ideal_output)
+  print(f"KEY MATCH: {'PASS' if key_match else 'FAIL'}")
+  print(details)
+  print("=" * 80)
+  return result
 
 
 def main(batch_id: str = None):
@@ -411,9 +413,10 @@ def main(batch_id: str = None):
       result = run_batch_test(batch_id, reviewer)
       results[batch_id] = result
     else:
-      for b_id in BATCHES:
-        result = run_batch_test(b_id, reviewer)
-        results[b_id] = result
+      for case in TEST_CASES:
+        case_name = case["name"]
+        result = run_batch_test(case_name, reviewer)
+        results[case_name] = result
     
     print(f"\n{'='*80}")
     print("FINAL RESULTS SUMMARY:")
