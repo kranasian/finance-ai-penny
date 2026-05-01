@@ -1,5 +1,5 @@
 """
-Rationalize-by-category prompt optimizer: simulate a real Hermes agent run.
+Rationalize-per-category prompt optimizer: simulate a real Hermes agent run.
 
 This script runs a real Hermes batch via the Hermes CLI entrypoint
 (`finance-ai-hermes/handlers/run_rationalize.py`) and passes a system prompt override.
@@ -7,10 +7,10 @@ This avoids local `hermes-agent` dependency issues in the finance-ai-penny venv.
 
 Run from `finance-ai-penny` repo root:
 
-  python active_experiments/rationalize_by_category_optimizer.py --user-id 3 --test all
-  python active_experiments/rationalize_by_category_optimizer.py --user-id 3 --test batch_1
-  python active_experiments/rationalize_by_category_optimizer.py --user-id 3 --count 3 --offset 0
-  python active_experiments/rationalize_by_category_optimizer.py --user-id 3 --count 1 --offset 0 --quiet
+  python active_experiments/rationalize_per_category_optimizer.py --user-id 3 --test all
+  python active_experiments/rationalize_per_category_optimizer.py --user-id 3 --test batch_1
+  python active_experiments/rationalize_per_category_optimizer.py --user-id 3 --count 3 --offset 0
+  python active_experiments/rationalize_per_category_optimizer.py --user-id 3 --count 1 --offset 0 --quiet
 """
 
 from __future__ import annotations
@@ -221,7 +221,7 @@ def main() -> None:
     with open(args.system_prompt_file, "r", encoding="utf-8") as f:
       system_prompt_override = f.read()
 
-  # Ad-hoc single run (useful for "one insight only")
+  # Ad-hoc single run (useful for \"one insight only\")
   if (args.count is not None) or (args.offset is not None):
     if args.count is None or args.offset is None:
       raise SystemExit("For ad-hoc runs, pass both --count and --offset.")

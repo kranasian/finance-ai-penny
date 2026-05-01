@@ -14,7 +14,7 @@ Run from `finance-ai-penny` repo root:
 
 The grader expects **three** inputs, matching production Hermes/DB shapes:
 
-1. **`rationalize_agent_outcome`** — Markdown from **`/rationalize_by_category`** (same as the
+1. **`rationalize_agent_outcome`** — Markdown from **`/rationalize_per_category`** (same as the
    **`ai_agent_outcomes.agent_outcome`** row for **`type = rationalize_per_category`** that was fed
    into `/propose_next_steps`).
 2. **`propose_agent_outcome`** — Markdown from **`/propose_next_steps`** (same as the
@@ -27,12 +27,12 @@ The grader expects **three** inputs, matching production Hermes/DB shapes:
 These are wrapped for the model as **`<RATIONALIZE>`**, **`<PROPOSAL>`**, and **`<CALLS>`** (calls
 rendered to markdown via `calls_to_markdown`). See `bundle_checker_input`.
 
-**Rubric (two axes)**
+**Quality axes (two scores in output)**
 
 | Axis | What it measures |
 |------|------------------|
-| **accuracy** | **Faithfulness + consistency:** proposed/open text matches **`<RATIONALIZE>`**; no invented facts; **`<CALLS>`** supports the story (e.g. retrieve before recategorize when transaction ids are not in rationalize markdown). |
-| **completeness** | **Coverage + usefulness:** important rationalize **Next steps** / drivers appear in **`<PROPOSAL>`** or honestly under open items; concrete enough for Penny automation where relevant. |
+| **accuracy** | **Grounded + actionable for Penny:** next steps are faithful to **`<RATIONALIZE>`** (no invented facts) and are **helpful for Penny’s capabilities** (budgets/goals, categorization rules, recategorization with ids). Tool trace in **`<CALLS>`** should support the story (e.g. retrieve before recategorize when ids are missing). |
+| **completeness** | **Coverage + honesty:** important rationalize **Next steps** / drivers are addressed in **`<PROPOSAL>`** or explicitly parked under open items (no silent drops). Items should be concrete enough for Penny automation where relevant—not only vague user homework unless that is truly all that is warranted. |
 
 **Multiple rounds:** Source `calls` has **one object per LLM round-trip**; the markdown lists them as
 **`# Round 1`**, **`# Round 2`**, … with **`## Invoked tools`** under each when present.
@@ -185,7 +185,7 @@ SYSTEM_PROMPT = """You are a **strict rubric grader** for the checker bundle bel
 
 You receive:
 
-1. **`<RATIONALIZE>` … `</RATIONALIZE>`** — Markdown from the **rationalize-by-category** outcome (`agent_outcome` for that run): figures, drivers, next steps.
+1. **`<RATIONALIZE>` … `</RATIONALIZE>`** — Markdown from the **rationalize-per-category** outcome (`agent_outcome` for that run): figures, drivers, next steps.
 
 2. **`<PROPOSAL>` … `</PROPOSAL>`** — Markdown from the **propose-next-steps** outcome (`agent_outcome` for that run): normally **only** the **`# Proposal`** block with **`## Proposed next steps`** and **`## Open items (not addressed)`** (or equivalent).
 
@@ -197,9 +197,15 @@ Grade **only** what is in the message. Do not invent missing data.
 
 **Axes (each `score` integer 1–5, `notes` one short sentence):**
 
-1. **`completeness`** — Important **Next steps** / drivers from **`<RATIONALIZE>`** are reflected in **`<PROPOSAL>`** under “Proposed next steps” or **honestly** under “Open items” (no silent drops); proposals are **concrete enough** for Penny (budgets, rules, recategorize with ids) where the rationalize text calls for automation—not only generic filler unless that is truly all that is warranted.
+1. **`completeness`** — Does **`<PROPOSAL>`** cover what mattered in **`<RATIONALIZE>`**?
+   - Coverage: Important **Next steps** / drivers from **`<RATIONALIZE>`** appear under “Proposed next steps” **or** are explicitly parked under “Open items” (no silent drops).
+   - Concreteness: Items are concrete enough for Penny automation where the rationalize text implies it (budgets/goals, categorization rules, recategorization with ids), not only generic “review your statements” filler unless that is truly all that is warranted.
+   - Insightfulness of open items: If something can’t be acted on yet, open items should be specific (what to look for / what info is missing), not vague.
 
-2. **`accuracy`** — Proposed + open items are **grounded** in **`<RATIONALIZE>`** (no invented merchants/amounts/dates; no contradictions). When **`<CALLS>`** documents invocations, they **match** the proposal (correct tools, sensible args; **retrieve** before **propose_recategorize_transactions** when ids are not in **`<RATIONALIZE>`**). Apply the **score 3** rule above when no usable tool trace exists.
+2. **`accuracy`** — Is **`<PROPOSAL>`** both **grounded** and **helpful for Penny to execute**?
+   - Grounding: No invented merchants/amounts/dates; no contradictions vs **`<RATIONALIZE>`**.
+   - Actionability for Penny: Proposed steps should align with Penny’s capabilities (create goals/budgets, create categorization rules, recategorize transactions) and avoid recommending actions that are irrelevant to the rationalize context.
+   - Tool consistency: When **`<CALLS>`** documents invocations, they must support the proposal (correct tools, sensible args; **retrieve** before **propose_recategorize_transactions** when ids are not in **`<RATIONALIZE>`**). Apply the **score 3** rule above when no usable tool trace exists.
 
 **Calibration:** **5** = no meaningful gap on that axis. **4** = one minor gap. **3** = clear but fixable issue. **2** = several problems. **1** = axis largely failed.
 
@@ -272,10 +278,59 @@ _BAD_CALLS_NO_RETRIEVE: list[dict[str, Any]] = [
   },
 ]
 
+_SERVICE_FEES_RATIONALIZE_FIXTURE = """# Rationalize What
+
+Explain: Service Fees are significantly down this month. (credit card interest charges)
+
+# Rationalize Response
+
+## Figures
+
+- Service Fees / interest charges: down vs last month.
+
+## Drivers
+
+Credit card interest charges decreased.
+
+## Next steps
+
+1. Consider setting a budget for service fees to keep interest charges low.
+2. Review APR / statement details to confirm why interest changed.
+"""
+
+_SERVICE_FEES_PROPOSE_ONLY = """# Proposal
+
+## Proposed next steps
+
+1. **Create** a monthly spending budget of $250 for Service Fees to support the current downward trend in credit card interest charges.
+
+## Open items (not addressed)
+
+1. **Review** credit card account statements and APR details to determine if the interest reduction resulted from a lower average daily balance or a rate change.
+2. **Explore** debt repayment strategies or balance transfer options to eliminate remaining recurring interest fees.
+"""
+
+_SERVICE_FEES_CALLS: list[dict[str, Any]] = [
+  {
+    "tool_calls": [
+      {
+        "args": "{\"category\":\"bills_service_fees\",\"goal_type\":\"spending_budget\",\"rationale\":\"Based on the recent reduction in credit card interest charges, a $250 monthly budget for service fees will help sustain this positive trend and encourage continued debt management.\",\"time_horizon\":\"monthly\",\"goal_title\":\"Limit Service Fees\",\"target_amount\":250}",
+        "tool_name": "propose_create_goal",
+      }
+    ],
+  },
+  {
+    "tool_calls": [],
+  },
+]
+
 TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "good_aligned",
-    "ideal_response": None,
+    "ideal_response": {
+      "completeness": {"score": 5, "notes": "Covers the rationalize next step with a concrete proposal and a sensible open item."},
+      "accuracy": {"score": 5, "notes": "Proposal is grounded in the rationalize context and the tool call matches the text."},
+    },
     "payload": bundle_checker_input(
       rationalize_agent_outcome=_RATIONALIZE_FIXTURE.strip(),
       propose_agent_outcome=_GOOD_PROPOSE_ONLY.strip(),
@@ -284,11 +339,26 @@ TEST_CASES: list[dict[str, Any]] = [
   },
   {
     "name": "bad_hallucinated_merchant",
-    "ideal_response": None,
+    "ideal_response": {
+      "completeness": {"score": 1, "notes": "Does not address the Costco miscategorization next step and provides an unrelated action."},
+      "accuracy": {"score": 1, "notes": "Invents a Whole Foods charge and tool usage is inconsistent with the rationalize context."},
+    },
     "payload": bundle_checker_input(
       rationalize_agent_outcome=_RATIONALIZE_FIXTURE.strip(),
       propose_agent_outcome=_BAD_PROPOSE_ONLY.strip(),
       calls=_BAD_CALLS_NO_RETRIEVE,
+    ),
+  },
+  {
+    "name": "real_service_fees_goal_two_rounds",
+    "ideal_response": {
+      "completeness": {"score": 5, "notes": "Creates a concrete budget and captures the remaining review items as open, covering the rationalize next steps."},
+      "accuracy": {"score": 5, "notes": "Proposal and tool call are grounded in the rationalize context and are actionable for Penny."},
+    },
+    "payload": bundle_checker_input(
+      rationalize_agent_outcome=_SERVICE_FEES_RATIONALIZE_FIXTURE.strip(),
+      propose_agent_outcome=_SERVICE_FEES_PROPOSE_ONLY.strip(),
+      calls=_SERVICE_FEES_CALLS,
     ),
   },
 ]
