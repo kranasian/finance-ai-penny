@@ -1,21 +1,21 @@
 """
-Rationalize rubric checker optimizer: Actionable (for Penny / product, not the user).
+Rationalize rubric checker optimizer: Insightful.
 
 Use this to iterate on the system_prompt that will be stored in `penny_templates`
-for the checker template `Chk:RationalizePerCategoryActionable`.
+for the checker template `Chk:RationalizePerCategoryInsightful`.
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/rationalize_checker_actionable_optimizer.py --test all
-  python3 active_experiments/rationalize_checker_actionable_optimizer.py --test strong_next_steps_penny_capabilities
-  python3 active_experiments/rationalize_checker_actionable_optimizer.py --test all --model gemini-flash-lite-latest
+  python3 active_experiments/rationalize_per_category_rubric_insightful_optimizer.py --test all
+  python3 active_experiments/rationalize_per_category_rubric_insightful_optimizer.py --test high_insight_corrects_narrative_and_prioritizes
+  python3 active_experiments/rationalize_per_category_rubric_insightful_optimizer.py --test all --model gemini-flash-lite-latest
 
-**Recommended minimal generation settings** (validated `python3 active_experiments/rationalize_checker_actionable_optimizer.py --test all`; scores **5 / 1** vs `ideal_response`):
+**Recommended minimal generation settings** (validated `--test all`; scores match `ideal_response` **5 / 1**):
 
 - **model:** `gemini-flash-lite-latest`
 - **temperature:** `0` · **top_p:** `0.95`
 - **thinking_budget:** `0`
-- **max_output_tokens:** `128` (raise to `256` if truncated)
+- **max_output_tokens:** `128` (`256` if truncation)
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
@@ -69,58 +69,58 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """Grade **one axis: actionable** for **rationalize_change**. Judge **only** the **## Next steps** list in **Rationalize Response** (use figures/drivers for context).
+SYSTEM_PROMPT = """Grade **one axis: insightful** for **rationalize_change**. Judge whether **Rationalize Response** **interprets** the situation versus **Rationalize What**—prioritizing what actually drove the change and **why it matters**—not merely echoing figures or the headline story.
 
-**What counts (Penny / product / AI):** Concrete actions the system can implement—e.g. **budget caps**, **goals**, **categorization or merchant→category rules**, **tagging**, surfacing in **app views**—**tied to findings** (amounts, merchants, categories named above).
+**Input:** markdown: `# Rationalize What` then `# Rationalize Response`. Judge **only** this text.
 
-**What does not count on this axis:** Generic **human lifestyle** advice (save energy, shop for plans, “keep an eye on it”) with **no** product configuration—even if sensible offline.
-
-**Input:** markdown `# Rationalize What` … `# Rationalize Response`.
+Reward reasoning grounded in **actual amounts and drivers written** in the response (ignore hypothetical forecast tables).
 
 **Scores (integer 1–5)**
-- **5** — Next steps are **specific Penny/product actions** grounded in the drivers/figures.
-- **4** — Mostly product-facing; one step vague or weakly tied to findings.
-- **3** — Mix of product steps and generic life tips.
-- **2** — Mostly generic or thin product linkage.
-- **1** — Lifestyle-only, missing **## Next steps**, or nothing usable **for the AI/product**.
+- **5** — Adds clear interpretation: reframes or **corrects** the narrative when data warrants it, identifies the **main swing factor**, and conveys **why it matters** to the user.
+- **4** — Strong interpretation; one gap (e.g. thinner “why care” or prioritization).
+- **3** — Some interpretation but still mostly descriptive; weak prioritization.
+- **2** — Lightly interpretive or uneven; hard to see what mattered most.
+- **1** — **Restates** figures or the prompt’s framing with little/no interpretation or prioritization.
 
-**`notes`:** One sentence—Penny-style actions vs user-life advice—so the score is auditable.
+**`notes`:** One sentence naming strengths or gaps—e.g. premise vs data, swing factor, takeaway—so the score is auditable.
 """
 
 
 TEST_CASES: list[dict[str, Any]] = [
   {
-    "name": "strong_next_steps_penny_capabilities",
+    "name": "high_insight_corrects_narrative_and_prioritizes",
     "batch": 1,
-    "ideal_response": {"score": 5, "notes": "Next steps are specific Penny actions tied to findings."},
+    "ideal_response": {"score": 5, "notes": "Corrects the premise, prioritizes the swing factor, and explains why it matters."},
     "payload": _bundle_rationalize_md(
-      "Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212.",
+      "Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212. (2026-04-01 to 2026-04-30)",
       (
         "## Figures\n\n"
-        "* **Shelter utilities:** $324.48 (Apr 1–30, 2026) vs $402.84 (Mar 1–31, 2026).\n\n"
+        "* **Shelter:** $3,212.30 (Apr 1–30, 2026) vs $3,339.06 (Mar 1–31, 2026).\n"
+        "* **Shelter Home:** $2,850.00 (Apr 1–30, 2026) vs $2,850.00 (Mar 1–31, 2026).\n"
+        "* **Utilities:** $324.48 (Apr 1–30, 2026) vs $402.84 (Mar 1–31, 2026).\n\n"
         "## Drivers\n\n"
-        "Utilities dropped by about $78 vs March ($324.48 vs $402.84). The biggest driver is the **Dominion Energy** charge, which is materially lower this month than last month; the other utility providers moved less.\n\n"
+        "Your summary says shelter is “slightly up,” but the tool-backed Shelter is actually **down** vs March ($3,212.30 vs $3,339.06). "
+        "The important thing isn’t the $2,850 home line (it’s flat); the swing factor is utilities—Dominion Energy dropped the most this month.\n\n"
         "## Next steps\n\n"
-        "1. Create a **Utilities** budget cap at **$375/month** (3‑month avg ≈ $367) and surface it in the monthly budget view.\n"
-        "2. Create a small monthly **goal** (sinking fund) for utilities variability (e.g. $50/month) so swings don’t disrupt other budgets.\n"
-        "3. Add a categorization rule: **Dominion Energy → shelter_utilities** (so future bills are consistently tagged).\n"
+        "1. Keep shelter_home as a fixed $2,850 budget line; focus optimization on utilities/maintenance variability.\n"
+        "2. Add a rule for Dominion Energy → shelter_utilities so the main driver stays consistently tagged."
       ),
     ),
   },
   {
-    "name": "weak_next_steps_user_advice_only",
+    "name": "low_insight_restates_without_interpretation",
     "batch": 1,
-    "ideal_response": {"score": 1, "notes": "Next steps are user-life advice, not Penny actions like budgets/goals/rules."},
+    "ideal_response": {"score": 1, "notes": "Mostly restates figures without interpretation or prioritization."},
     "payload": _bundle_rationalize_md(
-      "Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212.",
+      "Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212. (2026-04-01 to 2026-04-30)",
       (
         "## Figures\n\n"
-        "* Utilities is down this month.\n\n"
+        "* Home is $2,850.\n"
+        "* Utilities is $324.\n\n"
         "## Drivers\n\n"
-        "Your shelter total is being pulled down by the utilities line this month; the home/rent component is likely flat, so the swing is utilities.\n\n"
+        "Home is up and utilities is down. That’s why shelter changed.\n\n"
         "## Next steps\n\n"
-        "1. Try to use less electricity.\n"
-        "2. Shop around for a better plan."
+        "1. Keep an eye on it."
       ),
     ),
   },
@@ -154,7 +154,7 @@ class CheckerOptimizer:
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
     user_msg = (
-      "Grade **actionable** only. Input is markdown (plain text):\n\n"
+      "Grade **insightful** only. Input is markdown (plain text):\n\n"
       + (agent_outcome or "")
       + "\n\nRespond with the JSON object only."
     )

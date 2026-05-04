@@ -6,12 +6,12 @@ for the checker template `Chk:RationalizePerCategoryComprehensive`.
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/rationalize_checker_comprehensive_optimizer.py --test all
-  python3 active_experiments/rationalize_checker_comprehensive_optimizer.py --test good_comprehensive_shelter
-  python3 active_experiments/rationalize_checker_comprehensive_optimizer.py --test good_comprehensive_shopping
-  python3 active_experiments/rationalize_checker_comprehensive_optimizer.py --test all --model gemini-flash-lite-latest
+  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test all
+  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test good_comprehensive_shelter
+  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test good_comprehensive_shopping
+  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test all --model gemini-flash-lite-latest
 
-**Recommended minimal generation settings** (validated with `python3 active_experiments/rationalize_checker_comprehensive_optimizer.py --test all`; scores **5 / 5 / 2** vs `ideal_response`; prompt stresses evidence, investigation depth, auditable `notes`):
+**Recommended minimal generation settings** (validated with `python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test all`; scores **5 / 5 / 2** vs `ideal_response`; prompt stresses evidence, investigation depth, auditable `notes`):
 
 - **model:** `gemini-flash-lite-latest` — smallest model that held calibration on all fixtures; larger Flash variants not re-checked here (API limits).
 - **temperature:** `0` · **top_p:** `0.95` — deterministic judge (`template_run_configs.py` uses `temp=0.2` for the same template; use `0` here for optimizer reproducibility).
@@ -89,7 +89,7 @@ If unsure between **1** and **2**, choose **2** when any concrete total appears 
 
 
 _SHELTER_UT = (
-  "Explain: Home is slightly up this month at $120. Utilities is significantly down this month at $38. Shelter is thus slightly up this month to $170."
+  "Explain: Home is slightly up this month at $120. Utilities is significantly down this month at $38. Shelter is thus slightly up this month to $170. (2026-04-01 to 2026-04-30)"
 )
 _SHELTER_AR = (
   "## Figures\n\n"
@@ -110,7 +110,7 @@ _SHELTER_AR = (
   "2. Monitor `shelter_upkeep` in May to see whether April’s lower upkeep holds or March-level charges return.\n"
   "3. After May closes, check whether **Total Identified Shelter Costs** move back toward the **~$150–155** range or settle nearer **~$170**."
 )
-_SHOP_UT = "Explain: Shopping is up significantly this month to $485."
+_SHOP_UT = "Explain: Shopping is up significantly this month to $485. (2026-04-01 to 2026-04-30)"
 _SHOP_AR = (
   "## Figures\n\n"
   "*   **Shopping (`shopping` and tagged children):** $485.00 (Apr 1–30, 2026), $195.00 (Mar 1–31, 2026), $210.00 (Feb 1–28, 2026).\n"
