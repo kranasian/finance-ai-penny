@@ -48,13 +48,6 @@ def _print_section_banner(title: str) -> None:
   print(f"\n{_SECTION_RULE}\n{title}\n{_SECTION_RULE}\n")
 
 
-def _bundle_rationalize_md(user_task: str, assistant_reply: str) -> str:
-  """Same shape as `ai_agent_outcomes.agent_outcome` from Hermes rationalize."""
-  ut = (user_task or "").strip()
-  ar = (assistant_reply or "").strip()
-  return f"# Rationalize What\n\n{ut}\n\n# Rationalize Response\n\n{ar}\n"
-
-
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
   required=["score", "notes"],
@@ -88,70 +81,90 @@ If unsure between **1** and **2**, choose **2** when any concrete total appears 
 """
 
 
-_SHELTER_UT = (
-  "Explain: Home is slightly up this month at $120. Utilities is significantly down this month at $38. Shelter is thus slightly up this month to $170. (2026-04-01 to 2026-04-30)"
-)
-_SHELTER_AR = (
-  "## Figures\n\n"
-  "*   **Shelter Home:** $120.00 (Apr 1–30, 2026), $120.00 (Mar 1–31, 2026), $120.00 (Feb 1–28, 2026).\n"
-  "*   **Shelter Utilities:** $38.00 (Apr 1–30, 2026), $95.00 (Mar 1–31, 2026), $25.00 (Feb 1–28, 2026).\n"
-  "*   **Shelter Upkeep:** $12.00 (Apr 1–30, 2026), $35.00 (Mar 1–31, 2026), $5.00 (Feb 1–28, 2026).\n"
-  "*   **Total Identified Shelter Costs:** $170.00 (Apr 1–30, 2026), $250.00 (Mar 1–31, 2026), $150.00 (Feb 1–28, 2026).\n"
-  "*   **Total Identified Shelter Costs (earlier months):** $150.00 (Nov 1–30, 2025), $155.00 (Dec 1–31, 2025), $150.00 (Jan 1–31, 2026).\n\n"
-  "## Drivers\n\n"
-  "My data shows that your `shelter_home` spending has stayed flat at **$120.00** for the last three months (Apr–Feb), rather than increasing—so the “home is slightly up” line does not match actual `shelter_home` in this window.\n\n"
-  "Versus **March**, your total shelter is **down**: that step-down is mostly from lower `shelter_utilities` (**$38.00** this month vs **$95.00** in March) and lower `shelter_upkeep` (**$12.00** vs **$35.00** in March). "
-  "March transaction detail shows the utilities/upkeep side concentrated in a few larger lines; April does not repeat March’s biggest lumps—more recurring-sized charges.\n\n"
-  "The insight still reads **“Shelter … slightly up … to $170” for April** because **$170** is being judged against your **quieter months**, not against March’s spike. "
-  "November–January totals sit around **~$150–155**, and February is **$150**; **March at $250** is the clear outlier once you include that history. "
-  "**April at $170** is only **modestly above** that **~$150–155** band (about **+$15–20**), which is what “slightly up” is picking up—while March’s extra spend **does not fully disappear in one month**, so April **has not fully dropped back** to the fall/winter floor even though it is **down from March**.\n\n"
-  "## Next steps\n\n"
-  "1. Review your April utility bills to confirm whether the lower `shelter_utilities` amount reflects usage, seasonal timing, or a one-time billing adjustment.\n"
-  "2. Monitor `shelter_upkeep` in May to see whether April’s lower upkeep holds or March-level charges return.\n"
-  "3. After May closes, check whether **Total Identified Shelter Costs** move back toward the **~$150–155** range or settle nearer **~$170**."
-)
-_SHOP_UT = "Explain: Shopping is up significantly this month to $485. (2026-04-01 to 2026-04-30)"
-_SHOP_AR = (
-  "## Figures\n\n"
-  "*   **Shopping (`shopping` and tagged children):** $485.00 (Apr 1–30, 2026), $195.00 (Mar 1–31, 2026), $210.00 (Feb 1–28, 2026).\n"
-  "*   **April average transaction size (category):** ~$97 across 5 posted purchases vs ~$33 across 6 in March and ~$35 across 6 in February (from transaction export).\n\n"
-  "## Drivers\n\n"
-  "My data shows the increase is **not** from shopping more often in April (similar visit counts vs Feb–Mar)—it is from **where** the spend landed. "
-  "Transactions only include **merchant** (`name`), **amount**, and **category**—there is no product or receipt line. In April, the top shopping rows are merchants **Nordstrom**, **REI**, and **Apple**; **Apple** is posted to `shopping_gadgets` with a much larger **amount** than any `shopping_gadgets` row in Feb–Mar. "
-  "By contrast, **February and March** are dominated by **discount / big-box** (**Target**, **Walmart**) and **value apparel** (**Old Navy**)—those are your **cheaper-store** merchants—with **smaller amounts** per transaction on average.\n\n"
-  "So **shopping is up** mainly because the **merchant mix shifted** from that discount-and-value pattern toward **Nordstrom**, **REI**, and **Apple**, not because the category picked up lots of tiny impulse buys.\n\n"
-  "## Next steps\n\n"
-  "1. Review April’s **Nordstrom** / **REI** / **Apple** merchant totals (data is merchant + amount only—triage using category and size of the charge).\n"
-  "2. If you want to bring the total down, route routine basics back to the **Target / Walmart / Old Navy** pattern you used in Feb–Mar for comparable items.\n"
-  "3. Watch May’s first half: if large-ticket store spend repeats, treat it as a habit shift; if not, April likely stays a one-off mix change."
-)
-_MISSING_UT = _SHELTER_UT
-_MISSING_AR = (
-  "## Figures\n\n"
-  "* Shelter is up this month to $170.\n\n"
-  "## Drivers\n\n"
-  "It looks like utilities went down, which helped offset other shelter changes.\n\n"
-  "## Next steps\n\n"
-  "1. Watch shelter spending next month."
-)
 TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "good_comprehensive_shelter",
     "batch": 1,
-    "ideal_response": {"score": 5, "notes": "Figures by subcategory + total; My data shows tone; explains April slightly-up-to-$170 vs quiet months and vs March."},
-    "payload": _bundle_rationalize_md(_SHELTER_UT, _SHELTER_AR),
+    "output": '{"score": 5, "notes": "Figures by subcategory + total; My data shows tone; explains April slightly-up-to-$170 vs quiet months and vs March."}',
+    "input": """# Rationalize What
+
+Explain: Home is slightly up this month at $120. Utilities is significantly down this month at $38. Shelter is thus slightly up this month to $170. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+*   **Shelter Home:** $120.00 (Apr 1–30, 2026), $120.00 (Mar 1–31, 2026), $120.00 (Feb 1–28, 2026).
+*   **Shelter Utilities:** $38.00 (Apr 1–30, 2026), $95.00 (Mar 1–31, 2026), $25.00 (Feb 1–28, 2026).
+*   **Shelter Upkeep:** $12.00 (Apr 1–30, 2026), $35.00 (Mar 1–31, 2026), $5.00 (Feb 1–28, 2026).
+*   **Total Identified Shelter Costs:** $170.00 (Apr 1–30, 2026), $250.00 (Mar 1–31, 2026), $150.00 (Feb 1–28, 2026).
+*   **Total Identified Shelter Costs (earlier months):** $150.00 (Nov 1–30, 2025), $155.00 (Dec 1–31, 2025), $150.00 (Jan 1–31, 2026).
+
+## Drivers
+
+My data shows that your `shelter_home` spending has stayed flat at **$120.00** for the last three months (Apr–Feb), rather than increasing—so the “home is slightly up” line does not match actual `shelter_home` in this window.
+
+Versus **March**, your total shelter is **down**: that step-down is mostly from lower `shelter_utilities` (**$38.00** this month vs **$95.00** in March) and lower `shelter_upkeep` (**$12.00** vs **$35.00** in March). March transaction detail shows the utilities/upkeep side concentrated in a few larger lines; April does not repeat March’s biggest lumps—more recurring-sized charges.
+
+The insight still reads **“Shelter … slightly up … to $170” for April** because **$170** is being judged against your **quieter months**, not against March’s spike. November–January totals sit around **~$150–155**, and February is **$150**; March at $250 is the clear outlier once you include that history. **April at $170** is only **modestly above** that **~$150–155** band (about **+$15–20**), which is what “slightly up” is picking up—while March’s extra spend **does not fully disappear in one month**, so April **has not fully dropped back** to the fall/winter floor even though it is **down from March**.
+
+## Next steps
+
+1. Review your April utility bills to confirm whether the lower `shelter_utilities` amount reflects usage, seasonal timing, or a one-time billing adjustment.
+2. Monitor `shelter_upkeep` in May to see whether April’s lower upkeep holds or March-level charges return.
+3. After May closes, check whether **Total Identified Shelter Costs** move back toward the **~$150–155** range or settle nearer **~$170**.
+""",
   },
   {
     "name": "good_comprehensive_shopping",
     "batch": 1,
-    "ideal_response": {"score": 5, "notes": "Totals plus merchant mix: Nordstrom/REI/Apple vs Feb–Mar Target/Walmart (discount big-box) and Old Navy (value apparel)."},
-    "payload": _bundle_rationalize_md(_SHOP_UT, _SHOP_AR),
+    "output": '{"score": 5, "notes": "Totals plus merchant mix: Nordstrom/REI/Apple vs Feb–Mar Target/Walmart (discount big-box) and Old Navy (value apparel)."}',
+    "input": """# Rationalize What
+
+Explain: Shopping is up significantly this month to $485. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+*   **Shopping (`shopping` and tagged children):** $485.00 (Apr 1–30, 2026), $195.00 (Mar 1–31, 2026), $210.00 (Feb 1–28, 2026).
+*   **April average transaction size (category):** ~$97 across 5 posted purchases vs ~$33 across 6 in March and ~$35 across 6 in February (from transaction export).
+
+## Drivers
+
+My data shows the increase is **not** from shopping more often in April (similar visit counts vs Feb–Mar)—it is from **where** the spend landed. Transactions only include **merchant** (`name`), **amount**, and **category**—there is no product or receipt line. In April, the top shopping rows are merchants **Nordstrom**, **REI**, and **Apple**; **Apple** is posted to `shopping_gadgets` with a much larger **amount** than any `shopping_gadgets` row in Feb–Mar. By contrast, **February and March** are dominated by **discount / big-box** (**Target**, **Walmart**) and **value apparel** (**Old Navy**)—those are your **cheaper-store** merchants—with **smaller amounts** per transaction on average.
+
+So **shopping is up** mainly because the **merchant mix shifted** from that discount-and-value pattern toward **Nordstrom**, **REI**, and **Apple**, not because the category picked up lots of tiny impulse buys.
+
+## Next steps
+
+1. Review April’s **Nordstrom** / **REI** / **Apple** merchant totals (data is merchant + amount only—triage using category and size of the charge).
+2. If you want to bring the total down, route routine basics back to the **Target / Walmart / Old Navy** pattern you used in Feb–Mar for comparable items.
+3. Watch May’s first half: if large-ticket store spend repeats, treat it as a habit shift; if not, April likely stays a one-off mix change.
+""",
   },
   {
     "name": "missing_investigation",
     "batch": 1,
-    "ideal_response": {"score": 2, "notes": "Missing key investigations and merchant-level drivers for the delta."},
-    "payload": _bundle_rationalize_md(_MISSING_UT, _MISSING_AR),
+    "output": '{"score": 2, "notes": "Missing key investigations and merchant-level drivers for the delta."}',
+    "input": """# Rationalize What
+
+Explain: Home is slightly up this month at $120. Utilities is significantly down this month at $38. Shelter is thus slightly up this month to $170. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* Shelter is up this month to $170.
+
+## Drivers
+
+It looks like utilities went down, which helped offset other shelter changes.
+
+## Next steps
+
+1. Watch shelter spending next month.
+""",
   },
 ]
 
@@ -210,37 +223,58 @@ class CheckerOptimizer:
 
 def main() -> None:
   parser = argparse.ArgumentParser()
-  parser.add_argument("--test", type=str, default="all")
+  parser.add_argument("--test", type=str, default=None, help="Test name, index, or 'all'.")
+  parser.add_argument("--batch", type=int, default=None, help="Run all tests in batch N.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
   parser.add_argument("--max-output-tokens", type=int, default=128)
   parser.add_argument("--thinking-budget", type=int, default=0)
   args = parser.parse_args()
+
+  if args.test is None and args.batch is None:
+    print("Available test cases:")
+    for i, tc in enumerate(TEST_CASES):
+      batch = tc.get("batch")
+      batch_s = str(batch) if isinstance(batch, int) else "—"
+      print(f"  {i}: {tc.get('name')} (batch {batch_s})")
+    return
 
   opt = CheckerOptimizer(
     model_name=args.model,
     max_output_tokens=args.max_output_tokens,
     thinking_budget=args.thinking_budget,
   )
-  if args.test == "all":
-    cases = TEST_CASES
+  if args.batch is not None:
+    cases = [(i, tc) for i, tc in enumerate(TEST_CASES) if int(tc.get("batch") or 0) == int(args.batch)]
+    if not cases:
+      raise SystemExit(f"No tests found for batch={args.batch}")
+  elif (args.test or "").strip().lower() == "all":
+    cases = list(enumerate(TEST_CASES))
   else:
-    tc = next((t for t in TEST_CASES if t["name"] == args.test), None)
-    if tc is None:
-      raise SystemExit(f"Unknown test: {args.test!r}")
-    cases = [tc]
+    if (args.test or "").isdigit():
+      idx = int(args.test)
+      if idx < 0 or idx >= len(TEST_CASES):
+        raise SystemExit(f"Test index out of range: {idx}")
+      cases = [(idx, TEST_CASES[idx])]
+    else:
+      idx_tc = next(((i, t) for i, t in enumerate(TEST_CASES) if t.get("name") == args.test), None)
+      if idx_tc is None:
+        raise SystemExit(f"Unknown test: {args.test!r}")
+      cases = [idx_tc]
 
-  for i, tc in enumerate(cases):
-    if i:
+  for run_i, (case_index, tc) in enumerate(cases):
+    if run_i:
       print(f"\n{_TEST_SEPARATOR}\n")
-    print(f"# Test: {tc['name']}\n")
+    batch = tc.get("batch")
+    batch_s = str(batch) if isinstance(batch, int) else "—"
+    print(f"# Test: {case_index}  {tc['name']}  (batch {batch_s})\n")
     _print_section_banner("# LLM Checker Input")
-    print(tc["payload"])
-    result = opt.grade(tc["payload"])
+    print(tc["input"])
+    result = opt.grade(tc["input"])
     _print_section_banner("# LLM Checker Response")
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    if "ideal_response" in tc:
-      _print_section_banner("# Ideal Response")
-      print(json.dumps(tc["ideal_response"], indent=2, ensure_ascii=False))
+    if tc.get("output") is not None:
+      _print_section_banner("# Expected Output")
+      print(tc["output"])
 
   print(f"\n{_TEST_SEPARATOR}\n")
   print(f"# Total tests: {len(cases)}\n")

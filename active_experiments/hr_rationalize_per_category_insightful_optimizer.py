@@ -46,13 +46,6 @@ def _print_section_banner(title: str) -> None:
   print(f"\n{_SECTION_RULE}\n{title}\n{_SECTION_RULE}\n")
 
 
-def _bundle_rationalize_md(user_task: str, assistant_reply: str) -> str:
-  """Same shape as `ai_agent_outcomes.agent_outcome`: Rationalize What + Rationalize Response."""
-  ut = (user_task or "").strip()
-  ar = (assistant_reply or "").strip()
-  return f"# Rationalize What\n\n{ut}\n\n# Rationalize Response\n\n{ar}\n"
-
-
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
   required=["score", "notes"],
@@ -90,39 +83,52 @@ TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "high_insight_corrects_narrative_and_prioritizes",
     "batch": 1,
-    "ideal_response": {"score": 5, "notes": "Corrects the premise, prioritizes the swing factor, and explains why it matters."},
-    "payload": _bundle_rationalize_md(
-      "Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212. (2026-04-01 to 2026-04-30)",
-      (
-        "## Figures\n\n"
-        "* **Shelter:** $3,212.30 (Apr 1–30, 2026) vs $3,339.06 (Mar 1–31, 2026).\n"
-        "* **Shelter Home:** $2,850.00 (Apr 1–30, 2026) vs $2,850.00 (Mar 1–31, 2026).\n"
-        "* **Utilities:** $324.48 (Apr 1–30, 2026) vs $402.84 (Mar 1–31, 2026).\n\n"
-        "## Drivers\n\n"
-        "Your summary says shelter is “slightly up,” but the tool-backed Shelter is actually **down** vs March ($3,212.30 vs $3,339.06). "
-        "The important thing isn’t the $2,850 home line (it’s flat); the swing factor is utilities—Dominion Energy dropped the most this month.\n\n"
-        "## Next steps\n\n"
-        "1. Keep shelter_home as a fixed $2,850 budget line; focus optimization on utilities/maintenance variability.\n"
-        "2. Add a rule for Dominion Energy → shelter_utilities so the main driver stays consistently tagged."
-      ),
-    ),
+    "output": '{"score": 5, "notes": "Corrects the premise, prioritizes the swing factor, and explains why it matters."}',
+    "input": """# Rationalize What
+
+Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Shelter:** $3,212.30 (Apr 1–30, 2026) vs $3,339.06 (Mar 1–31, 2026).
+* **Shelter Home:** $2,850.00 (Apr 1–30, 2026) vs $2,850.00 (Mar 1–31, 2026).
+* **Utilities:** $324.48 (Apr 1–30, 2026) vs $402.84 (Mar 1–31, 2026).
+
+## Drivers
+
+Your summary says shelter is “slightly up,” but the tool-backed Shelter is actually **down** vs March ($3,212.30 vs $3,339.06). The important thing isn’t the $2,850 home line (it’s flat); the swing factor is utilities—Dominion Energy dropped the most this month.
+
+## Next steps
+
+1. Keep shelter_home as a fixed $2,850 budget line; focus optimization on utilities/maintenance variability.
+2. Add a rule for Dominion Energy → shelter_utilities so the main driver stays consistently tagged.
+""",
   },
   {
     "name": "low_insight_restates_without_interpretation",
     "batch": 1,
-    "ideal_response": {"score": 1, "notes": "Mostly restates figures without interpretation or prioritization."},
-    "payload": _bundle_rationalize_md(
-      "Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212. (2026-04-01 to 2026-04-30)",
-      (
-        "## Figures\n\n"
-        "* Home is $2,850.\n"
-        "* Utilities is $324.\n\n"
-        "## Drivers\n\n"
-        "Home is up and utilities is down. That’s why shelter changed.\n\n"
-        "## Next steps\n\n"
-        "1. Keep an eye on it."
-      ),
-    ),
+    "output": '{"score": 1, "notes": "Mostly restates figures without interpretation or prioritization."}',
+    "input": """# Rationalize What
+
+Explain: Home is slightly up this month at $2850. Utilities is significantly down this month at $324. Shelter is thus slightly up this month to $3212. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* Home is $2,850.
+* Utilities is $324.
+
+## Drivers
+
+Home is up and utilities is down. That’s why shelter changed.
+
+## Next steps
+
+1. Keep an eye on it.
+""",
   },
 ]
 
@@ -180,37 +186,58 @@ class CheckerOptimizer:
 
 def main() -> None:
   parser = argparse.ArgumentParser()
-  parser.add_argument("--test", type=str, default="all")
+  parser.add_argument("--test", type=str, default=None, help="Test name, index, or 'all'.")
+  parser.add_argument("--batch", type=int, default=None, help="Run all tests in batch N.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
   parser.add_argument("--max-output-tokens", type=int, default=128)
   parser.add_argument("--thinking-budget", type=int, default=0)
   args = parser.parse_args()
+
+  if args.test is None and args.batch is None:
+    print("Available test cases:")
+    for i, tc in enumerate(TEST_CASES):
+      batch = tc.get("batch")
+      batch_s = str(batch) if isinstance(batch, int) else "—"
+      print(f"  {i}: {tc.get('name')} (batch {batch_s})")
+    return
 
   opt = CheckerOptimizer(
     model_name=args.model,
     max_output_tokens=args.max_output_tokens,
     thinking_budget=args.thinking_budget,
   )
-  if args.test == "all":
-    cases = TEST_CASES
+  if args.batch is not None:
+    cases = [(i, tc) for i, tc in enumerate(TEST_CASES) if int(tc.get("batch") or 0) == int(args.batch)]
+    if not cases:
+      raise SystemExit(f"No tests found for batch={args.batch}")
+  elif (args.test or "").strip().lower() == "all":
+    cases = list(enumerate(TEST_CASES))
   else:
-    tc = next((t for t in TEST_CASES if t["name"] == args.test), None)
-    if tc is None:
-      raise SystemExit(f"Unknown test: {args.test!r}")
-    cases = [tc]
+    if (args.test or "").isdigit():
+      idx = int(args.test)
+      if idx < 0 or idx >= len(TEST_CASES):
+        raise SystemExit(f"Test index out of range: {idx}")
+      cases = [(idx, TEST_CASES[idx])]
+    else:
+      idx_tc = next(((i, t) for i, t in enumerate(TEST_CASES) if t.get("name") == args.test), None)
+      if idx_tc is None:
+        raise SystemExit(f"Unknown test: {args.test!r}")
+      cases = [idx_tc]
 
-  for i, tc in enumerate(cases):
-    if i:
+  for run_i, (case_index, tc) in enumerate(cases):
+    if run_i:
       print(f"\n{_TEST_SEPARATOR}\n")
-    print(f"# Test: {tc['name']}\n")
+    batch = tc.get("batch")
+    batch_s = str(batch) if isinstance(batch, int) else "—"
+    print(f"# Test: {case_index}  {tc['name']}  (batch {batch_s})\n")
     _print_section_banner("# LLM Checker Input")
-    print(tc["payload"])
-    result = opt.grade(tc["payload"])
+    print(tc["input"])
+    result = opt.grade(tc["input"])
     _print_section_banner("# LLM Checker Response")
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    if "ideal_response" in tc:
-      _print_section_banner("# Ideal Response")
-      print(json.dumps(tc["ideal_response"], indent=2, ensure_ascii=False))
+    if tc.get("output") is not None:
+      _print_section_banner("# Expected Output")
+      print(tc["output"])
 
   print(f"\n{_TEST_SEPARATOR}\n")
   print(f"# Total tests: {len(cases)}\n")

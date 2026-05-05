@@ -39,189 +39,13 @@ _SECTION_RULE = "-" * 72
 def _print_section_banner(title: str) -> None:
   print(f"\n{_SECTION_RULE}\n{title}\n{_SECTION_RULE}\n")
 
+TEST_CASES: list[dict[str, Any]] = [
+  {
+    "name": "good_aligned",
+    "batch": 1,
+    "input": """<RATIONALIZE>
 
-def _tool_args_to_fenced_block(args: Any) -> str:
-  """Format tool arguments for markdown (fenced block)."""
-  if args is None:
-    return ""
-  if isinstance(args, str):
-    s = args.strip()
-    if not s:
-      return ""
-    try:
-      parsed = json.loads(s)
-      inner = json.dumps(parsed, indent=2, ensure_ascii=False)
-      lang = "json"
-    except Exception:
-      inner = s
-      lang = "text"
-  else:
-    inner = json.dumps(args, indent=2, ensure_ascii=False)
-    lang = "json"
-  return f"```{lang}\n{inner}\n```\n"
-
-
-def rationalize_calls_to_markdown(calls: list[Any]) -> str:
-  """Stored rationalize ``calls`` inside ``<RATIONALIZE_CALLS>`` (Hermes-aligned)."""
-  if not isinstance(calls, list) or len(calls) == 0:
-    return ""
-  parts: list[str] = []
-  for idx, turn in enumerate(calls, start=1):
-    parts.append(f"# Round {idx}\n\n")
-    if not isinstance(turn, dict):
-      parts.append(f"- _(non-object round):_ `{type(turn).__name__}`\n\n")
-      continue
-    tcs = turn.get("tool_calls")
-    if not isinstance(tcs, list) or not tcs:
-      parts.append("_No tool calls this round._\n\n")
-      continue
-    parts.append("## Invoked tools\n\n")
-    for tci, tc in enumerate(tcs, start=1):
-      if not isinstance(tc, dict):
-        parts.append(f"{tci}. _(invalid tool call entry)_\n\n")
-        continue
-      name = tc.get("tool_name") or tc.get("name")
-      fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
-      if name is None and isinstance(fn, dict):
-        name = fn.get("name")
-      args = tc.get("args") if "args" in tc else tc.get("arguments")
-      if args is None and isinstance(fn, dict):
-        args = fn.get("arguments")
-      name_s = str(name or "(unknown_tool)")
-      parts.append(f"{tci}. **`{name_s}`**\n\n")
-      fence = _tool_args_to_fenced_block(args)
-      if fence:
-        parts.append(fence)
-      parts.append("\n")
-  return "".join(parts).rstrip() + "\n"
-
-
-def calls_to_markdown(calls: list[Any]) -> str:
-  """Render Hermes-style `calls` list as readable markdown for the grader."""
-  if not isinstance(calls, list) or len(calls) == 0:
-    return "_No LLM round-trips._\n"
-  parts: list[str] = []
-  for idx, turn in enumerate(calls, start=1):
-    parts.append(f"# Round {idx}\n")
-    if not isinstance(turn, dict):
-      parts.append(f"- _(non-object round):_ `{type(turn).__name__}`\n\n")
-      continue
-    meta_lines: list[str] = []
-    for key in ("call_number", "latency_ms", "input_tokens", "output_tokens", "total_tokens"):
-      if key in turn and turn[key] is not None:
-        meta_lines.append(f"- **{key}:** {turn[key]}")
-    if meta_lines:
-      parts.append("\n".join(meta_lines) + "\n\n")
-    tcs = turn.get("tool_calls")
-    if not isinstance(tcs, list) or not tcs:
-      parts.append("_No tool calls this round._\n\n")
-      continue
-    parts.append("## Invoked tools\n\n")
-    for tci, tc in enumerate(tcs, start=1):
-      if not isinstance(tc, dict):
-        parts.append(f"{tci}. _(invalid tool call entry)_\n\n")
-        continue
-      name = tc.get("tool_name") or tc.get("name")
-      fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
-      if name is None and isinstance(fn, dict):
-        name = fn.get("name")
-      args = tc.get("args") if "args" in tc else tc.get("arguments")
-      if args is None and isinstance(fn, dict):
-        args = fn.get("arguments")
-      name_s = str(name or "(unknown_tool)")
-      parts.append(f"{tci}. **`{name_s}`**\n\n")
-      fence = _tool_args_to_fenced_block(args)
-      if fence:
-        parts.append(fence)
-      parts.append("\n")
-  return "".join(parts).rstrip() + "\n"
-
-
-def bundle_checker_input(
-  *,
-  rationalize_agent_outcome: str,
-  propose_agent_outcome: str,
-  calls: list[Any],
-) -> str:
-  """Build grader message: ``<RATIONALIZE>``, ``<PROPOSAL>``, ``<CALLS>``. ``calls`` may be ``[]``."""
-  ra = (rationalize_agent_outcome or "").strip()
-  pa = (propose_agent_outcome or "").strip()
-  if not ra or not pa:
-    raise ValueError(
-      "rationalize_agent_outcome and propose_agent_outcome must be non-empty markdown strings."
-    )
-  if not isinstance(calls, list):
-    raise TypeError("calls must be a list (use [] if the propose row has no LLM round-trips).")
-  out = (
-    f"<RATIONALIZE>\n\n{ra}\n\n</RATIONALIZE>\n\n"
-    f"<PROPOSAL>\n\n{pa}\n\n</PROPOSAL>\n"
-  )
-  calls_md = calls_to_markdown(calls)
-  out += f"\n<CALLS>\n\n{calls_md}\n</CALLS>\n"
-  return out
-
-
-def _append_proposal_and_calls(out: str, propose_agent_outcome: str, calls: list[Any]) -> str:
-  pa = (propose_agent_outcome or "").strip()
-  if not pa:
-    raise ValueError("propose_agent_outcome must be non-empty.")
-  if not isinstance(calls, list):
-    raise TypeError("calls must be a list (use [] if the propose row has no LLM round-trips).")
-  calls_md = calls_to_markdown(calls)
-  return (
-    out
-    + f"<PROPOSAL>\n\n{pa}\n\n</PROPOSAL>\n\n"
-    + f"<CALLS>\n\n{calls_md}\n</CALLS>\n"
-  )
-
-
-def bundle_checker_input_multi(
-  *,
-  contexts: list[dict[str, Any]],
-  propose_agent_outcome: str,
-  calls: list[Any],
-) -> str:
-  """
-  Grader bundle for ``propose_next_steps_multi``: ``CONTEXTS`` (same outer shape as Hermes), then ``<PROPOSAL>``, ``<CALLS>``.
-  Each context dict: ``rationalize_agent_outcome`` (str), optional ``calls`` (list, rationalize row trace).
-  """
-  if not isinstance(contexts, list) or not contexts:
-    raise ValueError("contexts must be a non-empty list of dicts.")
-  inner_parts: list[str] = []
-  for i, ctx in enumerate(contexts, start=1):
-    if not isinstance(ctx, dict):
-      raise TypeError(f"contexts[{i - 1}] must be a dict")
-    ra = (ctx.get("rationalize_agent_outcome") or "").strip()
-    if not ra:
-      raise ValueError(f"contexts[{i - 1}].rationalize_agent_outcome must be non-empty")
-    body = ra.rstrip("\n")
-    chunks: list[str] = [
-      f'<CONTEXT index="{i}">\n\n',
-      "<RATIONALIZE>\n\n",
-      body,
-      "\n\n</RATIONALIZE>\n",
-    ]
-    calls_val = ctx.get("calls")
-    if isinstance(calls_val, list) and len(calls_val) > 0:
-      md = rationalize_calls_to_markdown(calls_val)
-      if md.strip():
-        chunks.append("\n<RATIONALIZE_CALLS>\n\n")
-        chunks.append(md.rstrip("\n") + "\n")
-        chunks.append("\n</RATIONALIZE_CALLS>\n")
-    chunks.append("\n</CONTEXT>")
-    inner_parts.append("".join(chunks))
-  inner = "\n\n".join(inner_parts)
-  head = (
-    "Multiple prior rationalize contexts:\n\n"
-    "<CONTEXTS>\n\n"
-    + inner
-    + "\n\n</CONTEXTS>\n\n"
-  )
-  return _append_proposal_and_calls(head, propose_agent_outcome, calls)
-
-
-# Minimal fixtures: rationalize snippet + propose bundle + synthetic calls
-_RATIONALIZE_FIXTURE = """# Rationalize What
+# Rationalize What
 
 Explain: Groceries is significantly down this month at $120. (2026-04-01 to 2026-04-30)
 
@@ -238,54 +62,111 @@ Several Costco transactions appear miscategorized as Miscellaneous.
 ## Next steps
 
 Create a categorization rule so Costco is always groceries.
-"""
 
-_GOOD_PROPOSE_ONLY = (
-  "# Proposal\n\n"
-  "## Proposed next steps\n\n"
-  "1. **Add a categorization rule** so merchant name matches “Costco” map to Groceries (`ai_category_id` for groceries), applied to past and future.\n\n"
-  "## Open items (not addressed)\n\n"
-  "1. **Review** whether any non-Costco groceries are still landing in Miscellaneous.\n"
-)
+</RATIONALIZE>
 
-_GOOD_CALLS: list[dict[str, Any]] = [
-  {
-    "tool_calls": [
-      {
-        "tool_name": "propose_create_categorization_rule",
-        "args": json.dumps(
-          {
-            "rule": {"name_sub_eq": "costco"},
-            "ai_category_id": 4,
-            "scope": "future_and_past",
-            "rationale": "Costco should count as groceries.",
-          }
-        ),
-      }
-    ],
+<PROPOSAL>
+
+# Proposal
+
+## Proposed next steps
+
+1. **Add a categorization rule** so merchant name matches “Costco” map to Groceries (`ai_category_id` for groceries), applied to past and future.
+
+## Open items (not addressed)
+
+1. **Review** whether any non-Costco groceries are still landing in Miscellaneous.
+
+</PROPOSAL>
+
+<CALLS>
+
+# Round 1
+## Invoked tools
+
+1. **`propose_create_categorization_rule`**
+
+```json
+{
+  "rule": {
+    "name_sub_eq": "costco"
   },
-]
+  "ai_category_id": 4,
+  "scope": "future_and_past",
+  "rationale": "Costco should count as groceries."
+}
+```
 
-_BAD_PROPOSE_ONLY = (
-  "# Proposal\n\n"
-  "## Proposed next steps\n\n"
-  "1. **Recategorize** the $500 Whole Foods charge on 2026-04-02 from Dining to Groceries.\n\n"
-  "## Open items (not addressed)\n\n"
-  "1. None.\n"
-)
-
-_BAD_CALLS_NO_RETRIEVE: list[dict[str, Any]] = [
-  {
-    "tool_calls": [
-      {
-        "tool_name": "propose_recategorize_transactions",
-        "args": json.dumps({"transaction_ids": [99999], "target_category": "groceries", "rationale": "fix"}),
-      }
-    ],
+</CALLS>
+""",
+    "output": '{"score": 5, "notes": "Covers the rationalize next step with a concrete proposal and a sensible open item."}',
   },
-]
+  {
+    "name": "bad_hallucinated_merchant",
+    "batch": 1,
+    "input": """<RATIONALIZE>
 
-_SERVICE_FEES_RATIONALIZE_FIXTURE = """# Rationalize What
+# Rationalize What
+
+Explain: Groceries is significantly down this month at $120. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- Groceries: $120 this month (Apr 1–30, 2026).
+
+## Drivers
+
+Several Costco transactions appear miscategorized as Miscellaneous.
+
+## Next steps
+
+Create a categorization rule so Costco is always groceries.
+
+</RATIONALIZE>
+
+<PROPOSAL>
+
+# Proposal
+
+## Proposed next steps
+
+1. **Recategorize** the $500 Whole Foods charge on 2026-04-02 from Dining to Groceries.
+
+## Open items (not addressed)
+
+1. None.
+
+</PROPOSAL>
+
+<CALLS>
+
+# Round 1
+## Invoked tools
+
+1. **`propose_recategorize_transactions`**
+
+```json
+{
+  "transaction_ids": [
+    99999
+  ],
+  "target_category": "groceries",
+  "rationale": "fix"
+}
+```
+
+</CALLS>
+""",
+    "output": '{"score": 1, "notes": "Does not address the Costco miscategorization next step and provides an unrelated action."}',
+  },
+  {
+    "name": "real_service_fees_goal_two_rounds",
+    "batch": 1,
+    "input": """<RATIONALIZE>
+
+# Rationalize What
 
 Explain: Service Fees are significantly down this month. (credit card interest charges) (2026-04-01 to 2026-04-30)
 
@@ -303,9 +184,12 @@ Credit card interest charges decreased.
 
 1. Consider setting a budget for service fees to keep interest charges low.
 2. Review APR / statement details to confirm why interest changed.
-"""
 
-_SERVICE_FEES_PROPOSE_ONLY = """# Proposal
+</RATIONALIZE>
+
+<PROPOSAL>
+
+# Proposal
 
 ## Proposed next steps
 
@@ -315,23 +199,73 @@ _SERVICE_FEES_PROPOSE_ONLY = """# Proposal
 
 1. **Review** credit card account statements and APR details to determine if the interest reduction resulted from a lower average daily balance or a rate change.
 2. **Explore** debt repayment strategies or balance transfer options to eliminate remaining recurring interest fees.
-"""
 
-_SERVICE_FEES_CALLS: list[dict[str, Any]] = [
-  {
-    "tool_calls": [
-      {
-        "args": "{\"category\":\"bills_service_fees\",\"goal_type\":\"spending_budget\",\"rationale\":\"Based on the recent reduction in credit card interest charges, a $250 monthly budget for service fees will help sustain this positive trend and encourage continued debt management.\",\"time_horizon\":\"monthly\",\"goal_title\":\"Limit Service Fees\",\"target_amount\":250}",
-        "tool_name": "propose_create_goal",
-      }
-    ],
+</PROPOSAL>
+
+<CALLS>
+
+# Round 1
+## Invoked tools
+
+1. **`propose_create_goal`**
+
+```json
+{
+  "category": "bills_service_fees",
+  "goal_type": "spending_budget",
+  "rationale": "Based on the recent reduction in credit card interest charges, a $250 monthly budget for service fees will help sustain this positive trend and encourage continued debt management.",
+  "time_horizon": "monthly",
+  "goal_title": "Limit Service Fees",
+  "target_amount": 250
+}
+```
+
+# Round 2
+_No tool calls this round._
+
+</CALLS>
+""",
+    "output": '{"score": 5, "notes": "Creates a concrete budget and captures the remaining review items as open, covering the rationalize next steps."}',
   },
   {
-    "tool_calls": [],
-  },
-]
+    "name": "multi_two_contexts_synthesized",
+    "batch": 1,
+    "input": """Multiple prior rationalize contexts:
 
-_KIDS_ED_RATIONALIZE_FIXTURE = """# Rationalize What
+<CONTEXTS>
+
+<CONTEXT index="1">
+
+<RATIONALIZE>
+
+# Rationalize What
+
+Explain: Service Fees are significantly down this month. (credit card interest charges) (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- Service Fees / interest charges: down vs last month.
+
+## Drivers
+
+Credit card interest charges decreased.
+
+## Next steps
+
+1. Consider setting a budget for service fees to keep interest charges low.
+2. Review APR / statement details to confirm why interest changed.
+
+</RATIONALIZE>
+
+</CONTEXT>
+
+<CONTEXT index="2">
+
+<RATIONALIZE>
+
+# Rationalize What
 
 Explain: Kids education spending this month. (2026-04-01 to 2026-04-30)
 
@@ -344,9 +278,16 @@ Explain: Kids education spending this month. (2026-04-01 to 2026-04-30)
 ## Next steps
 
 Review recurring tutoring charges for consistency.
-"""
 
-_MULTI_SYNTH_PROPOSE = """# Proposal
+</RATIONALIZE>
+
+</CONTEXT>
+
+</CONTEXTS>
+
+<PROPOSAL>
+
+# Proposal
 
 ## Proposed next steps
 
@@ -357,29 +298,91 @@ _MULTI_SYNTH_PROPOSE = """# Proposal
 
 1. **Confirm** whether tutoring amounts align with expected subscription cadence after categorization cleanup.
 
-"""
+</PROPOSAL>
 
-_MULTI_SYNTH_CALLS: list[dict[str, Any]] = [
-  {
-    "tool_calls": [
-      {
-        "tool_name": "propose_create_goal",
-        "args": json.dumps(
-          {
-            "category": "bills_service_fees",
-            "goal_type": "spending_budget",
-            "goal_title": "Limit Service Fees",
-            "target_amount": 250,
-            "time_horizon": "monthly",
-            "rationale": "Align with reduced interest narrative.",
-          }
-        ),
-      },
-    ],
+<CALLS>
+
+# Round 1
+## Invoked tools
+
+1. **`propose_create_goal`**
+
+```json
+{
+  "category": "bills_service_fees",
+  "goal_type": "spending_budget",
+  "goal_title": "Limit Service Fees",
+  "target_amount": 250,
+  "time_horizon": "monthly",
+  "rationale": "Align with reduced interest narrative."
+}
+```
+
+</CALLS>
+""",
+    "output": '{"score": 5, "notes": "Addresses both service-fee budgeting and kids-education tutoring review from the two rationalize contexts."}',
   },
-]
+  {
+    "name": "multi_drops_second_context",
+    "batch": 1,
+    "input": """Multiple prior rationalize contexts:
 
-_MULTI_IGNORES_ONE_CONTEXT_PROPOSE = """# Proposal
+<CONTEXTS>
+
+<CONTEXT index="1">
+
+<RATIONALIZE>
+
+# Rationalize What
+
+Explain: Service Fees are significantly down this month. (credit card interest charges) (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- Service Fees / interest charges: down vs last month.
+
+## Drivers
+
+Credit card interest charges decreased.
+
+## Next steps
+
+1. Consider setting a budget for service fees to keep interest charges low.
+2. Review APR / statement details to confirm why interest changed.
+
+</RATIONALIZE>
+
+</CONTEXT>
+
+<CONTEXT index="2">
+
+<RATIONALIZE>
+
+# Rationalize What
+
+Explain: Kids education spending this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- Kids education: $180 this month.
+
+## Next steps
+
+Review recurring tutoring charges for consistency.
+
+</RATIONALIZE>
+
+</CONTEXT>
+
+</CONTEXTS>
+
+<PROPOSAL>
+
+# Proposal
 
 ## Proposed next steps
 
@@ -389,100 +392,29 @@ _MULTI_IGNORES_ONE_CONTEXT_PROPOSE = """# Proposal
 
 1. None.
 
-"""
+</PROPOSAL>
 
-_MULTI_IGNORES_ONE_CONTEXT_CALLS = list(_MULTI_SYNTH_CALLS)
+<CALLS>
 
-_BOTH_AXIS_TEST_CASES: list[dict[str, Any]] = [
-  {
-    "name": "good_aligned",
-    "ideal_response": {
-      "completeness": {
-        "score": 5,
-        "notes": "Covers the rationalize next step with a concrete proposal and a sensible open item.",
-      },
-      "accuracy": {"score": 5, "notes": "Proposal is grounded in the rationalize context and the tool call matches the text."},
-    },
-    "payload": bundle_checker_input(
-      rationalize_agent_outcome=_RATIONALIZE_FIXTURE.strip(),
-      propose_agent_outcome=_GOOD_PROPOSE_ONLY.strip(),
-      calls=_GOOD_CALLS,
-    ),
-  },
-  {
-    "name": "bad_hallucinated_merchant",
-    "ideal_response": {
-      "completeness": {
-        "score": 1,
-        "notes": "Does not address the Costco miscategorization next step and provides an unrelated action.",
-      },
-      "accuracy": {
-        "score": 1,
-        "notes": "Invents a Whole Foods charge and tool usage is inconsistent with the rationalize context.",
-      },
-    },
-    "payload": bundle_checker_input(
-      rationalize_agent_outcome=_RATIONALIZE_FIXTURE.strip(),
-      propose_agent_outcome=_BAD_PROPOSE_ONLY.strip(),
-      calls=_BAD_CALLS_NO_RETRIEVE,
-    ),
-  },
-  {
-    "name": "real_service_fees_goal_two_rounds",
-    "ideal_response": {
-      "completeness": {
-        "score": 5,
-        "notes": "Creates a concrete budget and captures the remaining review items as open, covering the rationalize next steps.",
-      },
-      "accuracy": {
-        "score": 5,
-        "notes": "Proposal and tool call are grounded in the rationalize context and are actionable for Penny.",
-      },
-    },
-    "payload": bundle_checker_input(
-      rationalize_agent_outcome=_SERVICE_FEES_RATIONALIZE_FIXTURE.strip(),
-      propose_agent_outcome=_SERVICE_FEES_PROPOSE_ONLY.strip(),
-      calls=_SERVICE_FEES_CALLS,
-    ),
-  },
-  {
-    "name": "multi_two_contexts_synthesized",
-    "ideal_response": {
-      "completeness": {
-        "score": 5,
-        "notes": "Addresses both service-fee budgeting and kids-education tutoring review from the two rationalize contexts.",
-      },
-      "accuracy": {
-        "score": 5,
-        "notes": "Grounded in both contexts; propose_create_goal supports the service-fees thread.",
-      },
-    },
-    "payload": bundle_checker_input_multi(
-      contexts=[
-        {"rationalize_agent_outcome": _SERVICE_FEES_RATIONALIZE_FIXTURE.strip(), "calls": []},
-        {"rationalize_agent_outcome": _KIDS_ED_RATIONALIZE_FIXTURE.strip(), "calls": []},
-      ],
-      propose_agent_outcome=_MULTI_SYNTH_PROPOSE.strip(),
-      calls=_MULTI_SYNTH_CALLS,
-    ),
-  },
-  {
-    "name": "multi_drops_second_context",
-    "ideal_response": {
-      "completeness": {
-        "score": 2,
-        "notes": "Ignores the kids-education tutoring thread while only covering service fees.",
-      },
-      "accuracy": {"score": 4, "notes": "Remaining content is grounded but incomplete versus dual-context evidence."},
-    },
-    "payload": bundle_checker_input_multi(
-      contexts=[
-        {"rationalize_agent_outcome": _SERVICE_FEES_RATIONALIZE_FIXTURE.strip(), "calls": []},
-        {"rationalize_agent_outcome": _KIDS_ED_RATIONALIZE_FIXTURE.strip(), "calls": []},
-      ],
-      propose_agent_outcome=_MULTI_IGNORES_ONE_CONTEXT_PROPOSE.strip(),
-      calls=_MULTI_IGNORES_ONE_CONTEXT_CALLS,
-    ),
+# Round 1
+## Invoked tools
+
+1. **`propose_create_goal`**
+
+```json
+{
+  "category": "bills_service_fees",
+  "goal_type": "spending_budget",
+  "goal_title": "Limit Service Fees",
+  "target_amount": 250,
+  "time_horizon": "monthly",
+  "rationale": "Align with reduced interest narrative."
+}
+```
+
+</CALLS>
+""",
+    "output": '{"score": 2, "notes": "Ignores the kids-education tutoring thread while only covering service fees."}',
   },
 ]
 
@@ -495,18 +427,13 @@ CHECKER_USER_MSG_PREFIX = (
 
 
 def _build_output_schema(_types: Any) -> Any:
-  axis = _types.Schema(
+  return _types.Schema(
     type=_types.Type.OBJECT,
     required=["score", "notes"],
     properties={
       "score": _types.Schema(type=_types.Type.INTEGER, description="Integer 1–5."),
       "notes": _types.Schema(type=_types.Type.STRING, description="One short sentence."),
     },
-  )
-  return _types.Schema(
-    type=_types.Type.OBJECT,
-    required=["completeness"],
-    properties={"completeness": axis},
   )
 
 
@@ -530,34 +457,17 @@ For **completeness**, treat **all** **`<RATIONALIZE>`** bodies as the **combined
 
 Grade **only** what is in the message. Do not invent missing data.
 
-**Axis (return ONLY `completeness` with `score` 1–5 and `notes` one short sentence):**
+**Axis (return ONLY `{score, notes}`):**
 
-**`completeness`** — Does **`<PROPOSAL>`** cover what mattered across **all** rationalize evidence?
+**Completeness** — Does **`<PROPOSAL>`** cover what mattered across **all** rationalize evidence?
   - Coverage: Important **Next steps** / drivers appear under “Proposed next steps” **or** are explicitly parked under “Open items” (no silent drops from any context).
   - Concreteness: Items are concrete enough for Penny automation where the rationalize text implies it (budgets/goals, categorization rules, recategorization with ids), not only generic “review your statements” filler unless that is truly all that is warranted.
   - Insightfulness of open items: If something can’t be acted on yet, open items should be specific (what to look for / what info is missing), not vague.
 
 **Calibration:** **5** = no meaningful gap on that axis. **4** = one minor gap. **3** = clear but fixable issue. **2** = several problems. **1** = axis largely failed.
 
-Return **only** the JSON object matching the schema.
+Return **only** the JSON object matching the schema (`score`, `notes`).
 """
-
-
-def _to_completeness_test_cases() -> list[dict[str, Any]]:
-  # Keep the same payload fixtures, but only keep the `completeness` ideal response.
-  out: list[dict[str, Any]] = []
-  for tc in _BOTH_AXIS_TEST_CASES:
-    ideal = tc.get("ideal_response") or None
-    ideal_comp = (
-      {"completeness": ideal["completeness"]}
-      if isinstance(ideal, dict) and "completeness" in ideal
-      else None
-    )
-    out.append({"name": tc["name"], "payload": tc["payload"], "ideal_response": ideal_comp})
-  return out
-
-
-TEST_CASES: list[dict[str, Any]] = _to_completeness_test_cases()
 
 
 class ProposeNextStepsCompletenessCheckerOptimizer:
@@ -621,11 +531,20 @@ class ProposeNextStepsCompletenessCheckerOptimizer:
 
 def main() -> None:
   parser = argparse.ArgumentParser()
-  parser.add_argument("--test", type=str, default="all", help="Test name or 'all'.")
+  parser.add_argument("--test", type=str, default=None, help="Test name, index, or 'all'.")
+  parser.add_argument("--batch", type=int, default=None, help="Run all tests in batch N.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
   parser.add_argument("--max-output-tokens", type=int, default=256)
   parser.add_argument("--thinking-budget", type=int, default=0)
   args = parser.parse_args()
+
+  if args.test is None and args.batch is None:
+    print("Available test cases:")
+    for i, tc in enumerate(TEST_CASES):
+      batch = tc.get("batch")
+      batch_s = str(batch) if isinstance(batch, int) else "—"
+      print(f"  {i}: {tc.get('name')} (batch {batch_s})")
+    return
 
   opt = ProposeNextStepsCompletenessCheckerOptimizer(
     model_name=args.model,
@@ -633,26 +552,38 @@ def main() -> None:
     thinking_budget=args.thinking_budget,
   )
 
-  if args.test == "all":
-    cases = TEST_CASES
+  if args.batch is not None:
+    cases = [(i, tc) for i, tc in enumerate(TEST_CASES) if int(tc.get("batch") or 0) == int(args.batch)]
+    if not cases:
+      raise SystemExit(f"No tests found for batch={args.batch}")
+  elif (args.test or "").strip().lower() == "all":
+    cases = list(enumerate(TEST_CASES))
   else:
-    tc = next((t for t in TEST_CASES if t["name"] == args.test), None)
-    if tc is None:
-      raise SystemExit(f"Unknown test: {args.test!r}")
-    cases = [tc]
+    if (args.test or "").isdigit():
+      idx = int(args.test)
+      if idx < 0 or idx >= len(TEST_CASES):
+        raise SystemExit(f"Test index out of range: {idx}")
+      cases = [(idx, TEST_CASES[idx])]
+    else:
+      idx_tc = next(((i, t) for i, t in enumerate(TEST_CASES) if t.get("name") == args.test), None)
+      if idx_tc is None:
+        raise SystemExit(f"Unknown test: {args.test!r}")
+      cases = [idx_tc]
 
-  for i, tc in enumerate(cases):
-    if i:
+  for run_i, (case_index, tc) in enumerate(cases):
+    if run_i:
       print(f"\n{_TEST_SEPARATOR}\n")
-    print(f"# Test: {tc['name']}\n")
+    batch = tc.get("batch")
+    batch_s = str(batch) if isinstance(batch, int) else "—"
+    print(f"# Test: {case_index}  {tc['name']}  (batch {batch_s})\n")
     _print_section_banner("# LLM Checker Input")
-    print(tc["payload"])
-    result = opt.grade(tc["payload"])
+    print(tc["input"])
+    result = opt.grade(tc["input"])
     _print_section_banner("# LLM Checker Response")
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    if tc.get("ideal_response") is not None:
-      _print_section_banner("# Ideal Response")
-      print(json.dumps(tc["ideal_response"], indent=2, ensure_ascii=False))
+    if tc.get("output") is not None:
+      _print_section_banner("# Expected Output")
+      print(tc["output"])
 
   print(f"\n{_TEST_SEPARATOR}\n")
   print(f"# Total tests: {len(cases)}\n")
