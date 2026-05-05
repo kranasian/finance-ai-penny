@@ -1,0 +1,127 @@
+
+Running batch 4: Exact/equality keys
+
+
+================================================================================
+Running verification test: date_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Whole Foods' as 'groceries' where the transaction date is on a Sunday.
+
+# Transactions
+
+- $45.00 Whole Foods on 2026-04-26.
+- $12.00 Whole Foods on 2026-04-19.
+- $80.00 Whole Foods on 2026-04-12.
+- $22.00 Whole Foods on 2026-04-05.
+
+LLM OUTPUT:
+{
+  "rationale": "All transactions are from Whole Foods and occurred on Sundays (2026-04-26, 2026-04-19, 2026-04-12, 2026-04-05).",
+  "rules_satisfied": true
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "All Whole Foods charges are on a Sunday.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: amount_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Categorize the Netflix subscription charges as 'leisure_entertainment' where each amount is exactly $15.99.
+
+# Transactions
+
+- $15.99 Netflix on 2025-11-03.
+- $16.99 Netflix on 2025-12-03.
+- $15.99 Netflix on 2026-01-03.
+- $15.99 Netflix on 2026-02-03.
+- $15.99 Netflix on 2026-03-03.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction on 2025-12-03 for $16.99 fails the exact amount requirement of $15.99.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Dec 3 transaction is $16.99, and not $15.99.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: account_id_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Amazon' as 'income_business' when the amount is negative.
+
+# Transactions
+
+- -$25.00 AMAZON transaction on November 2, 2025.
+- -$30.00 Amazon transaction on November 4, 2025.
+- -$18.00 Amazon transaction on November 5, 2025.
+- -$22.00 Amazon transaction on November 6, 2025.
+- -$40.00 Amazon transaction on November 7, 2025.
+
+LLM OUTPUT:
+{
+  "rationale": "All transactions are negative Amazon amounts; all 5 transactions are in scope and satisfy the criteria.",
+  "rules_satisfied": true
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "All charges are negative.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: case_insensitive_name_contains
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize the Amazon marketplace transactions as 'shopping_clothing'.
+
+# Transactions
+
+- $12.00 AMAZON MARKETPLACE on 2025-11-01.
+- $9.00 Amazon.com on 2025-11-02.
+- $30.00 Amazon Fresh on 2025-11-03.
+- $14.00 Superamazon Deals on 2025-11-04.
+- $7.00 AMaZoN Prime on 2025-11-05.
+
+LLM OUTPUT:
+{"rationale": "Amazon.com, Amazon Fresh, Superamazon Deals, and AMaZoN Prime do not match the exact name Amazon Marketplace.", "rules_satisfied": false}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Nov 1 transaction is the only one with Amazon Marketplace; all others are with other establishments.",
+  "rules_satisfied": false
+}
+
+================================================================================
+

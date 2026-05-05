@@ -1,0 +1,131 @@
+
+Running batch 4: Exact/equality keys
+
+
+================================================================================
+Running verification test: date_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Whole Foods' as 'groceries' where the transaction date is exactly 2025-11-26 for each matching charge.
+
+# Transactions
+
+- $45.00 Whole Foods on 2025-11-26.
+- $12.00 Whole Foods on 2025-11-25.
+- $80.00 Whole Foods on 2025-11-26.
+- $22.00 Whole Foods on 2025-11-26.
+- $14.00 Whole Foods on 2025-11-26.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction on 2025-11-25 fails the date constraint of exactly 2025-11-26.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "A matching Whole Foods charge is not on transaction date 2025-11-26 as required.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: amount_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Categorize the Netflix subscription charges as 'subscriptions_entertainment' where each amount is exactly $15.99.
+
+# Transactions
+
+- $15.99 Netflix on 2025-11-03.
+- $16.99 Netflix on 2025-12-03.
+- $15.99 Netflix on 2026-01-03.
+- $15.99 Netflix on 2026-02-03.
+- $15.99 Netflix on 2026-03-03.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction on 2025-12-03 has amount $16.99 which does not match the required amount of exactly $15.99.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "One Netflix charge is $16.99, not exactly $15.99 as required for every row.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: account_id_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Amazon' as 'shopping_clothing' where each charge posts to account_id 20 only. Also, create a rule for future similar transactions.
+
+# Transactions
+
+- $25.00 AMAZON transaction on November 2, 2025 (Account 20).
+- $30.00 Amazon transaction on November 4, 2025 (Account 21).
+- $18.00 Amazon transaction on November 5, 2025 (Account 20).
+- $22.00 Amazon transaction on November 6, 2025 (Account 20).
+- $40.00 Amazon transaction on November 7, 2025 (Account 20).
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction on November 4, 2025 has account 21 which violates the account 20 requirement.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "One Amazon charge posts to an account other than 20, conflicting with account_id equal to 20.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: case_insensitive_name_contains
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize the Amazon marketplace transactions as 'shopping_clothing'; the name should contain 'amazon' and matching must be case-insensitive.
+
+# Transactions
+
+- $12.00 AMAZON MARKETPLACE on 2025-11-01.
+- $9.00 Amazon.com on 2025-11-02.
+- $30.00 Amazon Fresh on 2025-11-03.
+- $14.00 Superamazon Deals on 2025-11-04.
+- $7.00 AMaZoN Prime on 2025-11-05.
+
+LLM OUTPUT:
+{
+  "rationale": "All transactions contain the string amazon case-insensitive and follow the required format.",
+  "rules_satisfied": true
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Both marketplace transactions meet case-insensitive name matching and the other rules.",
+  "rules_satisfied": true
+}
+
+================================================================================
+

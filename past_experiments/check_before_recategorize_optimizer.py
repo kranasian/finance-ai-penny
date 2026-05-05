@@ -12,264 +12,338 @@ load_dotenv()
 
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
-  required=["rules_satisfied", "notes"],
+  required=["rationale", "rules_satisfied"],
   properties={
-    "rules_satisfied": types.Schema(
-      type=types.Type.BOOLEAN,
-      description=(
-        "Set first; `notes` must agree: true only with an all-clear message; false only with a failure—same verdict, no mixed signals. "
-        "True iff: ≥1 bullet; non-empty request with mappable rules (never infer from lines if request blank); "
-        "structured rules use one {...} block not [...]-only; each line shows payee, date, amount or their sentinels; "
-        "no transaction ids on lines; if request names account (account_id, account id, posts to account), enforce (Account…) and Account not given = missing; "
-        "every line passes every mapped rule. False if unsure."
-      ),
-    ),
-    "notes": types.Schema(
+    "rationale": types.Schema(
       type=types.Type.STRING,
       description=(
-        "One line, 8–140 chars; must match boolean. Target ≤100 chars. "
-        "Use $ and digits for money and dates like the request (e.g. $16.99, 2025-11-26)—never spell amounts or years in words. "
-        "State the fact only; never say categorized, processed, or successfully unless quoting the request. "
-        "Plain English; no snake_case or filter names; say at most, at least, exactly—not comparison symbols; no JSON/schema talk."
+        "Fact-only string <= 140 chars. If false, lists failure reasons separated by semicolons."
       ),
-      min_length=8,
-      max_length=140,
-      pattern=r"^[^\n]+$",
+    ),
+    "rules_satisfied": types.Schema(
+      type=types.Type.BOOLEAN,
+      description="True if all lines pass all rules; false otherwise.",
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Return only JSON with `rules_satisfied` and `notes`.
-Set `rules_satisfied` first; `notes` must match it (true=all clear, false=failures).
-Ignore category labels.
+SYSTEM_PROMPT = """Return only JSON with `rationale` and `rules_satisfied`.
+Set `rationale` first; `rules_satisfied` must match it (true=all clear, false=failures).
+
+Input you receive:
+- `# Categorize Request`: a categorization-style instruction aimed at a **specific group** of transactions. The **group is defined only by the filters/rules** in that section (who is in scope), not by whether the chosen category is wise.
+- `# Transactions`: a **guess** at which transactions belong to that group—each bullet is a proposed member.
+- Transaction line format: `$Amount Name on YYYY-MM-DD` (example: `$10 McDonald's on 2020-08-30`).
+
+Your job: **membership check**—decide whether `# Transactions` is **correct** for the group implied by `# Categorize Request`. For every bullet, verify it satisfies **every** explicit filter that defines the group. Do not judge category sensibility beyond applying those filters literally.
+- If a filter says transactions must be named as something, the transaction name must match exactly with no added/removed letters or words; comparison is case-insensitive.
+
+Strictness — no exceptions:
+- Every filter in the request is mandatory. Do not waive, blend, round away, or partially apply a rule. Do not pass a line because it is "close enough" or because most lines look fine.
+- `rules_satisfied` is true only if every bullet passes every mapped filter with zero exceptions.
 
 Rules:
-1) Blank request, no bullets, only "(+N more transactions.)", no mappable payee/amount/date rule, or rules only in [...] with no {...} => false.
-2) Validate every bullet line (ignore +more line) against every mapped rule:
-   - name contains/exact (case-insensitive; exact means full payee),
-   - date constraints,
-   - amount constraints,
-   - account only if request says account_id/account id/posts to account.
-3) Account is optional by default. Require account checks only when the request includes an account rule (account_id/account id/posts to account).
-4) If account is in scope, each line must explicitly include account info (e.g., "(Account 20)"); if absent or "Account not given", mark missing-account failure.
-5) Any line error, mismatch, or missing required field/sentinel (e.g., "Amount not given") => false.
-6) If a required field is missing, record that missing-field reason and skip dependent checks for that field.
-7) True only if all listed lines pass all mapped rules.
+1) Map every explicit filter, then validate each bullet against all of them:
+   - Payee/name: Whenever the request fixes how transactions must be named (from '…', must be exactly/named/equal to a literal, or a full multi-word merchant label such as Instacart Costco delivery), extract the establishment from each bullet (strip noise like `transaction`, `on`, dates), fold case, and require a **case-insensitive exact string match** to that required name—same characters and order; PAYPAL equals PayPal; Venmo Transfer fails against Venmo. Fuzzy matching applies **only** if the request explicitly demands it (includes, contains, something like, similar to, does not have to be exactly, the name does not have to be exactly '…'); then follow that wording strictly (usually case-insensitive substring contains).
+   - Amounts and dates: apply bounds literally (at least / more than / exactly / between). No unstated tolerance except where the request uses around/about/approximately/approx (amount band [0.95*X, 1.05*X]; date band Y−2..Y+2 days).
+   - Account: only when the request ties filters to account_id, account, or posts to an account; then every line must show matching account info.
+2) Around amount near $X: [0.95*X, 1.05*X] inclusive.
+3) Around date near Y: Y−2 through Y+2 days inclusive.
+4) Account optional unless the request requires it; missing required account fails.
+5) If any single line breaks any single mapped filter, `rules_satisfied` is false.
 
-Notes:
+Rationale:
 - One line, fact-only, <=140 chars (target <=100), use $ and digits.
-- If false, list all failure reasons found (compact; separated by semicolons).
-- Never say categorized, processed, successfully; no snake_case; use words like at most/at least/exactly (not symbols)."""
+- If false, cite failing line(s) by date and/or amount and the strict rule violated; keep multiple failures compact.
+- Never set true by relaxing a filter; never set false for category taste."""
 
 
 TEST_CASES = [
   {
-    "name": "all_rules_satisfied_simple",
+    "name": "chipotle_under_cap_after_cutoff_all_pass",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Starbucks' where each charge was $50 or less on or after 2025-11-01, setting their category to 'meals_dining_out'.
+Re-categorize all transactions from 'Chipotle' where each charge was $30 or less on or after 2026-03-01, setting their category to 'meals_dining_out'.
 
 # Transactions
 
-- $12.50 Starbucks on 2025-11-10.
-- $4.75 Starbucks on 2025-11-12.""",
+- $11 Chipotle on 2026-03-04.
+- $18 Chipotle on 2026-03-09.
+- $9 Chipotle on 2026-03-14.
+- $30 Chipotle on 2026-03-19.
+- $14 Chipotle on 2026-03-24.""",
     "output": {
+      "rationale": "Every Chipotle line meets the $30 cap and is on or after 2026-03-01.",
       "rules_satisfied": True,
-      "notes": "Every Starbucks transaction and charge shown meets the $50 cap and 2025-11-01 date cutoff.",
     },
   },
   {
-    "name": "rule_violated_by_one_transaction",
+    "name": "delta_baggage_minimum_one_shortfall",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Costco' where each charge was at least $100, setting their category to 'groceries'.
+Re-categorize all transactions from 'Delta Air Lines' as 'travel_airfare' where each charge was at least $55.
 
 # Transactions
 
-- $25.00 AMAZON on 2025-10-25.""",
+- $60 Delta Air Lines on 2026-01-10.
+- $72 Delta Air Lines on 2026-01-11.
+- $45 Delta Air Lines on 2026-01-12.
+- $80 Delta Air Lines on 2026-01-13.
+- $55 Delta Air Lines on 2026-01-14.""",
     "output": {
+      "rationale": "Jan 12 charge is $45 and below the $55 minimum.",
       "rules_satisfied": False,
-      "notes": "Not every Costco transaction has a charge of at least $100 as the groceries rule requires.",
     },
   },
   {
-    "name": "unevaluable_rule_due_to_missing_fields",
+    "name": "freelance_invoice_contains_and_floor",
     "input": """# Categorize Request
 
-Re-categorize transactions as 'income_salary' where the name includes 'payroll' and the amount is at least $1000 for every listed row.
+Re-categorize transactions as 'income_freelance' where the name includes 'invoice' and the amount is at least $300.
 
 # Transactions
 
-- $1440.00 CA State Payroll transaction on 2025-11-18.
-- Amount not given, ACME Corp transaction on November 20, 2025.""",
+- $450 Acme Design Invoice 4412 on 2026-02-03.
+- $320 March invoice — Bright LLC on 2026-02-10.
+- $900 INVOICE PAID Q1 on 2026-02-17.
+- $305 invoice #7721 on 2026-02-24.""",
     "output": {
-      "rules_satisfied": False,
-      "notes": "Cannot evaluate: one transaction has no amount for the payroll and at-least-$1000 charge rules.",
-    },
-  },
-  {
-    "name": "name_eq_requires_exact_match",
-    "input": """# Categorize Request
-
-Categorize these rows as 'meals_dining_out'; for each row the name must be exactly 'Starbucks' (not 'Starbucks Coffee' or any longer string).
-
-# Transactions
-
-- $5.00 Starbucks on 2025-11-05.
-- $6.00 Starbucks Coffee transaction on November 6, 2025.""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "One row fails: name is Starbucks Coffee, not exactly Starbucks (no longer strings).",
-    },
-  },
-  {
-    "name": "date_eq_enforced",
-    "input": """# Categorize Request
-
-Re-categorize all transactions from 'Whole Foods' as 'groceries' where the transaction date is exactly 2025-11-26 for each matching charge.
-
-# Transactions
-
-- $45.00 Whole Foods on 2025-11-26.
-- $12.00 Whole Foods on 2025-11-25.""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "A matching Whole Foods charge is not on transaction date 2025-11-26 as required.",
-    },
-  },
-  {
-    "name": "amount_eq_enforced",
-    "input": """# Categorize Request
-
-Categorize the Netflix subscription charges as 'subscriptions_entertainment' where each amount is exactly $15.99.
-
-# Transactions
-
-- $15.99 Netflix on 2025-11-03.
-- $16.99 Netflix on 2025-12-03.""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "One Netflix charge is $16.99, not exactly $15.99 as required for every row.",
-    },
-  },
-  {
-    "name": "account_id_eq_enforced",
-    "input": """# Categorize Request
-
-Re-categorize all transactions from 'Amazon' as 'shopping_clothing' where each charge posts to account_id 20 only. Also, create a rule for future similar transactions.
-
-# Transactions
-
-- $25.00 AMAZON transaction on November 2, 2025 (Account 20).
-- $30.00 Amazon transaction on November 4, 2025 (Account 21).""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "One Amazon charge posts to an account other than 20, conflicting with account_id equal to 20.",
-    },
-  },
-  {
-    "name": "case_insensitive_name_contains",
-    "input": """# Categorize Request
-
-Re-categorize the Amazon marketplace transactions as 'shopping_clothing'; the name should contain 'amazon' and matching must be case-insensitive.
-
-# Transactions
-
-- $12.00 AMAZON MARKETPLACE on 2025-11-01.
-- $9.00 Amazon.com on 2025-11-02.""",
-    "output": {
+      "rationale": "All lines include invoice wording and are at least $300.",
       "rules_satisfied": True,
-      "notes": "Both marketplace transactions meet case-insensitive name matching and the other rules.",
     },
   },
   {
-    "name": "date_range_lte_gte_combined",
+    "name": "venmo_exact_name_one_line_differs",
     "input": """# Categorize Request
 
-Re-categorize all 'Shell' fuel transactions as 'transport_car_fuel' where the charge date falls from 2025-11-01 through 2025-11-30 inclusive.
+Categorize these rows as 'transfers_peer_to_peer'; for each row the name must be exactly 'Venmo'.
 
 # Transactions
 
-- $40.00 Shell on 2025-11-15.
-- $35.00 Shell on 2025-12-01.""",
+- $40 Venmo on 2026-04-02.
+- $25 Venmo Transfer on 2026-04-03.
+- $60 Venmo on 2026-04-04.
+- $15 Venmo on 2026-04-05.
+- $90 Venmo on 2026-04-06.""",
     "output": {
+      "rationale": "Apr 3 line is Venmo Transfer, not exactly Venmo.",
       "rules_satisfied": False,
-      "notes": "One Shell fuel charge has a charge date outside 2025-11-01 through 2025-11-30.",
     },
   },
   {
-    "name": "amount_range_lte_gte_combined",
+    "name": "sweetgreen_wednesdays_only_all_pass",
     "input": """# Categorize Request
 
-Re-categorize all 'Costco' transactions as 'groceries' where each charge amount is between $50 and $200 inclusive.
+Re-categorize all transactions from 'Sweetgreen' as 'meals_dining_out' where the transaction date is on a Wednesday.
 
 # Transactions
 
-- $75.00 Costco on 2025-11-08.
-- $250.00 Costco on 2025-11-09.""",
+- $16 Sweetgreen on 2026-01-07.
+- $19 Sweetgreen on 2026-01-14.
+- $14 Sweetgreen on 2026-01-21.
+- $22 Sweetgreen on 2026-01-28.""",
     "output": {
-      "rules_satisfied": False,
-      "notes": "One Costco charge amount is outside the $50–$200 inclusive groceries range.",
-    },
-  },
-  {
-    "name": "empty_transactions_array",
-    "input": """# Categorize Request
-
-Re-categorize all 'Lyft' charges as 'transport_public_transit' where each amount is at least $10. Also, create a rule for future similar transactions.
-
-# Transactions
-
-None""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "No Lyft charges were listed, so the at-least-$10 transport rules cannot be verified.",
-    },
-  },
-  {
-    "name": "missing_account_id_required_by_rules",
-    "input": """# Categorize Request
-
-Re-categorize these housing payments as 'shelter_home' where the name contains 'RentCo' and account_id is exactly 99.
-
-# Transactions
-
-- $2100.00 RentCo Apartments transaction on 2025-11-01.""",
-    "output": {
-      "rules_satisfied": False,
-      "notes": "Cannot evaluate: housing payment has no account though the rules require account 99.",
-    },
-  },
-  {
-    "name": "truncated_transactions_more_than_three",
-    "input": """# Categorize Request
-
-Re-categorize all transactions from 'Starbucks' where each charge was $50 or less on or after 2025-11-01, setting their category to 'meals_dining_out'.
-
-# Transactions
-
-- $10.00 Starbucks on 2025-11-05.
-- $20.00 Starbucks on 2025-11-06.
-- $15.00 Starbucks on 2025-11-07.
-(+2 more transactions.)""",
-    "output": {
+      "rationale": "All Sweetgreen charges fall on a Wednesday.",
       "rules_satisfied": True,
-      "notes": "Each listed Starbucks transaction and charge meets the $50 cap and 2025-11-01 cutoff.",
     },
   },
   {
-    "name": "name_may_contain_pipe_and_tab",
+    "name": "hulu_subscription_exact_price_mismatch",
     "input": """# Categorize Request
 
-Re-categorize transactions where the name contains 'ACME' and each charge is at most $100.
+Categorize the Hulu subscription charges as 'leisure_entertainment' where each amount is exactly $14.99.
 
 # Transactions
 
-- $55.00 ACME|UK Retail transaction on 2025-08-01.""",
+- $14.99 Hulu on 2026-05-01.
+- $15.49 Hulu on 2026-06-01.
+- $14.99 Hulu on 2026-07-01.
+- $14.99 Hulu on 2026-08-01.
+- $14.99 Hulu on 2026-09-01.""",
     "output": {
+      "rationale": "Jun 1 charge is $15.49, not $14.99.",
+      "rules_satisfied": False,
+    },
+  },
+  {
+    "name": "paypal_refunds_negative_all_pass",
+    "input": """# Categorize Request
+
+Re-categorize all transactions from 'PayPal' as 'income_refunds' when the amount is negative.
+
+# Transactions
+
+- -$12 PAYPAL transaction on March 3, 2026.
+- -$44 PayPal transaction on March 5, 2026.
+- -$8 paypal transaction on March 7, 2026.
+- -$19 PayPal transaction on March 9, 2026.
+- -$31 PAYPAL transaction on March 11, 2026.""",
+    "output": {
+      "rationale": "Every PayPal line shows a negative amount.",
       "rules_satisfied": True,
-      "notes": "This transaction satisfies name contains ACME and each charge at most $100.",
+    },
+  },
+  {
+    "name": "instacart_costco_delivery_literal_subset_fail",
+    "input": """# Categorize Request
+
+Re-categorize the Instacart Costco delivery transactions as 'groceries'.
+
+# Transactions
+
+- $95 Instacart Costco delivery on 2026-02-18.
+- $40 Instacart on 2026-02-19.
+- $88 Costco same-day delivery on 2026-02-20.
+- $62 Instacart Costco on 2026-02-21.
+- $55 Instacart delivery on 2026-02-22.""",
+    "output": {
+      "rationale": "Only Feb 18 matches Instacart Costco delivery; other payees differ.",
+      "rules_satisfied": False,
+    },
+  },
+  {
+    "name": "duke_energy_under_cap_one_spike",
+    "input": """# Categorize Request
+
+Re-categorize all transactions from 'Duke Energy' as 'utilities_electric' when the charge is under $125.
+
+# Transactions
+
+- $98 Duke Energy on 2026-01-15.
+- $135 Duke Energy on 2026-02-15.
+- $110 Duke Energy on 2026-03-15.
+- $88 Duke Energy on 2026-04-15.
+- $102 Duke Energy on 2026-05-15.""",
+    "output": {
+      "rationale": "Feb 15 Duke Energy charge is $135 and not under $125.",
+      "rules_satisfied": False,
+    },
+  },
+  {
+    "name": "apple_store_spend_band_one_outlier",
+    "input": """# Categorize Request
+
+Re-categorize all transactions from 'Apple Store' as 'shopping_electronics' where each charge amount is between $40 and $160.
+
+# Transactions
+
+- $99 Apple Store on 2026-03-02.
+- $179 Apple Store on 2026-03-09.
+- $45 Apple Store on 2026-03-16.
+- $160 Apple Store on 2026-03-23.
+- $52 Apple Store on 2026-03-30.""",
+    "output": {
+      "rationale": "Mar 9 Apple Store charge is $179 and outside the $40–$160 band.",
+      "rules_satisfied": False,
+    },
+  },
+  {
+    "name": "doordash_min_amount_extra_request_text_fail",
+    "input": """# Categorize Request
+
+Re-categorize all 'DoorDash' charges as 'meals_dining_out' where each amount is at least $18. Also, add a note for future similar deliveries.
+
+# Transactions
+
+- $22 DoorDash on 2026-06-02.
+- $31 DoorDash on 2026-06-03.
+- $17 DoorDash on 2026-06-04.
+- $26 DoorDash on 2026-06-05.
+- $20 DoorDash on 2026-06-06.""",
+    "output": {
+      "rationale": "Jun 4 DoorDash charge is $17 and under the $18 floor.",
+      "rules_satisfied": False,
+    },
+  },
+  {
+    "name": "transit_pass_contains_muni_all_pass",
+    "input": """# Categorize Request
+
+Re-categorize these transit purchases as 'transport_public_transit' where the name contains 'Muni'.
+
+# Transactions
+
+- $2.50 SF Muni Clipper on 2026-04-01.
+- $5 MUNI DAY PASS on 2026-04-02.
+- $2.50 Muni fare on 2026-04-03.
+- $5 Muni Mobile on 2026-04-04.
+- $2.50 SFMUNI on 2026-04-05.""",
+    "output": {
+      "rationale": "Every line includes Muni and matches the transit filter.",
+      "rules_satisfied": True,
+    },
+  },
+  {
+    "name": "blue_bottle_around_mid_august_window",
+    "input": """# Categorize Request
+
+Re-categorize all transactions from 'Blue Bottle' on around August 20, 2026 as 'meals_dining_out'.
+
+# Transactions
+
+- $7 Blue Bottle on 2026-08-18.
+- $9 Blue Bottle on 2026-08-19.
+- $8 Blue Bottle on 2026-08-20.
+- $6 Blue Bottle on 2026-08-21.
+- $11 Blue Bottle on 2026-08-22.""",
+    "output": {
+      "rationale": "All Blue Bottle dates sit within ±2 days of August 20, 2026.",
+      "rules_satisfied": True,
+    },
+  },
+  {
+    "name": "zeta_vendor_pipe_tab_and_around_amount",
+    "input": """# Categorize Request
+
+Re-categorize transactions where the name contains 'ZETA' and each charge is around $80.
+
+# Transactions
+
+- $82 ZETA|Cloud billing on 2026-09-01.
+- $78 ZETA\tPayroll sync on 2026-09-02.
+- $76 ZETA Labs on 2026-09-03.
+- $84 ZETA Holdings on 2026-09-04.
+- $79 ZETA API on 2026-09-05.""",
+    "output": {
+      "rationale": "Each line has ZETA and each amount is within ±5% of $80.",
+      "rules_satisfied": True,
+    },
+  },
+  {
+    "name": "spotify_usa_exact_name_every_line_all_pass",
+    "input": """# Categorize Request
+
+Categorize each line as 'subscriptions_music'; for every line the name must be exactly 'Spotify USA'.
+
+# Transactions
+
+- $11 Spotify USA on 2026-10-01.
+- $11 SPOTIFY USA on 2026-10-02.
+- $11 spotify usa on 2026-10-03.
+- $11 Spotify USA on 2026-10-04.
+- $11 Spotify USA on 2026-10-05.""",
+    "output": {
+      "rationale": "Every payee matches Spotify USA after case folding.",
+      "rules_satisfied": True,
+    },
+  },
+  {
+    "name": "chewy_includes_fuzzy_one_line_without_substring",
+    "input": """# Categorize Request
+
+Re-categorize purchases as 'shopping_pet' where the name includes 'Chewy' and each charge was under $65.
+
+# Transactions
+
+- $44 Chewy on 2026-11-01.
+- $52 CHEWY.COM on 2026-11-02.
+- $38 Autoship Chewy on 2026-11-03.
+- $61 Chewy Goody Box on 2026-11-04.
+- $30 Petco on 2026-11-05.""",
+    "output": {
+      "rationale": "Nov 5 Petco line has no Chewy substring in the name.",
+      "rules_satisfied": False,
     },
   },
 ]
@@ -277,24 +351,28 @@ Re-categorize transactions where the name contains 'ACME' and each charge is at 
 
 BATCHES: dict[int, dict[str, object]] = {
   1: {
-    "name": "Core success/failure + missing fields",
+    "name": "Pass / min fail / contains / exact-name",
     "tests": [0, 1, 2, 3],
   },
   2: {
-    "name": "Empty transactions + additional missing fields",
+    "name": "Contains + min-with-noise + transit contains",
     "tests": [2, 10, 11],
   },
   3: {
-    "name": "Ranges + case-insensitivity",
+    "name": "Compound payee + utility cap + retail band",
     "tests": [7, 8, 9],
   },
   4: {
-    "name": "Exact/equality keys",
+    "name": "Weekday + exact $ + refunds + compound payee",
     "tests": [4, 5, 6, 7],
   },
   5: {
-    "name": "Truncated transactions (>3 shown as compact + more note)",
+    "name": "Around date + delimiter-heavy names",
     "tests": [12, 13],
+  },
+  6: {
+    "name": "Exact-name all-pass + fuzzy includes one miss",
+    "tests": [14, 15],
   },
 }
 
@@ -302,11 +380,11 @@ BATCHES: dict[int, dict[str, object]] = {
 class UpdateTransactionCategoryVerifyOptimizer:
   """Gemini verify client.
 
-  Last live check (14 `TEST_CASES`, all batch indices): `gemini-flash-lite-latest`, tokens 128, thinking 0 — 0 golden
+  Last live check (16 `TEST_CASES`, all batch indices): `gemini-flash-lite-latest`, max_output_tokens 2048 — 0 golden
   mismatches on `rules_satisfied`; notes stayed ≤100 chars without spelled-out money/years or banned filler words.
 
-  Defaults: `gemini-flash-lite-latest`, `thinking_budget=0`, `temperature=0`, `top_p=1`, `max_output_tokens=128`.
-  If JSON truncates, try `max_output_tokens=160`; if verdicts drift, try `gemini-2.0-flash`.
+  Defaults: `gemini-flash-lite-latest`, `temperature=0.2`, `top_p=0.95`, `top_k=40`,
+  `thinking_budget=512`, `max_output_tokens=2048`. If verdicts drift, try `gemini-2.0-flash`.
   """
 
   def __init__(self, model_name: str = "gemini-flash-lite-latest"):
@@ -315,10 +393,11 @@ class UpdateTransactionCategoryVerifyOptimizer:
       raise ValueError("GEMINI_API_KEY environment variable is not set.")
     self.client = genai.Client(api_key=api_key)
     self.model_name = model_name or "gemini-flash-lite-latest"
-    self.thinking_budget = 0
-    self.temperature = 0.0
-    self.top_p = 1.0
-    self.max_output_tokens = 128
+    self.thinking_budget = 512
+    self.temperature = 0.2
+    self.top_p = 0.95
+    self.top_k = 40
+    self.max_output_tokens = 2048
     self.safety_settings = [
       types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
       types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
@@ -333,6 +412,7 @@ class UpdateTransactionCategoryVerifyOptimizer:
     config = types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
+      top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
@@ -478,7 +558,7 @@ def main(test: str = None, batch: int | None = None, model: str | None = None):
 
 # python experiments/check_before_recategorize_optimizer.py --test 0
 # python experiments/check_before_recategorize_optimizer.py --batch 1
-# python experiments/check_before_recategorize_optimizer.py --test all_rules_satisfied_simple
+# python past_experiments/check_before_recategorize_optimizer.py --test chipotle_under_cap_after_cutoff_all_pass
 if __name__ == "__main__":
   import argparse
   parser = argparse.ArgumentParser(
@@ -487,7 +567,7 @@ if __name__ == "__main__":
   parser.add_argument(
     "--test",
     type=str,
-    help="Test name or index to run (e.g., 'all_rules_satisfied_simple' or '0').",
+    help="Test name or index to run (e.g., 'chipotle_under_cap_after_cutoff_all_pass' or '0').",
   )
   parser.add_argument(
     "--batch",

@@ -1,0 +1,127 @@
+
+Running batch 4: Exact/equality keys
+
+
+================================================================================
+Running verification test: date_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Whole Foods' as 'groceries' where the transaction date is on a Sunday.
+
+# Transactions
+
+- $45.00 Whole Foods on 2026-04-26.
+- $12.00 Whole Foods on 2026-04-19.
+- $80.00 Whole Foods on 2026-04-12.
+- $22.00 Whole Foods on 2026-04-05.
+
+LLM OUTPUT:
+{"rationale": "All transactions are Whole Foods on Sundays (2026-04-05, 12, 19, 26).", "rules_satisfied": true}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "All Whole Foods charges are on a Sunday.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: amount_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Categorize the Netflix subscription charges as 'leisure_entertainment' where each amount is exactly $15.99.
+
+# Transactions
+
+- $15.99 Netflix on 2025-11-03.
+- $16.99 Netflix on 2025-12-03.
+- $15.99 Netflix on 2026-01-03.
+- $15.99 Netflix on 2026-02-03.
+- $15.99 Netflix on 2026-03-03.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction on 2025-12-03 is $16.99, which fails the exact $15.99 amount rule.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "One Netflix charge is $16.99, not exactly $15.99 as required for every row.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: account_id_eq_enforced
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Amazon' as 'shopping_clothing' where each charge posts to account_id 20 only. Also, create a rule for future similar transactions.
+
+# Transactions
+
+- $25.00 AMAZON transaction on November 2, 2025 (Account 20).
+- $30.00 Amazon transaction on November 4, 2025 (Account 21).
+- $18.00 Amazon transaction on November 5, 2025 (Account 20).
+- $22.00 Amazon transaction on November 6, 2025 (Account 20).
+- $40.00 Amazon transaction on November 7, 2025 (Account 20).
+
+LLM OUTPUT:
+{
+  "rationale": "Line 2 failed: Account 21 is not Account 20.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "One Amazon charge posts to an account other than 20, conflicting with account_id equal to 20.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: case_insensitive_name_contains
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize the Amazon marketplace transactions as 'shopping_clothing'.
+
+# Transactions
+
+- $12.00 AMAZON MARKETPLACE on 2025-11-01.
+- $9.00 Amazon.com on 2025-11-02.
+- $30.00 Amazon Fresh on 2025-11-03.
+- $14.00 Superamazon Deals on 2025-11-04.
+- $7.00 AMaZoN Prime on 2025-11-05.
+
+LLM OUTPUT:
+{
+  "rationale": "Amazon Fresh and Superamazon Deals do not match the exact name Amazon marketplace or Amazon.com.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Includes other transactions outside of Amazon marketplace.",
+  "rules_satisfied": false
+}
+
+================================================================================
+

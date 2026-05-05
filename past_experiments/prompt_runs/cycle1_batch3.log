@@ -1,0 +1,96 @@
+
+Running batch 3: Ranges + case-insensitivity
+
+
+================================================================================
+Running verification test: case_insensitive_name_contains
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize the Amazon marketplace transactions as 'shopping_clothing'.
+
+# Transactions
+
+- $12.00 AMAZON MARKETPLACE on 2025-11-01.
+- $9.00 Amazon.com on 2025-11-02.
+- $30.00 Amazon Fresh on 2025-11-03.
+- $14.00 Superamazon Deals on 2025-11-04.
+- $7.00 AMaZoN Prime on 2025-11-05.
+
+LLM OUTPUT:
+{
+  "rationale": "Amazon Fresh and Superamazon Deals do not match the exact name Amazon marketplace or Amazon.com.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Includes other transactions outside of Amazon marketplace.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: date_range_lte_gte_combined
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all 'Shell' fuel transactions as 'transport_car_fuel' where the charge date falls from 2025-11-01 through 2025-11-30.
+
+# Transactions
+
+- $40.00 Shell on 2025-11-15.
+- $35.00 Shell on 2025-12-01.
+- $22.00 Shell on 2025-11-01.
+- $18.00 Shell on 2025-11-30.
+- $27.00 Shell on 2025-11-10.
+
+LLM OUTPUT:
+{"rationale": "Transaction on 2025-12-01 is outside the date range 2025-11-01 to 2025-11-30.", "rules_satisfied": false}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "One Shell fuel charge has a charge date outside 2025-11-01 through 2025-11-30.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: amount_range_lte_gte_combined
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all 'Costco' transactions as 'groceries' where each charge amount is between $50 and $200.
+
+# Transactions
+
+- $75.00 Costco on 2025-11-08.
+- $250.00 Costco on 2025-11-09.
+- $55.00 Costco on 2025-11-10.
+- $200.00 Costco on 2025-11-11.
+- $120.00 Costco on 2025-11-12.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction $250.00 on 2025-11-09 exceeds the $200.00 limit.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "One Costco charge amount is outside the $50\u2013$200 groceries range.",
+  "rules_satisfied": false
+}
+
+================================================================================
+

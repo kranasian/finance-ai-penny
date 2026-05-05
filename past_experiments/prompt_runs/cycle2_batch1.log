@@ -1,0 +1,127 @@
+
+Running batch 1: Core success/failure + missing fields
+
+
+================================================================================
+Running verification test: all_rules_satisfied_simple
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Starbucks' where each charge was $50 or less on or after 2025-11-01, setting their category to 'meals_dining_out'.
+
+# Transactions
+
+- $12.50 Starbucks on 2025-11-10.
+- $4.75 Starbucks on 2025-11-12.
+- $18.00 Starbucks on 2025-11-15.
+- $49.99 Starbucks on 2025-11-20.
+- $7.25 Starbucks on 2025-11-30.
+
+LLM OUTPUT:
+{
+  "rationale": "All 5 transactions match the Starbucks name, date >= 2025-11-01, and amount <= $50 criteria.",
+  "rules_satisfied": true
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Every Starbucks transaction and charge shown meets the $50 cap and 2025-11-01 date cutoff.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: rule_violated_by_one_transaction
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Costco' where each charge was at least $100, setting their category to 'groceries'.
+
+# Transactions
+
+- $120.00 Costco on 2025-10-10.
+- $160.00 Costco on 2025-10-11.
+- $99.99 Costco on 2025-10-12.
+- $140.00 Costco on 2025-10-13.
+- $180.00 Costco on 2025-10-14.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction on 2025-10-12 for $99.99 fails the minimum amount rule of $100.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Oct 12 transaction is less than $100.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: unevaluable_rule_due_to_missing_fields
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize transactions as 'income_salary' where the name includes 'payroll' and the amount is at least $1000.
+
+# Transactions
+
+- $1440.00 CA State Payroll transaction on 2025-11-18.
+- $1800.00 Payroll Services Inc transaction on 2025-11-21.
+- $2500.00 Monthly Payroll transaction on 2025-11-22.
+- $1300.00 Payroll Direct Deposit transaction on 2025-11-23.
+
+LLM OUTPUT:
+{
+  "rationale": "All transactions contain 'payroll' and meet the $1000 minimum amount requirement.",
+  "rules_satisfied": true
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "All transactions include Payroll and are at least $1000.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: name_eq_requires_exact_match
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Categorize these rows as 'meals_dining_out'; for each row the name must be exactly 'Starbucks'.
+
+# Transactions
+
+- $5.00 Starbucks on 2025-11-05.
+- $6.00 Starbucks Coffee on 2025-11-06.
+- $4.50 Starbucks on 2025-11-07.
+- $3.75 Starbucks on 2025-11-08.
+- $7.10 Starbucks on 2025-11-09.
+
+LLM OUTPUT:
+{"rationale": "Row 2 (Starbucks Coffee) fails name exact match rule; all other rows satisfy the Starbucks name requirement.", "rules_satisfied": false}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Nov 6 transaction is with 'Starbucks Coffee' and not 'Starbucks'.",
+  "rules_satisfied": false
+}
+
+================================================================================
+

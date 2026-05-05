@@ -1,0 +1,131 @@
+
+Running batch 1: Core success/failure + missing fields
+
+
+================================================================================
+Running verification test: all_rules_satisfied_simple
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Starbucks' where each charge was $50 or less on or after 2025-11-01, setting their category to 'meals_dining_out'.
+
+# Transactions
+
+- $12.50 Starbucks on 2025-11-10.
+- $4.75 Starbucks on 2025-11-12.
+- $18.00 Starbucks on 2025-11-15.
+- $49.99 Starbucks on 2025-11-20.
+- $7.25 Starbucks on 2025-11-30.
+
+LLM OUTPUT:
+{
+  "rationale": "All transactions match the Starbucks name, date, and amount criteria.",
+  "rules_satisfied": true
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Every Starbucks transaction and charge shown meets the $50 cap and 2025-11-01 date cutoff.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: rule_violated_by_one_transaction
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all transactions from 'Costco' where each charge was at least $100, setting their category to 'groceries'.
+
+# Transactions
+
+- $120.00 Costco on 2025-10-10.
+- $160.00 Costco on 2025-10-11.
+- $99.99 Costco on 2025-10-12.
+- $140.00 Costco on 2025-10-13.
+- $180.00 Costco on 2025-10-14.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction on 2025-10-12 for $99.99 is below the minimum amount of $100.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Not every Costco transaction has a charge of at least $100 as the groceries rule requires.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: unevaluable_rule_due_to_missing_fields
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize transactions as 'income_salary' where the name includes 'payroll' and the amount is at least $1000 for every listed row.
+
+# Transactions
+
+- $1440.00 CA State Payroll transaction on 2025-11-18.
+- Amount not given, ACME Corp transaction on November 20, 2025.
+- $1800.00 Payroll Services Inc transaction on 2025-11-21.
+- $2500.00 Monthly Payroll transaction on 2025-11-22.
+- $1300.00 Payroll Direct Deposit transaction on 2025-11-23.
+
+LLM OUTPUT:
+{
+  "rationale": "Line 2 missing amount; line 2 payee ACME Corp does not contain payroll; line 2 fails amount at least $1000 rule.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "Cannot evaluate: one transaction has no amount for the payroll and at-least-$1000 charge rules.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: name_eq_requires_exact_match
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Categorize these rows as 'meals_dining_out'; for each row the name must be exactly 'Starbucks' (not 'Starbucks Coffee' or any longer string).
+
+# Transactions
+
+- $5.00 Starbucks on 2025-11-05.
+- $6.00 Starbucks Coffee transaction on November 6, 2025.
+- $4.50 Starbucks on 2025-11-07.
+- $3.75 Starbucks on 2025-11-08.
+- $7.10 Starbucks on 2025-11-09.
+
+LLM OUTPUT:
+{
+  "rationale": "Row 2 failed because the name Starbucks Coffee is not exactly Starbucks.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "One row fails: name is Starbucks Coffee, not exactly Starbucks (no longer strings).",
+  "rules_satisfied": false
+}
+
+================================================================================
+

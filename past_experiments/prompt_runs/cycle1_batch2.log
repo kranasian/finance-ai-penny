@@ -1,0 +1,92 @@
+
+Running batch 2: Empty transactions + additional missing fields
+
+
+================================================================================
+Running verification test: unevaluable_rule_due_to_missing_fields
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize transactions as 'income_salary' where the name includes 'payroll' and the amount is at least $1000.
+
+# Transactions
+
+- $1440.00 CA State Payroll transaction on 2025-11-18.
+- $1800.00 Payroll Services Inc transaction on 2025-11-21.
+- $2500.00 Monthly Payroll transaction on 2025-11-22.
+- $1300.00 Payroll Direct Deposit transaction on 2025-11-23.
+
+LLM OUTPUT:
+{"rationale": "All four transactions contain 'payroll' and exceed $1000.", "rules_satisfied": true}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "All transactions include Payroll and are at least $1000.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: empty_transactions_array
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize all 'Lyft' charges as 'transport_public_transit' where each amount is at least $10. Also, create a rule for future similar transactions.
+
+# Transactions
+
+- $12.00 Lyft on 2025-11-02.
+- $18.50 Lyft on 2025-11-03.
+- $9.00 Lyft on 2025-11-04.
+- $14.00 Lyft on 2025-11-05.
+- $11.00 Lyft on 2025-11-06.
+
+LLM OUTPUT:
+{
+  "rationale": "Transaction $9.00 on 2025-11-04 fails the $10 minimum amount requirement.",
+  "rules_satisfied": false
+}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "At least one Lyft charge is below $10, so the at-least-$10 transport rule fails.",
+  "rules_satisfied": false
+}
+
+================================================================================
+
+
+================================================================================
+Running verification test: missing_account_id_required_by_rules
+================================================================================
+
+LLM INPUT:
+# Categorize Request
+
+Re-categorize these housing payments as 'shelter_home' where the name contains 'RentCo'.
+
+# Transactions
+
+- $2100.00 RentCo Apartments transaction on 2025-11-01.
+- $2200.00 RentCo East transaction on 2025-12-01.
+- $2150.00 RentCo South transaction on 2026-01-01.
+- $2250.00 RentCo West transaction on 2026-02-01.
+- $2300.00 RentCo North transaction on 2026-03-01.
+
+LLM OUTPUT:
+{"rationale": "All transactions contain RentCo in the name and are valid.", "rules_satisfied": true}
+
+EXPECTED OUTPUT (compact):
+{
+  "rationale": "All housing payments include 'RentCo'.",
+  "rules_satisfied": true
+}
+
+================================================================================
+
