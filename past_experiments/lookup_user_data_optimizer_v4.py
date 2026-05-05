@@ -17,12 +17,25 @@ load_dotenv()
 SYSTEM_PROMPT = """Your name is "Penny" and you are a helpful AI specialized in code generation. **You only output python code.**
 
 ## Task & Rules
-1. **Output**: Write `process_input() -> tuple[bool, str]`. Keep code concise. Minimal comments.
-2. **Tools**: Use `IMPLEMENTED_FUNCTIONS` & `IMPLEMENTED_DATE_FUNCTIONS`. `import datetime` is assumed.
-3. **Matching**: Use partial case-insensitive matching for Account/Subscription names.
-4. **Safety**: Always check `if df.empty: ...` before accessing data.
-5. **Output Collection**: Accumulate all output strings in a list and join with newlines. Return the joined string as the second element of the tuple.
-6. **Date Ranges**: When referring to "past/next n months/weeks", **always exclude the current month/week**.
+1. Output only raw python code for `process_input() -> tuple[bool, str]`. Do not use markdown fences.
+2. Use only `IMPLEMENTED_FUNCTIONS` and `IMPLEMENTED_DATE_FUNCTIONS`. `import datetime` is assumed.
+3. Keep code concise and readable. Do not include code comments.
+4. Use partial case-insensitive matching for account/subscription/merchant names when filtering by name.
+5. Always guard DataFrame access with `if df.empty` checks.
+6. Collect response lines in a list and return `chr(10).join(output_lines)`.
+7. Whole-number fuzzy amount rule: if user references whole-number amount `X`, match `X - 0.50 <= amount <= X + 0.49` (inclusive). Keep amount sign; do not use absolute value.
+8. Date range rule: for "past/next n months/weeks", always exclude current month/week.
+9. Do not hardcode calendar dates. Use `today = datetime.now()` and derive ranges from date helpers.
+10. For year-based ranges, use `get_after_periods(..., 'yearly', ...)` with `get_start_of_year`/`get_end_of_year`.
+11. For discretionary spending, filter by `category` values starting with `meals`, `shopping`, `leisure`, plus exact `donations_gifts`.
+12. Do not add unnecessary dataframe coercions (for example `pd.to_datetime`) unless required by explicit runtime errors.
+13. After every retrieve_* call, handle `df.empty` before any column selection, filtering, or string operations.
+14. Do not use `abs()` for amounts unless the user explicitly asks for absolute values.
+15. Prefer helper formatters (`utter_transaction_total`, `utter_forecast_amount`, `utter_subscription_totals`) over manual amount-string formatting when applicable.
+16. Build end-of-period dates from the computed start anchor when possible (for example `end = get_end_of_year(start)`).
+17. Preserve requested granularity in responses (for example weekly query -> weekly breakdown, monthly query -> monthly breakdown).
+18. If the user asks only for total spending/income, return totals with `utter_transaction_total` instead of manual amount strings.
+19. If a user query closely matches an example intent, preserve the example’s filtering and date-range structure.
    - **Past n months**: Start = `get_start_of_month(get_after_periods(today, 'monthly', -n))`, End = `get_end_of_month(get_after_periods(today, 'monthly', -1))`.
    - **Past n weeks**: Start = `get_start_of_week(get_after_periods(today, 'weekly', -n))`, End = `get_end_of_week(get_after_periods(today, 'weekly', -1))`.
    - **Next n months**: Start = `get_start_of_month(get_after_periods(today, 'monthly', 1))`, End = `get_end_of_month(get_after_periods(today, 'monthly', n))`.
@@ -110,7 +123,7 @@ def process_input():
     return True, chr(10).join(output_lines)
 ```
 
-input: User: Can I afford $200 for concert tickets next week and what was my past few fun things I spent on?
+input: User: Can I afford $200 for concert tickets next week and what were my most recent fun expenses?
 output:
 ```python
 def process_input():
@@ -150,99 +163,60 @@ def process_input():
     return True, chr(10).join(output_lines)
 ```
 
-input: User: List subscriptions paid last month.
+input: User: How many $50 AT&T payments have I had this year?
 output:
 ```python
 def process_input():
     output_lines = []
-    subs = retrieve_subscriptions()
-    if subs.empty:
-        return True, "No subscriptions."
-    
-    start = get_start_of_month(get_after_periods(datetime.now(), 'monthly', -1))
-    end = get_end_of_month(start)
-    
-    subs = subs[(subs['date'] >= start) & (subs['date'] <= end)]
-    if subs.empty:
-        return True, "No subscriptions paid last month."
-        
-    output_lines.append("Subscriptions paid last month:")
-    output_lines.append(subscription_names_and_amounts(subs, "- {amount} {subscription_name} on {date}."))
-    output_lines.append(utter_subscription_totals(subs, "Total: {total_amount}"))
+    start = get_start_of_year(datetime.now())
+    end = get_end_of_year(start)
+
+    sp = retrieve_spending_transactions()
+    if sp.empty:
+        return True, "No spending transactions found this year."
+
+    sp = sp[(sp['date'] >= start) & (sp['date'] <= end)]
+    if sp.empty:
+        return True, "No spending transactions found this year."
+
+    sp = sp[
+        sp['transaction_name'].str.lower().str.contains('at&t', na=False) &
+        (sp['amount'] >= 49.50) &
+        (sp['amount'] <= 50.49)
+    ]
+
+    if sp.empty:
+        return True, "There have been 0 $50 AT&T payments so far this year."
+
+    output_lines.append(f"There have been {len(sp)} $50 AT&T payments so far this year.")
+    output_lines.append(transaction_names_and_amounts(
+        sp.sort_values('date'),
+        "- {transaction_name}: {amount} on {date} (account_id: {account_id}, transaction_id: {transaction_id})",
+    ))
     return True, chr(10).join(output_lines)
 ```
 
-input: User: How did my income compare to my discretionary spending last year?
+input: User: Compare my income and discretionary spending last year.
 output:
 ```python
 def process_input():
-    output_lines = []
     start = get_start_of_year(get_after_periods(datetime.now(), 'yearly', -1))
     end = get_end_of_year(start)
-    
     inc = retrieve_income_transactions()
     sp = retrieve_spending_transactions()
-    
     inc = inc[(inc['date'] >= start) & (inc['date'] <= end)] if not inc.empty else pd.DataFrame()
     sp = sp[(sp['date'] >= start) & (sp['date'] <= end)] if not sp.empty else pd.DataFrame()
-    
-    if not sp.empty:
-        sp = sp[sp['category'].str.startswith('meals') | sp['category'].str.startswith('shopping') | sp['category'].str.startswith('leisure') | (sp['category'] == 'donations_gifts')]
-    else:
-        sp = pd.DataFrame()
-    
+    sp = sp[sp['category'].str.startswith('meals') | sp['category'].str.startswith('shopping') | sp['category'].str.startswith('leisure') | (sp['category'] == 'donations_gifts')] if not sp.empty else pd.DataFrame()
     if inc.empty and sp.empty:
         return True, "No data last year."
-        
-    i_val = inc['amount'].sum() if not inc.empty else 0
-    s_val = sp['amount'].sum() if not sp.empty else 0
-    diff = i_val - s_val
-    
-    output_lines.append(f"Last Year ({start.year}):")
-    output_lines.append(f"Income: {utter_absolute_amount(i_val, '{amount}')}")
-    output_lines.append("Discretionary Spending:")
-    
-    if not sp.empty:
-        for cat in sorted(sp['category'].unique()):
-            cat_sp = sp[sp['category'] == cat]
-            cat_val = cat_sp['amount'].sum()
-            output_lines.append(f"  - {cat}: {utter_absolute_amount(cat_val, '{amount}')}")
-    else:
-        output_lines.append("  (No discretionary spending)")
-    
-    output_lines.append(f"Total Discretionary: {utter_absolute_amount(s_val, '{amount}')}")
-    output_lines.append(f"Net: {utter_absolute_amount(diff, '{amount_with_direction}')}")
-    return True, chr(10).join(output_lines)
+    inc_total = inc['amount'].sum() if not inc.empty else 0
+    sp_total = sp['amount'].sum() if not sp.empty else 0
+    return True, chr(10).join([
+        f"Income: {utter_absolute_amount(inc_total, '{amount}')}",
+        f"Discretionary Spending: {utter_absolute_amount(sp_total, '{amount}')}",
+        f"Net: {utter_absolute_amount(inc_total - sp_total, '{amount_with_direction}')}",
+    ])
 ```
-
-input: User: Project my savings for the next 4 weeks.
-output:
-```python
-def process_input():
-    output_lines = []
-    today = datetime.now()
-    inc = retrieve_income_forecasts('weekly')
-    sp = retrieve_spending_forecasts('weekly')
-    
-    if inc.empty and sp.empty:
-        return True, "No forecasts."
-    
-    start_next = get_start_of_week(get_after_periods(today, 'weekly', 1))
-    dates = [get_after_periods(start_next, 'weekly', i) for i in range(4)]
-    
-    total_sav = 0
-    output_lines.append("Projected Savings (Next 4 Weeks):")
-    
-    for d in dates:
-        i_wk = inc[inc['start_date'] == d]['forecasted_amount'].sum() if not inc.empty else 0
-        s_wk = sp[sp['start_date'] == d]['forecasted_amount'].sum() if not sp.empty else 0
-        sav = i_wk - s_wk
-        total_sav += sav
-        d_str = get_date_string(d)
-        output_lines.append(f"- Wk of {d_str}: Income {utter_absolute_amount(i_wk, '{income_total_amount}')} - Spending {utter_absolute_amount(s_wk, '{spending_total_amount}')} = Savings {utter_absolute_amount(sav, '{amount_with_direction}')}")
-        
-    output_lines.append(f"Total Projected Savings: {utter_absolute_amount(total_sav, '{amount_with_direction}')}")
-    return True, chr(10).join(output_lines)
 """
 
 
@@ -264,9 +238,10 @@ class LookupUserDataOptimizer:
     self.model_name = model_name
     
     # Generation Configuration Constants
+    self.top_k = 40
     self.temperature = 0.6
     self.top_p = 0.95
-    self.max_output_tokens = 4096
+    self.max_output_tokens = 2048
     
     # Safety Settings
     self.safety_settings = [
@@ -346,7 +321,7 @@ class LookupUserDataOptimizer:
     return today.strftime("%A, %B %d, %Y")
 
   
-  def generate_response(self, last_user_request: str, user_id: int = 1) -> str:
+  def generate_response(self, last_user_request: str, user_id: int = 1) -> dict:
     """
     Generate a response using Gemini API for financial planning.
     
@@ -355,7 +330,7 @@ class LookupUserDataOptimizer:
       user_id: User ID for building dynamic sections (default: 1)
       
     Returns:
-      Generated code as a string
+      Dict with generated code and thought_summary
     """
     # Build dynamic ACCOUNT_NAMES section for this user
     account_names_section = self._build_account_names_section(user_id)
@@ -377,16 +352,21 @@ output:""")
     contents = [types.Content(role="user", parts=[request_text])]
     
     generate_content_config = types.GenerateContentConfig(
+      top_k=self.top_k,
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=full_system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget),
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=self.thinking_budget,
+        include_thoughts=True,
+      ),
     )
 
     # Generate response
     output_text = ""
+    thought_summary = ""
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
@@ -394,8 +374,19 @@ output:""")
     ):
       if chunk.text is not None:
         output_text += chunk.text
-    
-    return output_text
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    thought_summary += part.text
+
+    return {
+      "response": output_text,
+      "thought_summary": thought_summary.strip(),
+    }
   
   
   def get_available_models(self):
@@ -463,21 +454,30 @@ def _run_test_with_logging(last_user_request: str, lookup_data: LookupUserDataOp
   print()
   
   result = lookup_data.generate_response(last_user_request, user_id)
+  response_text = result["response"]
+  thought_summary = result["thought_summary"]
   
   # Print the output
   print("=" * 80)
   print("LLM OUTPUT:")
   print("=" * 80)
-  print(result)
+  print(response_text)
   print("=" * 80)
   print()
+
+  if thought_summary:
+    print("-" * 80)
+    print("THOUGHT SUMMARY:")
+    print(thought_summary)
+    print("-" * 80)
+    print()
   
   # Execute the generated code in sandbox
   print("=" * 80)
   print("SANDBOX EXECUTION:")
   print("=" * 80)
   try:
-    success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(result, user_id)
+    success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(response_text, user_id)
     
     print(f"Success: {success}")
     print()
@@ -492,298 +492,265 @@ def _run_test_with_logging(last_user_request: str, lookup_data: LookupUserDataOp
     print(traceback.format_exc())
   print("=" * 80)
   
-  return result
+  return response_text
 
 
-def test_hows_my_accounts_doing(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for "how's my accounts doing?" scenario.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "how's my accounts doing?"
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_how_is_my_net_worth_doing_lately(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for "how is my net worth doing lately?" scenario with conversational distractions.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "how is my net worth doing lately?"
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_analyze_income_and_spending_patterns_for_savings(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for analyzing recent income and spending patterns to identify areas where spending can be reduced.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "Analyze recent income and spending patterns across all accounts to identify areas where spending can be immediately reduced to facilitate saving money."
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_compare_projected_income_across_months(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for comparing projected income this month to previous months.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "Compare my projected income this month to my projected income last month, my projected income from two months ago, and my projected income from three months ago."
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_checking_account_sufficient_for_rent(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for checking if checking account has enough funds to pay rent next month.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "Does my checking account have enough to pay for my rent next month?"
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-def test_list_subscriptions_last_month(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for listing subscriptions paid last month (exercises new example).
-  """
-  last_user_request = "List my subscriptions from last month."
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_list_all_streaming_subscriptions(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for listing all streaming subscriptions (exercises new example).
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "List all streaming subscription I have."
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_afford_concert_tickets_and_past_fun_spending(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for checking affordability of concert tickets and listing past fun spending.
-  This tests the updated example in the SYSTEM_PROMPT.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "Can I afford $200 for concert tickets next week and what was my past few fun things I spent on?"
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_comprehensive_financial_health_overview(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for providing a comprehensive overview of current account balances, 
-  recent income, and spending patterns to assess financial health.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "Provide a comprehensive overview of current account balances, recent income, and spending patterns to assess financial health."
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_discretionary_spending_example_snippet(user_id: int = None):
-  """
-  Test method that directly tests the discretionary spending example snippet.
-  
-  Args:
-    user_id: User ID for sandbox execution (default: HeavyDataUser ID from database)
-  """
-  # Get HeavyDataUser ID if not provided
-  if user_id is None:
-    user_id = _get_heavy_data_user_id()
-  
-  # Extract the code snippet from the example
-  example_code = """def process_input():
+TEST_CASES = [
+  {
+    "user": "List all my accounts.",
+    "ideal_output": """def process_input():
     output_lines = []
+    dep = retrieve_depository_accounts()
+    cre = retrieve_credit_accounts()
+
+    if dep.empty and cre.empty:
+        return True, "No accounts found."
+
+    if not dep.empty:
+        output_lines.append("Depository Accounts:")
+        output_lines.append(account_names_and_balances(dep, "- {account_name} (account_id: {account_id}): {balance_current}"))
+
+    if not cre.empty:
+        output_lines.append("Credit/Loan Accounts:")
+        output_lines.append(account_names_and_balances(cre, "- {account_name} (account_id: {account_id}): {balance_current}"))
+
+    return True, chr(10).join(output_lines)""",
+  },
+  {
+    "user": "What is my net worth right now?",
+    "ideal_output": """def process_input():
+    output_lines = []
+    dep = retrieve_depository_accounts()
+    cre = retrieve_credit_accounts()
+
+    if dep.empty and cre.empty:
+        return True, "No accounts found."
+
+    assets_total = dep['balance_current'].sum() if not dep.empty else 0
+    liabilities_total = cre['balance_current'].sum() if not cre.empty else 0
+    net_worth = assets_total - liabilities_total
+
+    output_lines.append(f"Assets: {utter_absolute_amount(assets_total, '{amount_with_direction}')}")
+    output_lines.append(f"Liabilities: {utter_absolute_amount(liabilities_total, '{amount_with_direction}')}")
+    output_lines.append(f"Net Worth: {utter_absolute_amount(net_worth, '{amount_with_direction}')}")
+    return True, chr(10).join(output_lines)""",
+  },
+  {
+    "user": "How much did I spend on groceries in the past 2 months?",
+    "ideal_output": """def process_input():
+    start = get_start_of_month(get_after_periods(datetime.now(), 'monthly', -2))
+    end = get_end_of_month(get_after_periods(datetime.now(), 'monthly', -1))
+    sp = retrieve_spending_transactions()
+    if sp.empty:
+        return True, "No spending transactions found."
+
+    sp = sp[(sp['date'] >= start) & (sp['date'] <= end)]
+    sp = sp[sp['category'] == 'meals_groceries'] if not sp.empty else pd.DataFrame()
+    if sp.empty:
+        return True, "No grocery spending found in the past 2 months."
+    return True, utter_transaction_total(sp, "Total grocery spending: {spending_total_amount}")""",
+  },
+  {
+    "user": "Show my top 5 largest spending transactions from last month.",
+    "ideal_output": """def process_input():
+    start = get_start_of_month(get_after_periods(datetime.now(), 'monthly', -1))
+    end = get_end_of_month(start)
+    sp = retrieve_spending_transactions()
+    if sp.empty:
+        return True, "No spending transactions found."
+
+    sp = sp[(sp['date'] >= start) & (sp['date'] <= end)]
+    if sp.empty:
+        return True, "No spending transactions found last month."
+
+    top_sp = sp.sort_values('amount', ascending=False).head(5)
+    output_lines = ["Top 5 largest spending transactions from last month:"]
+    output_lines.append(transaction_names_and_amounts(top_sp, "- {transaction_name}: {amount} on {date} in {category} (account_id: {account_id}, transaction_id: {transaction_id})"))
+    return True, chr(10).join(output_lines)""",
+  },
+  {
+    "user": "How many $50 AT&T payments have I had this year?",
+    "ideal_output": """def process_input():
+    start = get_start_of_year(datetime.now())
+    end = get_end_of_year(start)
+    sp = retrieve_spending_transactions()
+    if sp.empty:
+        return True, "No spending transactions found."
+
+    sp = sp[(sp['date'] >= start) & (sp['date'] <= end)]
+    sp = sp[
+        sp['transaction_name'].str.lower().str.contains('at&t', na=False) &
+        (sp['amount'] >= 49.50) &
+        (sp['amount'] <= 50.49)
+    ] if not sp.empty else pd.DataFrame()
+    return True, f"There have been {len(sp)} $50 AT&T payments so far this year." if not sp.empty else "There have been 0 $50 AT&T payments so far this year." """,
+  },
+  {
+    "user": "List all subscriptions paid last month and total them.",
+    "ideal_output": """def process_input():
+    subs = retrieve_subscriptions()
+    if subs.empty:
+        return True, "No subscriptions found."
+
+    start = get_start_of_month(get_after_periods(datetime.now(), 'monthly', -1))
+    end = get_end_of_month(start)
+    subs = subs[(subs['date'] >= start) & (subs['date'] <= end)]
+    if subs.empty:
+        return True, "No subscriptions paid last month."
+
+    output_lines = ["Subscriptions paid last month:"]
+    output_lines.append(subscription_names_and_amounts(subs, "- {subscription_name}: {amount} on {date}"))
+    output_lines.append(utter_subscription_totals(subs, "Total: {total_amount}"))
+    return True, chr(10).join(output_lines)""",
+  },
+  {
+    "user": "What are my projected expenses for the next 3 months?",
+    "ideal_output": """def process_input():
+    sp = retrieve_spending_forecasts(granularity='monthly')
+    if sp.empty:
+        return True, "No spending forecasts found."
+
+    today = datetime.now()
+    start = get_start_of_month(get_after_periods(today, 'monthly', 1))
+    end = get_end_of_month(get_after_periods(today, 'monthly', 3))
+    sp = sp[(sp['start_date'] >= start) & (sp['start_date'] <= end)]
+    if sp.empty:
+        return True, "No spending forecasts for the next 3 months."
+
+    output_lines = ["Projected expenses for the next 3 months:"]
+    output_lines.append(forecast_dates_and_amount(sp.sort_values('start_date'), "- {start_date}: {forecasted_amount}"))
+    output_lines.append(utter_forecast_amount(sp['forecasted_amount'].sum(), "Total projected spending: {spending_total_amount}"))
+    return True, chr(10).join(output_lines)""",
+  },
+  {
+    "user": "Project my savings for the next 4 weeks.",
+    "ideal_output": """def process_input():
+    output_lines = []
+    today = datetime.now()
+    inc = retrieve_income_forecasts('weekly')
+    sp = retrieve_spending_forecasts('weekly')
+    if inc.empty and sp.empty:
+        return True, "No forecasts found."
+
+    start_next = get_start_of_week(get_after_periods(today, 'weekly', 1))
+    dates = [get_after_periods(start_next, 'weekly', i) for i in range(4)]
+    total_savings = 0
+    for d in dates:
+        i_val = inc[inc['start_date'] == d]['forecasted_amount'].sum() if not inc.empty else 0
+        s_val = sp[sp['start_date'] == d]['forecasted_amount'].sum() if not sp.empty else 0
+        savings = i_val - s_val
+        total_savings += savings
+        output_lines.append(f"{get_date_string(d)}: {utter_absolute_amount(savings, '{amount_with_direction}')}")
+    output_lines.append(f"Total projected savings: {utter_absolute_amount(total_savings, '{amount_with_direction}')}")
+    return True, chr(10).join(output_lines)""",
+  },
+  {
+    "user": "Compare my income and discretionary spending last year.",
+    "ideal_output": """def process_input():
     start = get_start_of_year(get_after_periods(datetime.now(), 'yearly', -1))
     end = get_end_of_year(start)
-    
     inc = retrieve_income_transactions()
     sp = retrieve_spending_transactions()
-    
+
     inc = inc[(inc['date'] >= start) & (inc['date'] <= end)] if not inc.empty else pd.DataFrame()
     sp = sp[(sp['date'] >= start) & (sp['date'] <= end)] if not sp.empty else pd.DataFrame()
-    
     if not sp.empty:
         sp = sp[sp['category'].str.startswith('meals') | sp['category'].str.startswith('shopping') | sp['category'].str.startswith('leisure') | (sp['category'] == 'donations_gifts')]
-    else:
-        sp = pd.DataFrame()
-    
     if inc.empty and sp.empty:
-        return True, "No data last year."
-        
-    i_val = inc['amount'].sum() if not inc.empty else 0
-    s_val = sp['amount'].sum() if not sp.empty else 0
-    diff = i_val - s_val
-    
-    output_lines.append(f"Last Year ({start.year}):")
-    output_lines.append(f"Income: {utter_absolute_amount(i_val, '{amount}')}")
-    output_lines.append("Discretionary Spending:")
-    
-    if not sp.empty:
-        for cat in sorted(sp['category'].unique()):
-            cat_sp = sp[sp['category'] == cat]
-            cat_val = cat_sp['amount'].sum()
-            output_lines.append(f"  - {cat}: {utter_absolute_amount(cat_val, '{amount}')}")
-    else:
-        output_lines.append("  (No discretionary spending)")
-    
-    output_lines.append(f"Total Discretionary: {utter_absolute_amount(s_val, '{amount}')}")
-    output_lines.append(f"Net: {utter_absolute_amount(diff, '{amount_with_direction}')}")
-    return True, chr(10).join(output_lines)"""
-  
+        return True, "No data found last year."
+
+    inc_total = inc['amount'].sum() if not inc.empty else 0
+    sp_total = sp['amount'].sum() if not sp.empty else 0
+    net = inc_total - sp_total
+    return True, chr(10).join([
+        f"Income: {utter_absolute_amount(inc_total, '{amount}')}",
+        f"Discretionary Spending: {utter_absolute_amount(sp_total, '{amount}')}",
+        f"Net: {utter_absolute_amount(net, '{amount_with_direction}')}",
+    ])""",
+  },
+  {
+    "user": "Do I have enough in checking to cover a $180 utility bill this week?",
+    "ideal_output": """def process_input():
+    dep = retrieve_depository_accounts()
+    if dep.empty:
+        return True, "No depository accounts found."
+
+    chk = dep[dep['account_type'] == 'deposit_checking']
+    if chk.empty:
+        return True, "No checking account found."
+
+    available = chk['balance_available'].sum()
+    remaining = available - 180
+    if remaining >= 0:
+        return True, f"Yes. You can cover it and still have {utter_absolute_amount(remaining, '{amount_with_direction}')}"
+    return True, f"No. You are short by {utter_absolute_amount(remaining, '{amount_with_direction}')}" """,
+  },
+  {
+    "user": "Show my transportation spending in the past 4 weeks.",
+    "ideal_output": """def process_input():
+    start = get_start_of_week(get_after_periods(datetime.now(), 'weekly', -4))
+    end = get_end_of_week(get_after_periods(datetime.now(), 'weekly', -1))
+    sp = retrieve_spending_transactions()
+    if sp.empty:
+        return True, "No spending transactions found."
+
+    sp = sp[(sp['date'] >= start) & (sp['date'] <= end)]
+    sp = sp[sp['category'].str.startswith('transportation')] if not sp.empty else pd.DataFrame()
+    if sp.empty:
+        return True, "No transportation spending in the past 4 weeks."
+
+    output_lines = ["Transportation spending in the past 4 weeks:"]
+    output_lines.append(transaction_names_and_amounts(sp.sort_values('date', ascending=False), "- {transaction_name}: {amount} on {date} (account_id: {account_id}, transaction_id: {transaction_id})"))
+    output_lines.append(utter_transaction_total(sp, "Total: {spending_total_amount}"))
+    return True, chr(10).join(output_lines)""",
+  },
+  {
+    "user": "Which subscriptions look like streaming services?",
+    "ideal_output": """def process_input():
+    subs = retrieve_subscriptions()
+    if subs.empty:
+        return True, "No subscriptions found."
+
+    filtered = subs[subs['subscription_name'].str.lower().str.contains('netflix|disney|hulu|spotify|youtube|max|prime', na=False)]
+    if filtered.empty:
+        return True, "No streaming subscriptions found."
+
+    output_lines = ["Streaming subscriptions:"]
+    output_lines.append(subscription_names_and_amounts(filtered.sort_values('subscription_name'), "- {subscription_name}: {amount}"))
+    return True, chr(10).join(output_lines)""",
+  },
+]
+
+
+def _print_test_case_with_ideal_output(user_request: str, ideal_output: str):
   print("=" * 80)
-  print("TESTING DISCRETIONARY SPENDING EXAMPLE SNIPPET:")
+  print(f"User: {user_request}")
+  print("> Ideal_Output:")
+  print(ideal_output)
   print("=" * 80)
   print()
-  
-  # Execute the code in sandbox
-  print("Executing code snippet...")
-  print("-" * 80)
-  try:
-    success, output_string, logs, goals_list = sandbox.execute_agent_with_tools(example_code, user_id)
-    
-    print(f"Success: {success}")
-    print()
-    print("Output:")
-    print("-" * 80)
-    print(output_string)
-    print("-" * 80)
-    print()
-    if logs:
-      print("Logs:")
-      print("-" * 80)
-      print(logs)
-      print("-" * 80)
-      print()
-  except Exception as e:
-    print(f"**Sandbox Execution Error**: {str(e)}")
-    import traceback
-    print(traceback.format_exc())
-  print("=" * 80)
-  
-  return example_code
 
 
-def test_past_three_months_spending(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for getting spending in the past 3 months (excluding current month).
-  Tests that current month is excluded from past date ranges.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "Show my spending for the past 3 months."
-  return _run_test_with_logging(last_user_request, lookup_data)
+def _run_catalog_case(test_case: dict, lookup_data: LookupUserDataOptimizer = None, user_id: int = None):
+  _print_test_case_with_ideal_output(test_case["user"], test_case["ideal_output"])
+  return _run_test_with_logging(test_case["user"], lookup_data, user_id)
 
 
-def test_next_four_weeks_savings(lookup_data: LookupUserDataOptimizer = None):
+def run_test_batch(batch: int = 1, lookup_data: LookupUserDataOptimizer = None, user_id: int = None):
   """
-  Test method for projecting savings for the next 4 weeks (excluding current week).
-  Tests that current week is excluded from next date ranges.
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
+  Run test cases in batches to keep execution manageable.
   """
-  last_user_request = "Project my savings for the next 4 weeks."
-  return _run_test_with_logging(last_user_request, lookup_data)
+  batch_to_indices = {
+    1: [0, 1, 2],
+    2: [3, 4, 5],
+    3: [6, 7, 8],
+    4: [9, 10, 11],
+  }
+  if batch not in batch_to_indices:
+    raise ValueError("batch must be 1, 2, 3, or 4")
 
-
-def test_past_two_months_income(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for getting income in the past 2 months (excluding current month).
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "What was my total income in the past 2 months?"
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_next_three_months_forecasts(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for getting spending forecasts for the next 3 months (excluding current month).
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "What are my spending forecasts for the next 3 months?"
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_past_four_weeks_spending(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for getting spending in the past 4 weeks (excluding current week).
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "How much did I spend in the past 4 weeks?"
-  return _run_test_with_logging(last_user_request, lookup_data)
-
-
-def test_next_two_weeks_expenses(lookup_data: LookupUserDataOptimizer = None):
-  """
-  Test method for getting expenses for the next 2 weeks (excluding current week).
-  
-  Args:
-    lookup_data: Optional LookupUserDataOptimizer instance. If None, creates a new one.
-    
-  Returns:
-    The generated response string
-  """
-  last_user_request = "What are my expected expenses for the next 2 weeks?"
-  return _run_test_with_logging(last_user_request, lookup_data)
+  for idx in batch_to_indices[batch]:
+    _run_catalog_case(TEST_CASES[idx], lookup_data, user_id)
 
 
 def main(batch: int = 1):
@@ -797,26 +764,7 @@ def main(batch: int = 1):
       - Batch 3: Subscription and comprehensive health tests
       - Batch 4: Date range tests (past/next months/weeks, excluding current)
   """
-  if batch == 1:
-    test_hows_my_accounts_doing()
-    test_how_is_my_net_worth_doing_lately()
-    test_analyze_income_and_spending_patterns_for_savings()
-  elif batch == 2:
-    test_compare_projected_income_across_months()
-    test_checking_account_sufficient_for_rent()
-  elif batch == 3:
-    test_list_subscriptions_last_month()
-    test_list_all_streaming_subscriptions()
-    test_comprehensive_financial_health_overview()
-  elif batch == 4:
-    test_past_three_months_spending()
-    test_next_four_weeks_savings()
-    test_past_two_months_income()
-    test_next_three_months_forecasts()
-    test_past_four_weeks_spending()
-    test_next_two_weeks_expenses()
-  else:
-    raise ValueError("batch must be 1, 2, 3, or 4")
+  run_test_batch(batch=batch)
 
 
 if __name__ == "__main__":
