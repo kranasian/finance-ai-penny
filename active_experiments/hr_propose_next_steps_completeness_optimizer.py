@@ -1,69 +1,13 @@
 """
-Propose-next-steps rubrics optimizer.
+Propose-next-steps rubric optimizer — **completeness only**.
 
-Use this to iterate on a checker system prompt (e.g. for a future Penny template)
-that scores a **three-part** grader bundle (rationalize outcome, propose outcome, propose `calls`).
+Grades only the **completeness** axis.
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test all
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test good_aligned
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test multi_two_contexts_synthesized
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --model gemini-flash-lite-latest
-
-**LLM checker input**
-
-The grader expects **three** inputs, matching production Hermes/DB shapes:
-
-1. **`rationalize_agent_outcome`** — Markdown from **`/rationalize_per_category`** (same as the
-   **`ai_agent_outcomes.agent_outcome`** row for **`type = rationalize_per_category`** that was fed
-   into `/propose_next_steps`).
-2. **`propose_agent_outcome`** — Markdown from **`/propose_next_steps`** (same as the
-   **`ai_agent_outcomes.agent_outcome`** row for **`type = propose_next_steps`**: **`# Proposal`**
-   section only).
-3. **`calls`** — JSON array from the **propose_next_steps** row’s **`calls`** field (same shape as
-   Hermes `ai_agent_outcomes.calls`). Use **`[]`** when there were no round-trips (checker still
-   applies the no-tool-trace rule for **`accuracy`**).
-
-These are wrapped for the model as **`<RATIONALIZE>`**, **`<PROPOSAL>`**, and **`<CALLS>`** (calls
-rendered to markdown via `calls_to_markdown`). See `bundle_checker_input`.
-
-**Multi rationalize (`propose_next_steps_multi`)** — same **`<PROPOSAL>`** and **`<CALLS>`** (propose run), but
-evidence is **`Multiple prior rationalize contexts:`** + **`<CONTEXTS>`** … (each **`<CONTEXT>`** has
-**`<RATIONALIZE>`** and optional **`<RATIONALIZE_CALLS>`**). See `bundle_checker_input_multi`.
-
-**Quality axes (two scores in output)**
-
-| Axis | What it measures |
-|------|------------------|
-| **accuracy** | **Grounded + actionable for Penny:** next steps are faithful to **`<RATIONALIZE>`** (no invented facts) and are **helpful for Penny’s capabilities** (budgets/goals, categorization rules, recategorization with ids). Tool trace in **`<CALLS>`** should support the story (e.g. retrieve before recategorize when ids are missing). |
-| **completeness** | **Coverage + honesty:** important rationalize **Next steps** / drivers are addressed in **`<PROPOSAL>`** or explicitly parked under open items (no silent drops). Items should be concrete enough for Penny automation where relevant—not only vague user homework unless that is truly all that is warranted. |
-
-**Multiple rounds:** Source `calls` has **one object per LLM round-trip**; the markdown lists them as
-**`# Round 1`**, **`# Round 2`**, … with **`## Invoked tools`** under each when present.
-
-Optional: grade from disk:
-
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --input-json /path/to/bundle.json
-
-`bundle.json` shape (**single** propose):
-
-  {
-    "rationalize_agent_outcome": "<markdown from rationalize row>",
-    "propose_agent_outcome": "<markdown from propose_next_steps row>",
-    "calls": [ ... ]
-  }
-
-Or **multi**:
-
-  {
-    "contexts": [
-      {"rationalize_agent_outcome": "...", "calls": []},
-      {"rationalize_agent_outcome": "...", "calls": [...]}
-    ],
-    "propose_agent_outcome": "<markdown from propose_next_steps_multi row>",
-    "calls": [ ... ]
-  }
+  python3 active_experiments/hr_propose_next_steps_completeness_optimizer.py --test all
+  python3 active_experiments/hr_propose_next_steps_completeness_optimizer.py --test good_aligned
+  python3 active_experiments/hr_propose_next_steps_completeness_optimizer.py --model gemini-flash-lite-latest
 """
 
 from __future__ import annotations
@@ -71,15 +15,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
 from typing import Any, Dict
 
 try:
   from dotenv import load_dotenv
 except Exception:  # pragma: no cover
   load_dotenv = None
-from google import genai
-from google.genai import types
+
+try:
+  from google import genai  # type: ignore[import-not-found]
+  from google.genai import types  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover
+  genai = None
+  types = None
 
 if load_dotenv is not None:
   load_dotenv()
@@ -272,74 +220,6 @@ def bundle_checker_input_multi(
   return _append_proposal_and_calls(head, propose_agent_outcome, calls)
 
 
-CHECKER_USER_MSG_PREFIX = (
-  "Grade **completeness** and **accuracy** (two axes).\n"
-  "Input may be **single-context** (`<RATIONALIZE>` / `<PROPOSAL>` / `<CALLS>`) or **multi-context** "
-  "(`Multiple prior rationalize contexts:` + `<CONTEXTS>` …, then `<PROPOSAL>`, then `<CALLS>`).\n\n"
-)
-
-
-_AXIS_SCHEMA = types.Schema(
-  type=types.Type.OBJECT,
-  required=["score", "notes"],
-  properties={
-    "score": types.Schema(type=types.Type.INTEGER, description="Integer 1–5."),
-    "notes": types.Schema(type=types.Type.STRING, description="One short sentence."),
-  },
-)
-
-OUTPUT_SCHEMA = types.Schema(
-  type=types.Type.OBJECT,
-  required=["completeness", "accuracy"],
-  properties={
-    "completeness": _AXIS_SCHEMA,
-    "accuracy": _AXIS_SCHEMA,
-  },
-)
-
-
-SYSTEM_PROMPT = """You are a **strict rubric grader** for the checker bundle below (XML-style role wrappers; do not require table/column names).
-
-You receive **evidence**, then **`<PROPOSAL>`**, then **`<CALLS>`**. Evidence may be **single** or **multi** context.
-
-**Evidence — one of:**
-
-1. **Single rationalize (`propose_next_steps`):** **`<RATIONALIZE>` … `</RATIONALIZE>`** — Markdown from **one** rationalize-per-category outcome: figures, drivers, next steps.
-
-2. **Multiple rationalizes (`propose_next_steps_multi`):** **`Multiple prior rationalize contexts:`** plus **`<CONTEXTS>` … `</CONTEXTS>`**. Each **`<CONTEXT index="N">`** contains **`<RATIONALIZE>` … `</RATIONALIZE>`** for that prior run (same kind of markdown as (1)). Optionally **`<RATIONALIZE_CALLS>` … `</RATIONALIZE_CALLS>`** holds **that rationalize run’s** stored LLM trace — **not** the propose run.
-
-For **completeness** and **grounding**, treat **all** **`<RATIONALIZE>`** bodies as the **combined** evidence; the proposal should synthesize across contexts (no silent drop of an important thread from any context).
-
-**Then (same for single and multi):**
-
-3. **`<PROPOSAL>` … `</PROPOSAL>`** — Markdown from the **propose** outcome (`agent_outcome`): normally **only** the **`# Proposal`** block with **`## Proposed next steps`** and **`## Open items (not addressed)`** (or equivalent **`##`** headings if `# Proposal` was omitted).
-
-4. **`<CALLS>` … `</CALLS>`** — Markdown listing **LLM round-trips** from **this same propose / propose-multi run** (`calls` field): `# Round N`, optional metrics, **`## Invoked tools`** with numbered tools and fenced argument blocks. **`latency_ms` / `input_tokens` / `output_tokens`** appear only when present in source data.
-
-**Do not** confuse **`<RATIONALIZE_CALLS>`** inside a **`<CONTEXT>`** with **`<CALLS>`** at the end. Grade tool consistency for the propose run using **`<CALLS>`** only.
-
-If **`<CALLS>`** says there are **no rounds**, or **no tools** were invoked in any round, score the **tool-trace** aspect of **`accuracy` = 3** with `notes` stating no usable tool trace (do not infer tool order from proposal text alone). You may still score **grounding** of proposal text vs **all** rationalize evidence when clear.
-
-Grade **only** what is in the message. Do not invent missing data.
-
-**Axes (each `score` integer 1–5, `notes` one short sentence):**
-
-1. **`completeness`** — Does **`<PROPOSAL>`** cover what mattered across **all** rationalize evidence?
-   - Coverage: Important **Next steps** / drivers appear under “Proposed next steps” **or** are explicitly parked under “Open items” (no silent drops from any context).
-   - Concreteness: Items are concrete enough for Penny automation where the rationalize text implies it (budgets/goals, categorization rules, recategorization with ids), not only generic “review your statements” filler unless that is truly all that is warranted.
-   - Insightfulness of open items: If something can’t be acted on yet, open items should be specific (what to look for / what info is missing), not vague.
-
-2. **`accuracy`** — Is **`<PROPOSAL>`** both **grounded** and **helpful for Penny to execute**?
-   - Grounding: No invented merchants/amounts/dates; no contradictions vs **any** **`<RATIONALIZE>`** body.
-   - Actionability for Penny: Proposed steps should align with Penny’s capabilities (create goals/budgets, create categorization rules, recategorize transactions) and avoid recommending actions irrelevant to the rationalize context(s).
-   - Tool consistency: When **`<CALLS>`** documents invocations, they must support the proposal (correct tools, sensible args; **retrieve** before **propose_recategorize_transactions** when ids are not in rationalize text). Apply the **score 3** rule above when no usable tool trace exists.
-
-**Calibration:** **5** = no meaningful gap on that axis. **4** = one minor gap. **3** = clear but fixable issue. **2** = several problems. **1** = axis largely failed.
-
-Return **only** the JSON object matching the schema.
-"""
-
-
 # Minimal fixtures: rationalize snippet + propose bundle + synthetic calls
 _RATIONALIZE_FIXTURE = """# Rationalize What
 
@@ -513,11 +393,14 @@ _MULTI_IGNORES_ONE_CONTEXT_PROPOSE = """# Proposal
 
 _MULTI_IGNORES_ONE_CONTEXT_CALLS = list(_MULTI_SYNTH_CALLS)
 
-TEST_CASES: list[dict[str, Any]] = [
+_BOTH_AXIS_TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "good_aligned",
     "ideal_response": {
-      "completeness": {"score": 5, "notes": "Covers the rationalize next step with a concrete proposal and a sensible open item."},
+      "completeness": {
+        "score": 5,
+        "notes": "Covers the rationalize next step with a concrete proposal and a sensible open item.",
+      },
       "accuracy": {"score": 5, "notes": "Proposal is grounded in the rationalize context and the tool call matches the text."},
     },
     "payload": bundle_checker_input(
@@ -529,8 +412,14 @@ TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "bad_hallucinated_merchant",
     "ideal_response": {
-      "completeness": {"score": 1, "notes": "Does not address the Costco miscategorization next step and provides an unrelated action."},
-      "accuracy": {"score": 1, "notes": "Invents a Whole Foods charge and tool usage is inconsistent with the rationalize context."},
+      "completeness": {
+        "score": 1,
+        "notes": "Does not address the Costco miscategorization next step and provides an unrelated action.",
+      },
+      "accuracy": {
+        "score": 1,
+        "notes": "Invents a Whole Foods charge and tool usage is inconsistent with the rationalize context.",
+      },
     },
     "payload": bundle_checker_input(
       rationalize_agent_outcome=_RATIONALIZE_FIXTURE.strip(),
@@ -541,8 +430,14 @@ TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "real_service_fees_goal_two_rounds",
     "ideal_response": {
-      "completeness": {"score": 5, "notes": "Creates a concrete budget and captures the remaining review items as open, covering the rationalize next steps."},
-      "accuracy": {"score": 5, "notes": "Proposal and tool call are grounded in the rationalize context and are actionable for Penny."},
+      "completeness": {
+        "score": 5,
+        "notes": "Creates a concrete budget and captures the remaining review items as open, covering the rationalize next steps.",
+      },
+      "accuracy": {
+        "score": 5,
+        "notes": "Proposal and tool call are grounded in the rationalize context and are actionable for Penny.",
+      },
     },
     "payload": bundle_checker_input(
       rationalize_agent_outcome=_SERVICE_FEES_RATIONALIZE_FIXTURE.strip(),
@@ -564,14 +459,8 @@ TEST_CASES: list[dict[str, Any]] = [
     },
     "payload": bundle_checker_input_multi(
       contexts=[
-        {
-          "rationalize_agent_outcome": _SERVICE_FEES_RATIONALIZE_FIXTURE.strip(),
-          "calls": [],
-        },
-        {
-          "rationalize_agent_outcome": _KIDS_ED_RATIONALIZE_FIXTURE.strip(),
-          "calls": [],
-        },
+        {"rationalize_agent_outcome": _SERVICE_FEES_RATIONALIZE_FIXTURE.strip(), "calls": []},
+        {"rationalize_agent_outcome": _KIDS_ED_RATIONALIZE_FIXTURE.strip(), "calls": []},
       ],
       propose_agent_outcome=_MULTI_SYNTH_PROPOSE.strip(),
       calls=_MULTI_SYNTH_CALLS,
@@ -584,21 +473,12 @@ TEST_CASES: list[dict[str, Any]] = [
         "score": 2,
         "notes": "Ignores the kids-education tutoring thread while only covering service fees.",
       },
-      "accuracy": {
-        "score": 4,
-        "notes": "Remaining content is grounded but incomplete versus dual-context evidence.",
-      },
+      "accuracy": {"score": 4, "notes": "Remaining content is grounded but incomplete versus dual-context evidence."},
     },
     "payload": bundle_checker_input_multi(
       contexts=[
-        {
-          "rationalize_agent_outcome": _SERVICE_FEES_RATIONALIZE_FIXTURE.strip(),
-          "calls": [],
-        },
-        {
-          "rationalize_agent_outcome": _KIDS_ED_RATIONALIZE_FIXTURE.strip(),
-          "calls": [],
-        },
+        {"rationalize_agent_outcome": _SERVICE_FEES_RATIONALIZE_FIXTURE.strip(), "calls": []},
+        {"rationalize_agent_outcome": _KIDS_ED_RATIONALIZE_FIXTURE.strip(), "calls": []},
       ],
       propose_agent_outcome=_MULTI_IGNORES_ONE_CONTEXT_PROPOSE.strip(),
       calls=_MULTI_IGNORES_ONE_CONTEXT_CALLS,
@@ -607,18 +487,97 @@ TEST_CASES: list[dict[str, Any]] = [
 ]
 
 
-class ProposeNextStepsCheckerOptimizer:
+CHECKER_USER_MSG_PREFIX = (
+  "Grade **completeness** only.\n"
+  "Input may be **single-context** (`<RATIONALIZE>` / `<PROPOSAL>` / `<CALLS>`) or **multi-context** "
+  "(`Multiple prior rationalize contexts:` + `<CONTEXTS>` …, then `<PROPOSAL>`, then `<CALLS>`).\n\n"
+)
+
+
+def _build_output_schema(_types: Any) -> Any:
+  axis = _types.Schema(
+    type=_types.Type.OBJECT,
+    required=["score", "notes"],
+    properties={
+      "score": _types.Schema(type=_types.Type.INTEGER, description="Integer 1–5."),
+      "notes": _types.Schema(type=_types.Type.STRING, description="One short sentence."),
+    },
+  )
+  return _types.Schema(
+    type=_types.Type.OBJECT,
+    required=["completeness"],
+    properties={"completeness": axis},
+  )
+
+
+SYSTEM_PROMPT = """You are a **strict rubric grader** for the checker bundle below (XML-style role wrappers; do not require table/column names).
+
+You receive **evidence**, then **`<PROPOSAL>`**, then **`<CALLS>`**. Evidence may be **single** or **multi** context.
+
+**Evidence — one of:**
+
+1. **Single rationalize (`propose_next_steps`):** **`<RATIONALIZE>` … `</RATIONALIZE>`** — Markdown from **one** rationalize-per-category outcome: figures, drivers, next steps.
+
+2. **Multiple rationalizes (`propose_next_steps_multi`):** **`Multiple prior rationalize contexts:`** plus **`<CONTEXTS>` … `</CONTEXTS>`**. Each **`<CONTEXT index="N">`** contains **`<RATIONALIZE>` … `</RATIONALIZE>`** for that prior run (same kind of markdown as (1)). Optionally **`<RATIONALIZE_CALLS>` … `</RATIONALIZE_CALLS>`** holds **that rationalize run’s** stored LLM trace — **not** the propose run.
+
+For **completeness**, treat **all** **`<RATIONALIZE>`** bodies as the **combined** evidence; the proposal should synthesize across contexts (no silent drop of an important thread from any context).
+
+**Then (same for single and multi):**
+
+3. **`<PROPOSAL>` … `</PROPOSAL>`** — Markdown from the **propose** outcome (`agent_outcome`): normally **only** the **`# Proposal`** block with **`## Proposed next steps`** and **`## Open items (not addressed)`** (or equivalent **`##`** headings if `# Proposal` was omitted).
+
+4. **`<CALLS>` … `</CALLS>`** — Markdown listing **LLM round-trips** from **this same propose / propose-multi run** (`calls` field): `# Round N`, optional metrics, **`## Invoked tools`** with numbered tools and fenced argument blocks. **`latency_ms` / `input_tokens` / `output_tokens`** appear only when present in source data.
+
+Grade **only** what is in the message. Do not invent missing data.
+
+**Axis (return ONLY `completeness` with `score` 1–5 and `notes` one short sentence):**
+
+**`completeness`** — Does **`<PROPOSAL>`** cover what mattered across **all** rationalize evidence?
+  - Coverage: Important **Next steps** / drivers appear under “Proposed next steps” **or** are explicitly parked under “Open items” (no silent drops from any context).
+  - Concreteness: Items are concrete enough for Penny automation where the rationalize text implies it (budgets/goals, categorization rules, recategorization with ids), not only generic “review your statements” filler unless that is truly all that is warranted.
+  - Insightfulness of open items: If something can’t be acted on yet, open items should be specific (what to look for / what info is missing), not vague.
+
+**Calibration:** **5** = no meaningful gap on that axis. **4** = one minor gap. **3** = clear but fixable issue. **2** = several problems. **1** = axis largely failed.
+
+Return **only** the JSON object matching the schema.
+"""
+
+
+def _to_completeness_test_cases() -> list[dict[str, Any]]:
+  # Keep the same payload fixtures, but only keep the `completeness` ideal response.
+  out: list[dict[str, Any]] = []
+  for tc in _BOTH_AXIS_TEST_CASES:
+    ideal = tc.get("ideal_response") or None
+    ideal_comp = (
+      {"completeness": ideal["completeness"]}
+      if isinstance(ideal, dict) and "completeness" in ideal
+      else None
+    )
+    out.append({"name": tc["name"], "payload": tc["payload"], "ideal_response": ideal_comp})
+  return out
+
+
+TEST_CASES: list[dict[str, Any]] = _to_completeness_test_cases()
+
+
+class ProposeNextStepsCompletenessCheckerOptimizer:
   def __init__(
     self,
     model_name: str = "gemini-flash-lite-latest",
     *,
-    max_output_tokens: int = 512,
+    max_output_tokens: int = 256,
     thinking_budget: int = 0,
   ):
+    if genai is None or types is None:
+      raise ImportError(
+        "Missing dependency for Gemini client. Install `google-genai` (and ensure your venv is active) "
+        "to run this script."
+      )
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
       raise ValueError("GEMINI_API_KEY environment variable is not set.")
     self.client = genai.Client(api_key=api_key)
+    self._types = types
     self.model_name = model_name
     self.temperature = 0.0
     self.top_p = 0.95
@@ -626,11 +585,12 @@ class ProposeNextStepsCheckerOptimizer:
     self.thinking_budget = thinking_budget
     self.system_prompt = SYSTEM_PROMPT
     self.safety_settings = [
-      types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
-      types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
-      types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
-      types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
     ]
+    self.output_schema = _build_output_schema(self._types)
 
   def grade(self, bundled_input: str) -> Dict[str, Any]:
     user_msg = (
@@ -638,16 +598,17 @@ class ProposeNextStepsCheckerOptimizer:
       + (bundled_input or "")
       + "\n\nRespond with the JSON object only."
     )
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
-    cfg = types.GenerateContentConfig(
+    t = self._types
+    contents = [t.Content(role="user", parts=[t.Part.from_text(text=user_msg)])]
+    cfg = t.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
-      system_instruction=[types.Part.from_text(text=self.system_prompt)],
-      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget, include_thoughts=True),
+      system_instruction=[t.Part.from_text(text=self.system_prompt)],
+      thinking_config=t.ThinkingConfig(thinking_budget=self.thinking_budget, include_thoughts=True),
       response_mime_type="application/json",
-      response_schema=OUTPUT_SCHEMA,
+      response_schema=self.output_schema,
     )
     out = self.client.models.generate_content(model=self.model_name, contents=contents, config=cfg)
     text = (out.text or "").strip()
@@ -662,60 +623,15 @@ def main() -> None:
   parser = argparse.ArgumentParser()
   parser.add_argument("--test", type=str, default="all", help="Test name or 'all'.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
-  parser.add_argument("--max-output-tokens", type=int, default=512)
+  parser.add_argument("--max-output-tokens", type=int, default=256)
   parser.add_argument("--thinking-budget", type=int, default=0)
-  parser.add_argument(
-    "--input-json",
-    type=str,
-    default=None,
-    help='JSON with "propose_agent_outcome", "calls", and either "rationalize_agent_outcome" (single) or '
-    '"contexts" array (multi); see module docstring.',
-  )
   args = parser.parse_args()
 
-  opt = ProposeNextStepsCheckerOptimizer(
+  opt = ProposeNextStepsCompletenessCheckerOptimizer(
     model_name=args.model,
     max_output_tokens=args.max_output_tokens,
     thinking_budget=args.thinking_budget,
   )
-
-  if args.input_json:
-    raw = open(args.input_json, encoding="utf-8").read()
-    obj = json.loads(raw)
-    if not isinstance(obj, dict):
-      raise SystemExit("--input-json must contain a JSON object")
-    pao = obj.get("propose_agent_outcome")
-    calls_raw = obj.get("calls")
-    ctx_list = obj.get("contexts")
-    if not isinstance(pao, str) or not pao.strip():
-      raise SystemExit('--input-json requires non-empty string "propose_agent_outcome".')
-    if not isinstance(calls_raw, list):
-      raise SystemExit(
-        '--input-json requires "calls" as a JSON array (use [] if the propose row has no calls).'
-      )
-    if isinstance(ctx_list, list) and ctx_list:
-      bundle = bundle_checker_input_multi(
-        contexts=ctx_list,
-        propose_agent_outcome=pao.strip(),
-        calls=calls_raw,
-      )
-    else:
-      rao = obj.get("rationalize_agent_outcome")
-      if not isinstance(rao, str) or not rao.strip():
-        raise SystemExit(
-          '--input-json requires either "contexts" (non-empty array) or non-empty "rationalize_agent_outcome".'
-        )
-      bundle = bundle_checker_input(
-        rationalize_agent_outcome=rao.strip(),
-        propose_agent_outcome=pao.strip(),
-        calls=calls_raw,
-      )
-    _print_section_banner("# LLM Checker Input (--input-json)")
-    print(bundle)
-    result = opt.grade(bundle)
-    _print_section_banner("# LLM Checker Response")
-    print(json.dumps(result, indent=2, ensure_ascii=False))
-    return
 
   if args.test == "all":
     cases = TEST_CASES
@@ -744,3 +660,4 @@ def main() -> None:
 
 if __name__ == "__main__":
   main()
+

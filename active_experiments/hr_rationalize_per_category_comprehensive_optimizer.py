@@ -6,12 +6,12 @@ for the checker template `Chk:RationalizePerCategoryComprehensive`.
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test all
-  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test good_comprehensive_shelter
-  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test good_comprehensive_shopping
-  python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test all --model gemini-flash-lite-latest
+  python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all
+  python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test good_comprehensive_shelter
+  python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test good_comprehensive_shopping
+  python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all --model gemini-flash-lite-latest
 
-**Recommended minimal generation settings** (validated with `python3 active_experiments/rationalize_per_category_rubric_comprehensive_optimizer.py --test all`; scores **5 / 5 / 2** vs `ideal_response`; prompt stresses evidence, investigation depth, auditable `notes`):
+**Recommended minimal generation settings** (validated with `python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all`; scores **5 / 5 / 2** vs `ideal_response`; prompt stresses evidence, investigation depth, auditable `notes`):
 
 - **model:** `gemini-flash-lite-latest` — smallest model that held calibration on all fixtures; larger Flash variants not re-checked here (API limits).
 - **temperature:** `0` · **top_p:** `0.95` — deterministic judge (`template_run_configs.py` uses `temp=0.2` for the same template; use `0` here for optimizer reproducibility).

@@ -6,9 +6,9 @@ for the checker template `Chk:RationalizePerCategoryInsightful`.
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/rationalize_per_category_rubric_insightful_optimizer.py --test all
-  python3 active_experiments/rationalize_per_category_rubric_insightful_optimizer.py --test high_insight_corrects_narrative_and_prioritizes
-  python3 active_experiments/rationalize_per_category_rubric_insightful_optimizer.py --test all --model gemini-flash-lite-latest
+  python3 active_experiments/hr_rationalize_per_category_insightful_optimizer.py --test all
+  python3 active_experiments/hr_rationalize_per_category_insightful_optimizer.py --test high_insight_corrects_narrative_and_prioritizes
+  python3 active_experiments/hr_rationalize_per_category_insightful_optimizer.py --test all --model gemini-flash-lite-latest
 
 **Recommended minimal generation settings** (validated `--test all`; scores match `ideal_response` **5 / 1**):
 

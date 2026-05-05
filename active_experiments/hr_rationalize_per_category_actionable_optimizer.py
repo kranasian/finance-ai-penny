@@ -6,11 +6,11 @@ for the checker template `Chk:RationalizePerCategoryActionable`.
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/rationalize_per_category_rubric_actionable_optimizer.py --test all
-  python3 active_experiments/rationalize_per_category_rubric_actionable_optimizer.py --test strong_next_steps_penny_capabilities
-  python3 active_experiments/rationalize_per_category_rubric_actionable_optimizer.py --test all --model gemini-flash-lite-latest
+  python3 active_experiments/hr_rationalize_per_category_actionable_optimizer.py --test all
+  python3 active_experiments/hr_rationalize_per_category_actionable_optimizer.py --test strong_next_steps_penny_capabilities
+  python3 active_experiments/hr_rationalize_per_category_actionable_optimizer.py --test all --model gemini-flash-lite-latest
 
-**Recommended minimal generation settings** (validated `python3 active_experiments/rationalize_per_category_rubric_actionable_optimizer.py --test all`; scores **5 / 1** vs `ideal_response`):
+**Recommended minimal generation settings** (validated `python3 active_experiments/hr_rationalize_per_category_actionable_optimizer.py --test all`; scores **5 / 1** vs `ideal_response`):
 
 - **model:** `gemini-flash-lite-latest`
 - **temperature:** `0` · **top_p:** `0.95`
