@@ -13,7 +13,7 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 try:
     from dotenv import load_dotenv
@@ -42,14 +42,35 @@ def _build_output_schema() -> "types.Schema":
         )
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["key", "insight"],
+        required=["key", "insight", "insight_correct"],
         properties={
             "key": types.Schema(type=types.Type.STRING),
             "insight": types.Schema(
                 type=types.Type.STRING,
                 description="User-facing message (may be multi-line).",
             ),
+            "insight_correct": types.Schema(
+                type=types.Type.BOOLEAN,
+                description=(
+                    "True if input insight agrees with drivers; false if drivers contradict or correct the insight."
+                ),
+            ),
         },
+    )
+
+
+def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
+    """Build Markdown input for the model from structured fields (key, insight, drivers).
+
+    Uses top-level Markdown headings `# Key`, `# Insight`, `# Drivers` (exact spellings).
+    """
+    for k in ("key", "insight", "drivers"):
+        if k not in insight:
+            raise ValueError(f"insight missing required key: {k!r}")
+    return (
+        f"# Key\n\n{insight['key']}\n\n"
+        f"# Insight\n\n{insight['insight']}\n\n"
+        f"# Drivers\n\n{insight['drivers']}"
     )
 
 
@@ -59,40 +80,44 @@ You are Penny, a friendly and positive personal finance advisor.
 
 ## Objective
 
-Turn a single structured insight into a *rationalized* user message: a short headline plus brief evidence (figures) and a concrete driver summary.
+Turn a single structured insight into a *rationalized* user message: a short headline plus a concrete driver summary.
 
 ## Input
 
-A single insight object with:
+Markdown with **exactly three top-level headings** (`#`), in this order (spellings must match):
 
-- `key`: insight identifier (must be preserved exactly)
-- `insight`: a one-sentence insight summary (already user-readable, but can be improved)
-- `figures`: markdown bullets with period totals and dates/ranges
-- `drivers`: a paragraph explaining what drove the change (may include merchant examples)
+# Key
+
+…insight identifier (preserve exactly in JSON output `key`).
+
+# Insight
+
+…one-sentence summary (may be improved).
+
+# Drivers
+
+…paragraph explaining what drove the change (may include merchant examples).
 
 ## Output
 
 Return a JSON object with:
 
-- `key`: exactly as given in input
+- `key`: exactly as given under **# Key**
+- `insight_correct`: boolean. **true** if the **# Insight** body is consistent with what the **# Drivers** section states; **false** if drivers contradict, correct, or invalidate the insight (e.g. inaccurate totals, missing categories, partial month not reflected in the headline). Judge using **only** those two sections, no outside facts.
 - `insight`: a rationalized message formatted as:
 
-Line 1: one punchy sentence that restates the insight.
-Line 2 (optional): "Figures: " then keep 1–2 of the most informative figure bullets (condense if needed).
-Line 3: "Drivers: " then 1–2 short sentences grounded in the provided `drivers` text.
+Line 1: one punchy sentence (include linked+colored category and main amount per Coloring rules). If `insight_correct` is false, Line 1 may reflect the correction implied by **# Drivers** while staying factual to **# Drivers** only.
+Line 2: 1–2 short sentences grounded in the **# Drivers** body. **Do not** prefix with "Drivers:".
 
 ## Rules
 
 1. No greeting.
-2. Do not invent facts beyond `insight`, `figures`, `drivers`.
+2. Do not invent facts beyond the **# Insight** and **# Drivers** bodies.
 3. Keep merchant names exactly as provided when you mention them.
 4. Prefer dollars without decimals (e.g. $11 not $10.99) unless the input figure is < $10.
 5. Be concise: target ≤ 320 characters total per output `insight`.
-6. Use only the provided input (no outside context).
-7. **If the driver explanation is already clear from `drivers`, omit the Figures line entirely**.
-   - Output becomes **2 lines total**: headline + a plain driver sentence line.
-   - In this 2-line mode, **do not include the "Drivers:" label**; just write the driver sentence(s).
-   - Rely on the linked category for drill-down.
+6. Use only the provided Markdown (no outside context).
+7. Rely on the linked category for drill-down to detailed totals.
 
 ## Coloring (required)
 
@@ -103,7 +128,7 @@ Use these wrappers exactly:
 
 **Always color:**
 - The linked category (wrap the full link token): `g{[Leisure](/leisure/monthly)}` or `r{[Leisure](/leisure/monthly)}`
-- The main dollar amount you cite in Line 1 (and optionally one key amount in Figures): `g{$11}` or `r{$11}`
+- The main dollar amount you cite in Line 1: `g{$11}` or `r{$11}`
 
 **Color consistency:** the category link and the main amount must use the **same** color.
 
@@ -111,19 +136,19 @@ Use these wrappers exactly:
 - For **spending / outflows**: down/lower is **green**, up/higher is **red**.
 - For **income / inflows**: up/higher is **green**, down/lower is **red**.
 
-If the input `insight` uses words like "down", "lower", "up", "higher", "exceeded", "within limit", follow that direction.
-If direction is unclear, infer from the insight type in `key` (`spend_vs_*` / `spent_vs_*` are outflows unless the category is an Inflow category from the list).
+If the **# Insight** body uses words like "down", "lower", "up", "higher", "exceeded", "within limit", follow that direction.
+If direction is unclear, infer from the insight type under **# Key** (`spend_vs_*` / `spent_vs_*` are outflows unless the category is an Inflow category from the list).
 
 ## Linking + category slug mapping (required)
 
-Your output must include a linked category for the category referenced by the input `key`.
+Your output must include a linked category for the category referenced under **# Key**.
 
 - **Category link format**: `[Display Name](/slug/weekly)` or `[Display Name](/slug/monthly)`.
 - **Timeframe**:
-  - If the `key` includes a `YYYY-MM` segment (e.g. `spend_vs_forecast:2026-05:Leisure`), use `/monthly`.
-  - If the `key` includes a `YYYY-MM-DD` segment (weekly keys), use `/weekly`.
-  - Otherwise, infer timeframe from the `insight` text ("this week" → weekly, "this month" → monthly).
-- **Slug mapping**: use the slug in parentheses from the Official Category List below. If the `key` uses a general label (e.g. "Food"), pick the closest official slug (e.g. `meals`).
+  - If **# Key** includes a `YYYY-MM` segment (e.g. `spend_vs_forecast:2026-05:Leisure`), use `/monthly`.
+  - If **# Key** includes a `YYYY-MM-DD` segment (weekly keys), use `/weekly`.
+  - Otherwise, infer timeframe from **# Insight** ("this week" → weekly, "this month" → monthly).
+- **Slug mapping**: use the slug in parentheses from the Official Category List below. If **# Key** uses a general label (e.g. "Food"), pick the closest official slug (e.g. `meals`).
 
 ### Official Category List (Display Name → slug)
 
@@ -207,15 +232,13 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
         self.system_prompt = SYSTEM_PROMPT
         self.output_schema = _build_output_schema()
 
-    def generate_response(self, insight_input: Dict[str, Any]) -> Dict[str, str]:
-        if not isinstance(insight_input, dict):
-            raise ValueError("insight_input must be an object.")
-        for k in ("key", "insight", "figures", "drivers"):
-            if k not in insight_input:
-                raise ValueError(f"insight_input missing required key: {k!r}")
+    def generate_response(self, insight_input: str) -> Dict[str, Any]:
+        if not isinstance(insight_input, str) or not insight_input.strip():
+            raise ValueError(
+                "insight_input must be a non-empty string (Markdown with # Key / # Insight / # Drivers)."
+            )
 
-        input_str = json.dumps(insight_input, indent=2, ensure_ascii=False)
-        request_text = types.Part.from_text(text=f"input:\n{input_str}\n\noutput:")
+        request_text = types.Part.from_text(text=f"input:\n{insight_input.strip()}\n\noutput:")
         contents = [types.Content(role="user", parts=[request_text])]
 
         cfg = types.GenerateContentConfig(
@@ -290,38 +313,60 @@ TEST_CASES: list[dict[str, Any]] = [
         "insight_input": {
             "key": "spend_vs_forecast:2026-05:Leisure",
             "insight": "Leisure is significantly down this month at $11.",
-            "figures": "*   **May 2026 (May 1–31):** $10.99\n*   **April 2026 (Apr 1–30):** $76.15\n*   **March 2026 (Mar 1–31):** $584.50",
             "drivers": "The significant decrease in leisure spending is due to a reduction in the number and type of entertainment transactions compared to previous months. In April, you had four leisure transactions ($76.15 total) including streaming subscriptions and a cinema visit (AMC Theatres: $41.68). So far in May, the only leisure transaction is your monthly Spotify subscription ($10.99 on May 3). March saw notably higher spending ($584.50) due to a higher volume of transactions.",
         },
-        "ideal_response": "3 lines: headline + Figures + Drivers; preserve key; no invented facts; concise.",
+        "ideal_response": "2 lines: headline + driver text; preserve key; linked+colored category; no invented facts; concise.",
     },
     {
         "name": "spend_vs_forecast_food_weekly_mix",
         "insight_input": {
             "key": "spend_vs_forecast:2026-05:Food",
             "insight": "Dining Out is significantly down this week at $84. Delivered Food is significantly up this week at $91. Food is thus significantly down this week to $231.",
-            "figures": "*   **Total Food:** $231 (May 3–9, 2026) vs. $275 (Apr 26–May 2) vs. $196 (Apr 19–25)\n*   **Dining Out:** $84 (May 3–9, 2026)\n*   **Delivered Food:** $91 (May 3–9, 2026)",
             "drivers": "Your food spending this week is characterized by a shift toward convenience, despite an overall decline in total food expenditure compared to last week ($275). While **Dining Out** spending totaled $84 (e.g., Five Guys: $39, Wendy's: $23, McDonald's: $21), **Delivered Food** (DoorDash, Uber Eats, Grubhub) reached $91, suggesting that delivery services have overtaken dining out as your primary method for prepared meals this week.",
         },
-        "ideal_response": "3 lines: include linked+colored Food category; use weekly link; preserve key; concise.",
-    }
+        "ideal_response": "2 lines: linked+colored Meals (weekly); driver summary; preserve key; concise.",
+    },
+    {
+        "name": "spend_vs_forecast_food_week_dining_down_volume",
+        "insight_input": {
+            "key": "spend_vs_forecast:2026-05:Food",
+            "insight": "Dining Out is significantly down this week at $105.  Food is thus significantly down this week to $188.",
+            "drivers": "The reduction in Dining Out is primarily due to a lower volume of transactions compared to the previous week. In the prior week (Apr 26–May 2), you had 6 Dining Out transactions totaling $299, whereas this week (May 3–9) you had only 2 transactions (Five Guys: $17, Chipotle: $88). The overall Food total is also lower because you had no Grocery spending this week, compared to $189 at Walmart in the prior week.",
+        },
+        "ideal_response": "2 lines; weekly Meals link; preserve key.",
+    },
+    {
+        "name": "spend_vs_forecast_food_month_zero_vs_actual",
+        "insight_input": {
+            "key": "spend_vs_forecast:2026-05:Food",
+            "insight": "Delivered Food is significantly down this month at $0. Groceries is significantly down this month at $0. Food is thus significantly down this month to $0.",
+            "drivers": "The insight indicating $0 spend is inaccurate. While spending on meals_delivered_food and meals_groceries has not been recorded yet in May, you have spent $24.00 on food so far this month, which is categorized as meals_dining_out (Merchant: AM PM Convenience, $24.00). The significant drop compared to April ($286.07) and March ($345.51) is due to the fact that we are only six days into May, and you have not yet made your typical recurring grocery or food delivery purchases for the month.",
+        },
+        "ideal_response": "insight_correct: false; 2 lines; monthly Meals; drivers correct the $0 rollup.",
+    },
 ]
 
 
 def _run_test_with_logging(
-    insight_input: dict,
+    insight_input: Dict[str, Any] | str,
     optimizer: RationalizedPennyInsightsVerbalizerOptimizer | None = None,
 ):
     if optimizer is None:
         optimizer = RationalizedPennyInsightsVerbalizerOptimizer()
 
     print("=" * 80)
-    print("LLM INPUT (insight_input):")
+    if isinstance(insight_input, str):
+        input_text = insight_input.strip()
+        if not input_text:
+            raise ValueError("insight_input string is empty.")
+    else:
+        input_text = format_insight_input_for_llm(insight_input)
+    print("LLM INPUT (markdown):")
     print("=" * 80)
-    print(json.dumps(insight_input, indent=2, ensure_ascii=False))
+    print(input_text)
     print("=" * 80 + "\n")
 
-    result = optimizer.generate_response(insight_input)
+    result = optimizer.generate_response(input_text)
 
     print("=" * 80)
     print("LLM OUTPUT (rationalized verbalized):")
