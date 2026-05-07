@@ -64,7 +64,9 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """**Axis: comprehensiveness** for **rationalize_change**. Does **Rationalize Response** give **evidence-backed** explanations—amounts, periods, named categories/merchants—and cover the **investigations implied by Rationalize What** (comparisons across months, subcategories, merchant mix, etc.)? Judge **only** the markdown provided.
+SYSTEM_PROMPT = """Grade **comprehensive** only.
+
+**Axis: comprehensiveness** for **rationalize_change**. Does **Rationalize Response** give **evidence-backed** explanations—amounts, periods, named categories/merchants—and cover the **investigations implied by Rationalize What** (comparisons across months, subcategories, merchant mix, etc.)? Judge **only** the markdown provided.
 
 **Structure:** `# Rationalize What` then `# Rationalize Response` (typically `## Figures`, `## Drivers`, `## Next steps`).
 
@@ -78,6 +80,8 @@ SYSTEM_PROMPT = """**Axis: comprehensiveness** for **rationalize_change**. Does 
 If unsure between **1** and **2**, choose **2** when any concrete total appears with a loosely relevant driver.
 
 **`notes`:** One sentence; name concrete dimensions (subcategories, which months compared, merchants) that justify the score.
+
+Return **only** the JSON object matching the schema (`score`, `notes`).
 """
 
 
@@ -195,11 +199,7 @@ class CheckerOptimizer:
     ]
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
-    user_msg = (
-      "Grade **comprehensive** only. Input is markdown (plain text):\n\n"
-      + (agent_outcome or "")
-      + "\n\nRespond with the JSON object only."
-    )
+    user_msg = (agent_outcome or "").strip()
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
     cfg = types.GenerateContentConfig(
       temperature=self.temperature,

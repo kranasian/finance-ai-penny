@@ -62,7 +62,9 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """Grade **one axis: insightful** for **rationalize_change**. Judge whether **Rationalize Response** **interprets** the situation versus **Rationalize What**—prioritizing what actually drove the change and **why it matters**—not merely echoing figures or the headline story.
+SYSTEM_PROMPT = """Grade **insightful** only.
+
+Judge whether **Rationalize Response** **interprets** the situation versus **Rationalize What**—prioritizing what actually drove the change and **why it matters**—not merely echoing figures or the headline story.
 
 **Input:** markdown: `# Rationalize What` then `# Rationalize Response`. Judge **only** this text.
 
@@ -76,6 +78,8 @@ Reward reasoning grounded in **actual amounts and drivers written** in the respo
 - **1** — **Restates** figures or the prompt’s framing with little/no interpretation or prioritization.
 
 **`notes`:** One sentence naming strengths or gaps—e.g. premise vs data, swing factor, takeaway—so the score is auditable.
+
+Return **only** the JSON object matching the schema (`score`, `notes`).
 """
 
 
@@ -159,11 +163,7 @@ class CheckerOptimizer:
     ]
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
-    user_msg = (
-      "Grade **insightful** only. Input is markdown (plain text):\n\n"
-      + (agent_outcome or "")
-      + "\n\nRespond with the JSON object only."
-    )
+    user_msg = (agent_outcome or "").strip()
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
     cfg = types.GenerateContentConfig(
       temperature=self.temperature,

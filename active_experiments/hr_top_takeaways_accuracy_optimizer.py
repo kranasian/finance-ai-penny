@@ -47,7 +47,7 @@ def _print_section_banner(title: str) -> None:
   print(f"\n{_SECTION_RULE}\n{title}\n{_SECTION_RULE}\n")
 
 
-SYSTEM_PROMPT = """Grade **one axis: accuracy** for **top_takeaways**.
+SYSTEM_PROMPT = """Grade **accuracy** only.
 
 Input includes:
 1) The **rationalize contexts bundle**: a `<CONTEXTS>` block with **one or more** `<CONTEXT>` entries (even for a single context, it is still wrapped in `<CONTEXTS>`), each containing `<RATIONALIZE>` markdown.
@@ -58,7 +58,7 @@ Input includes:
 - **3** — Some vagueness or minor unsupported specificity, but no clear contradictions vs `<CONTEXTS>`.
 - **1** — Clear hallucinations or contradictions vs `<CONTEXTS>` (e.g., invents precise dollar amounts/merchants not present, swaps highlight vs lowlight direction, or adds extra sections / wrong headings).
 
-Return ONLY JSON: `{ "score": <1-5>, "notes": "<one short sentence>" }`.
+Return **only** the JSON object matching the schema (`score`, `notes`).
 """
 
 
@@ -280,11 +280,7 @@ class TopTakeawaysAccuracyCheckerOptimizer:
     self.output_schema = _build_output_schema(self._types)
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
-    user_msg = (
-      "Grade **accuracy** only. Input is markdown (plain text):\n\n"
-      + (agent_outcome or "")
-      + "\n\nRespond with the JSON object only."
-    )
+    user_msg = (agent_outcome or "").strip()
     t = self._types
     contents = [t.Content(role="user", parts=[t.Part.from_text(text=user_msg)])]
     cfg = t.GenerateContentConfig(

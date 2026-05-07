@@ -43,7 +43,11 @@ TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "good_aligned",
     "batch": 1,
-    "input": """<RATIONALIZE>
+    "input": """<CONTEXTS>
+
+<CONTEXT index="1">
+
+<RATIONALIZE>
 
 # Rationalize What
 
@@ -64,6 +68,10 @@ Several Costco transactions appear miscategorized as Miscellaneous.
 Create a categorization rule so Costco is always groceries.
 
 </RATIONALIZE>
+
+</CONTEXT>
+
+</CONTEXTS>
 
 <PROPOSAL>
 
@@ -104,7 +112,11 @@ Create a categorization rule so Costco is always groceries.
   {
     "name": "bad_hallucinated_merchant",
     "batch": 1,
-    "input": """<RATIONALIZE>
+    "input": """<CONTEXTS>
+
+<CONTEXT index="1">
+
+<RATIONALIZE>
 
 # Rationalize What
 
@@ -125,6 +137,10 @@ Several Costco transactions appear miscategorized as Miscellaneous.
 Create a categorization rule so Costco is always groceries.
 
 </RATIONALIZE>
+
+</CONTEXT>
+
+</CONTEXTS>
 
 <PROPOSAL>
 
@@ -164,7 +180,11 @@ Create a categorization rule so Costco is always groceries.
   {
     "name": "real_service_fees_goal_two_rounds",
     "batch": 1,
-    "input": """<RATIONALIZE>
+    "input": """<CONTEXTS>
+
+<CONTEXT index="1">
+
+<RATIONALIZE>
 
 # Rationalize What
 
@@ -186,6 +206,10 @@ Credit card interest charges decreased.
 2. Review APR / statement details to confirm why interest changed.
 
 </RATIONALIZE>
+
+</CONTEXT>
+
+</CONTEXTS>
 
 <PROPOSAL>
 
@@ -230,9 +254,7 @@ _No tool calls this round._
   {
     "name": "multi_two_contexts_synthesized",
     "batch": 1,
-    "input": """Multiple prior rationalize contexts:
-
-<CONTEXTS>
+    "input": """<CONTEXTS>
 
 <CONTEXT index="1">
 
@@ -325,9 +347,7 @@ Review recurring tutoring charges for consistency.
   {
     "name": "multi_drops_second_context",
     "batch": 1,
-    "input": """Multiple prior rationalize contexts:
-
-<CONTEXTS>
+    "input": """<CONTEXTS>
 
 <CONTEXT index="1">
 
@@ -419,13 +439,6 @@ Review recurring tutoring charges for consistency.
 ]
 
 
-CHECKER_USER_MSG_PREFIX = (
-  "Grade **accuracy** only.\n"
-  "Input may be **single-context** (`<RATIONALIZE>` / `<PROPOSAL>` / `<CALLS>`) or **multi-context** "
-  "(`Multiple prior rationalize contexts:` + `<CONTEXTS>` …, then `<PROPOSAL>`, then `<CALLS>`).\n\n"
-)
-
-
 def _build_output_schema(_types: Any) -> Any:
   return _types.Schema(
     type=_types.Type.OBJECT,
@@ -437,23 +450,23 @@ def _build_output_schema(_types: Any) -> Any:
   )
 
 
-SYSTEM_PROMPT = """You are a **strict rubric grader** for the checker bundle below (XML-style role wrappers; do not require table/column names).
+SYSTEM_PROMPT = """Grade **accuracy** only.
 
-You receive **evidence**, then **`<PROPOSAL>`**, then **`<CALLS>`**. Evidence may be **single** or **multi** context.
+You are a **strict rubric grader** for the checker bundle below (XML-style role wrappers; do not require table/column names).
 
-**Evidence — one of:**
+You receive **evidence**, then **`<PROPOSAL>`**, then **`<CALLS>`**.
 
-1. **Single rationalize (`propose_next_steps`):** **`<RATIONALIZE>` … `</RATIONALIZE>`** — Markdown from **one** rationalize-per-category outcome: figures, drivers, next steps.
+**Evidence:**
 
-2. **Multiple rationalizes (`propose_next_steps_multi`):** **`Multiple prior rationalize contexts:`** plus **`<CONTEXTS>` … `</CONTEXTS>`**. Each **`<CONTEXT index="N">`** contains **`<RATIONALIZE>` … `</RATIONALIZE>`** for that prior run (same kind of markdown as (1)). Optionally **`<RATIONALIZE_CALLS>` … `</RATIONALIZE_CALLS>`** holds **that rationalize run’s** stored LLM trace — **not** the propose run.
+- **`<CONTEXTS>` … `</CONTEXTS>`**: one or more **`<CONTEXT index="N">`** blocks. Each **`<CONTEXT>`** contains **`<RATIONALIZE>` … `</RATIONALIZE>`** (figures, drivers, next steps). Optionally **`<RATIONALIZE_CALLS>` … `</RATIONALIZE_CALLS>`** holds **that rationalize run’s** stored LLM trace — **not** the propose run. Alternatively, the bundle may use a single top-level **`<RATIONALIZE>` … `</RATIONALIZE>`** with no **`<CONTEXTS>`** wrapper (same markdown as inside a context).
 
 For **grounding**, treat **all** **`<RATIONALIZE>`** bodies as the **combined** evidence; the proposal should synthesize across contexts.
 
-**Then (same for single and multi):**
+**Then:**
 
-3. **`<PROPOSAL>` … `</PROPOSAL>`** — Markdown from the **propose** outcome (`agent_outcome`): normally **only** the **`# Proposal`** block with **`## Proposed next steps`** and **`## Open items (not addressed)`** (or equivalent **`##`** headings if `# Proposal` was omitted).
+1. **`<PROPOSAL>` … `</PROPOSAL>`** — Markdown from the **propose** outcome (`agent_outcome`): normally **only** the **`# Proposal`** block with **`## Proposed next steps`** and **`## Open items (not addressed)`** (or equivalent **`##`** headings if `# Proposal` was omitted).
 
-4. **`<CALLS>` … `</CALLS>`** — Markdown listing **LLM round-trips** from **this same propose / propose-multi run** (`calls` field): `# Round N`, optional metrics, **`## Invoked tools`** with numbered tools and fenced argument blocks. **`latency_ms` / `input_tokens` / `output_tokens`** appear only when present in source data.
+2. **`<CALLS>` … `</CALLS>`** — Markdown listing **LLM round-trips** from **this same propose / propose-multi run** (`calls` field): `# Round N`, optional metrics, **`## Invoked tools`** with numbered tools and fenced argument blocks. **`latency_ms` / `input_tokens` / `output_tokens`** appear only when present in source data.
 
 **Do not** confuse **`<RATIONALIZE_CALLS>`** inside a **`<CONTEXT>`** with **`<CALLS>`** at the end. Grade tool consistency for the propose run using **`<CALLS>`** only.
 
@@ -507,11 +520,7 @@ class ProposeNextStepsAccuracyCheckerOptimizer:
     self.output_schema = _build_output_schema(self._types)
 
   def grade(self, bundled_input: str) -> Dict[str, Any]:
-    user_msg = (
-      CHECKER_USER_MSG_PREFIX
-      + (bundled_input or "")
-      + "\n\nRespond with the JSON object only."
-    )
+    user_msg = (bundled_input or "").strip()
     t = self._types
     contents = [t.Content(role="user", parts=[t.Part.from_text(text=user_msg)])]
     cfg = t.GenerateContentConfig(

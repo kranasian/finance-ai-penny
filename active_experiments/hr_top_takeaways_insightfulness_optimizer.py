@@ -47,7 +47,7 @@ def _print_section_banner(title: str) -> None:
   print(f"\n{_SECTION_RULE}\n{title}\n{_SECTION_RULE}\n")
 
 
-SYSTEM_PROMPT = """Grade **one axis: insightfulness** for **top_takeaways**.
+SYSTEM_PROMPT = """Grade **insightfulness** only.
 
 Input includes:
 1) The **rationalize contexts bundle**: a `<CONTEXTS>` block with **one or more** `<CONTEXT>` entries (even for a single context, it is still wrapped in `<CONTEXTS>`), each containing `<RATIONALIZE>` markdown.
@@ -58,7 +58,7 @@ Input includes:
 - **3** — Some synthesis but still generic or list-like; limited prioritization or “so what”.
 - **1** — Pure restatement, redundant bullets, or unhelpful vagueness (“spending changed”) that doesn’t add value as a rollup.
 
-Return ONLY JSON: `{ "score": <1-5>, "notes": "<one short sentence>" }`.
+Return **only** the JSON object matching the schema (`score`, `notes`).
 """
 
 
@@ -278,11 +278,7 @@ class TopTakeawaysInsightfulnessCheckerOptimizer:
     self.output_schema = _build_output_schema(self._types)
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
-    user_msg = (
-      "Grade **insightfulness** only. Input is markdown (plain text):\n\n"
-      + (agent_outcome or "")
-      + "\n\nRespond with the JSON object only."
-    )
+    user_msg = (agent_outcome or "").strip()
     t = self._types
     contents = [t.Content(role="user", parts=[t.Part.from_text(text=user_msg)])]
     cfg = t.GenerateContentConfig(

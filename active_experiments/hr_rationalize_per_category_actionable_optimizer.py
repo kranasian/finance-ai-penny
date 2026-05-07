@@ -62,7 +62,9 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """Grade **one axis: actionable** for **rationalize_change**. Judge **only** the **## Next steps** list in **Rationalize Response** (use figures/drivers for context).
+SYSTEM_PROMPT = """Grade **actionable** only.
+
+Judge **only** the **## Next steps** list in **Rationalize Response** (use figures/drivers for context).
 
 **What counts (Penny / product / AI):** Concrete actions the system can implement—e.g. **budget caps**, **goals**, **categorization or merchant→category rules**, **tagging**, surfacing in **app views**—**tied to findings** (amounts, merchants, categories named above).
 
@@ -78,6 +80,8 @@ SYSTEM_PROMPT = """Grade **one axis: actionable** for **rationalize_change**. Ju
 - **1** — Lifestyle-only, missing **## Next steps**, or nothing usable **for the AI/product**.
 
 **`notes`:** One sentence—Penny-style actions vs user-life advice—so the score is auditable.
+
+Return **only** the JSON object matching the schema (`score`, `notes`).
 """
 
 
@@ -160,11 +164,7 @@ class CheckerOptimizer:
     ]
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
-    user_msg = (
-      "Grade **actionable** only. Input is markdown (plain text):\n\n"
-      + (agent_outcome or "")
-      + "\n\nRespond with the JSON object only."
-    )
+    user_msg = (agent_outcome or "").strip()
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
     cfg = types.GenerateContentConfig(
       temperature=self.temperature,
