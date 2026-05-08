@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import sys
+import warnings
 from typing import Any, Dict
 
 try:
@@ -35,6 +36,31 @@ if load_dotenv is not None:
 GEMINI_2_5_FLASH_MODEL = "gemini-flash-lite-latest"
 
 
+def _extract_stream_chunk_text(chunk: Any) -> str:
+    """Build text from a streaming chunk without reading ``chunk.text`` first.
+
+    ``chunk.text`` triggers noisy SDK warnings when responses mix ``thought_signature``
+    or other non-text parts with JSON text (google-genai streaming).
+    """
+    pieces: list[str] = []
+    for cand in getattr(chunk, "candidates", None) or []:
+        content = getattr(cand, "content", None)
+        if not content:
+            continue
+        for part in getattr(content, "parts", None) or []:
+            if getattr(part, "thought", False):
+                continue
+            t = getattr(part, "text", None)
+            if isinstance(t, str) and t:
+                pieces.append(t)
+    if pieces:
+        return "".join(pieces)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=r".*non-text parts in the response.*")
+        agg = getattr(chunk, "text", None)
+        return agg if isinstance(agg, str) else ""
+
+
 def _build_output_schema() -> "types.Schema":
     if types is None:  # pragma: no cover
         raise RuntimeError(
@@ -44,15 +70,22 @@ def _build_output_schema() -> "types.Schema":
         type=types.Type.OBJECT,
         required=["key", "insight", "insight_correct"],
         properties={
-            "key": types.Schema(type=types.Type.STRING),
+            "key": types.Schema(
+                type=types.Type.STRING,
+                description="Same string as input # Key (insight identifier); copy verbatim.",
+            ),
             "insight": types.Schema(
                 type=types.Type.STRING,
-                description="User-facing message (may be multi-line).",
+                description=(
+                    "Single-line rationalized message: g{}/r{} colored link and amount, optional driver detail, "
+                    "one trailing emoji; no newlines."
+                ),
             ),
             "insight_correct": types.Schema(
                 type=types.Type.BOOLEAN,
                 description=(
-                    "True if input insight agrees with drivers; false if drivers contradict or correct the insight."
+                    "True if # Insight matches # Drivers. False only when drivers contradict facts in the insight "
+                    "(e.g. spend exists but insight says $0)."
                 ),
             ),
         },
@@ -74,124 +107,57 @@ def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
     )
 
 
-SYSTEM_PROMPT = """## Persona
+# Canonical system prompt for ``P:RationalizedPennyInsightsVerbalizer`` — paste into DB ``penny_templates`` when promoting changes.
+SYSTEM_PROMPT = """## Quality gates
 
-You are Penny, a friendly and positive personal finance advisor.
+- JSON only: `key` must equal **# Key** verbatim.
+- **Timeframe**: Reuse **# Insight** wording ("this week", "last week", "this month", "last month"). The link uses `/weekly` or `/monthly` matching that period—never swap week ↔ month.
+- **Direction**: Keep up/down/higher/lower/exceeded from **# Insight**; do not replace with neutral **"currently $X"** / **"is currently"** as the main framing when **# Insight** already states direction.
+- **Banned phrasing:** never use the words **currently** or **is currently** anywhere in `insight`—use **"down to"**, **"so far"**, **"as of early …"**, or explicit direction verbs instead.
+- **Emoji**: Exactly one trailing emoji after a space. **Exceeded budget/limit** (goal keys, red) → prefer **😟**; false-zero corrections → **⚠️**; uncategorized spikes → **😟**; avoid **💸** for breaches.
+- **`spend_vs_forecast:` / `spent_vs_forecast:`** keys → **forecast** copy (divergence: "down at", "up at", "down to", "lower at")—not budget/limit wording.
+- **`_vs_goal:`** in **# Key** → **budget/limit** copy ("exceeded your limit", "over your budget")—not standalone forecast phrasing.
+
+## Persona
+
+You are Penny, a friendly personal finance advisor.
 
 ## Objective
 
-Turn a single structured insight into a *rationalized* user message: a short headline plus a concrete driver summary.
+Compress **# Insight** + **# Drivers** into one rationalized, single-line message in JSON field `insight`.
 
 ## Input
 
-Markdown with **exactly three top-level headings** (`#`), in this order (spellings must match):
-
-# Key
-
-…insight identifier (preserve exactly in JSON output `key`).
-
-# Insight
-
-…one-sentence summary (may be improved).
-
-# Drivers
-
-…paragraph explaining what drove the change (may include merchant examples).
+Markdown with exactly three top-level headings in order: `# Key`, `# Insight`, `# Drivers`.
 
 ## Output
 
-Return a JSON object with:
-
-- `key`: exactly as given under **# Key**
-- `insight_correct`: boolean. **true** if the **# Insight** body is consistent with what the **# Drivers** section states; **false** if drivers contradict, correct, or invalidate the insight (e.g. inaccurate totals, missing categories, partial month not reflected in the headline). Judge using **only** those two sections, no outside facts.
-- `insight`: one continuous **single-line** rationalized message (no newline characters). Combine (a) a punchy opening that includes the linked+colored category and main amount per Coloring rules, then (b) 1–2 short clauses grounded in **# Drivers**—join with a space or light punctuation, not a line break. If `insight_correct` is false, the opening may reflect the correction implied by **# Drivers** only. **Do not** prefix with "Drivers:".
+- `key`: exactly **# Key**
+- `insight_correct`: **false** only if **# Drivers** contradicts **# Insight** on facts (e.g. claims $0 but drivers show spend). Early-month context that explains the same figures is **not** a contradiction → **true**.
+- `insight`: one line (no newlines). No `Drivers:` prefix.
 
 ## Rules
 
-1. No greeting.
-2. Do not invent facts beyond the **# Insight** and **# Drivers** bodies.
-3. Keep merchant names exactly as provided when you mention them.
-4. Prefer dollars without decimals (e.g. $11 not $10.99) unless the input figure is < $10.
-5. Be concise: target ≤ 320 characters total per output `insight`.
-6. Use only the provided Markdown (no outside context).
-7. Rely on the linked category for drill-down to detailed totals.
+1. No greeting. Facts only from **# Insight** and **# Drivers**; merchant names verbatim when cited.
+2. Target ≤320 characters; prefer whole dollars unless amount < $10.
+3. **Category link (required):** include **one** primary drill-down as `g{[Display](/slug/weekly)}` or `g{[Display](/slug/monthly)}` (or `r{…}`). **Never** color a bare category name without the markdown link inside the same wrapper (invalid: `r{Groceries}` alone; valid: `r{[Groceries](/meals_groceries/weekly)}`).
+4. Color the **main dollar amount** you feature with the **same** `g`/`r` as that link.
+5. **Umbrella `…:Food` keys:** for combined food totals or corrections, prefer **`[Meals](/meals/weekly)`** or **`[Meals](/meals/monthly)`**. Use a narrower slug (e.g. `meals_dining_out`) only when the sentence is **only** about that subcategory.
+6. **`insight_correct` false:** open with drivers' facts (correct totals). For Food umbrella wrong-$0 cases, use **`g{[Meals](/meals/…)}`** and an explicit correction such as **"— not $0"** when appropriate.
+7. **Forecast phrasing:** prefer **"down at / up at / down to / lower at / higher at"** plus timeframe words from **# Insight**; include merchants or drivers when space allows.
+8. **Goal phrasing:** budget/limit language; map Display from the segment after the last `:` in **# Key** to its slug (e.g. Dining Out → `meals_dining_out`). When **# Insight** contains **"exceeded your limit"** / **"over your budget"**, prefer opening **"You exceeded your budget for …"** with the linked category when it fits.
+9. If **# Drivers** lists multiple notable merchants or charges, prefer weaving **at least two** concrete items into `insight` when ≤320 chars allows (names/amounts verbatim).
+10. Never tautology on zero: do not write both "$0 spend" and "down to $0"; use **one** **down to g{$0}** (or `r{}`) clause with colored amount.
 
-## Coloring (required)
+## Coloring
 
-Use these wrappers exactly:
+- `g{…}` / `r{…}`. For typical **outflows**: lower spend vs forecast or good news → **g**; higher / exceeded limit → **r**. Invert for true inflow categories when applicable.
 
-- Green: `g{...}`
-- Red: `r{...}`
+## Slugs (Display→slug, pipe-separated)
 
-**Always color:**
-- The linked category (wrap the full link token): `g{[Leisure](/leisure/monthly)}` or `r{[Leisure](/leisure/monthly)}`
-- The main dollar amount you cite in the headline clause: `g{$11}` or `r{$11}`
+Outflows: Meals→meals | Dining Out→meals_dining_out | Delivered Food→meals_delivered_food | Groceries→meals_groceries | Leisure→leisure | Entertainment→leisure_entertainment | Travel and Vacations→leisure_travel | Education→education | Kids Activities→education_kids_activities | Tuition→education_tuition | Transport→transportation | Public Transit→transportation_public | Car and Fuel→transportation_car | Health→health | Medical and Pharmacy→health_medical_pharmacy | Gym and Wellness→health_gym_wellness | Personal Care→health_personal_care | Donations and Gifts→donations_gifts | Uncategorized→uncategorized | Miscellaneous→miscellaneous | Bills→bills | Connectivity→bills_connectivity | Insurance→bills_insurance | Taxes→bills_taxes | Service Fees→bills_service_fees | Shelter→shelter | Home→shelter_home | Utilities→shelter_utilities | Upkeep→shelter_upkeep | Shopping→shopping | Clothing→shopping_clothing | Gadgets→shopping_gadgets | Kids→shopping_kids | Pets→shopping_pets | Transfers→transfers
 
-**Color consistency:** the category link and the main amount must use the **same** color.
-
-**Default direction rules:**
-- For **spending / outflows**: down/lower is **green**, up/higher is **red**.
-- For **income / inflows**: up/higher is **green**, down/lower is **red**.
-
-If the **# Insight** body uses words like "down", "lower", "up", "higher", "exceeded", "within limit", follow that direction.
-If direction is unclear, infer from the insight type under **# Key** (`spend_vs_*` / `spent_vs_*` are outflows unless the category is an Inflow category from the list).
-
-## Linking + category slug mapping (required)
-
-Your output must include a linked category for the category referenced under **# Key**.
-
-- **Category link format**: `[Display Name](/slug/weekly)` or `[Display Name](/slug/monthly)`.
-- **Timeframe**:
-  - If **# Key** includes a `YYYY-MM` segment (e.g. `spend_vs_forecast:2026-05:Leisure`), use `/monthly`.
-  - If **# Key** includes a `YYYY-MM-DD` segment (weekly keys), use `/weekly`.
-  - Otherwise, infer timeframe from **# Insight** ("this week" → weekly, "this month" → monthly).
-- **Slug mapping**: use the slug in parentheses from the Official Category List below. If **# Key** uses a general label (e.g. "Food"), pick the closest official slug (e.g. `meals`).
-
-### Official Category List (Display Name → slug)
-
-#### Outflows
-*   Meals (meals)
-*   Dining Out (meals_dining_out)
-*   Delivered Food (meals_delivered_food)
-*   Groceries (meals_groceries)
-*   Leisure (leisure)
-*   Entertainment (leisure_entertainment)
-*   Travel and Vacations (leisure_travel)
-*   Education (education)
-*   Kids Activities (education_kids_activities)
-*   Tuition (education_tuition)
-*   Transport (transportation)
-*   Public Transit (transportation_public)
-*   Car and Fuel (transportation_car)
-*   Health (health)
-*   Medical and Pharmacy (health_medical_pharmacy)
-*   Gym and Wellness (health_gym_wellness)
-*   Personal Care (health_personal_care)
-*   Donations and Gifts (donations_gifts)
-*   Uncategorized (uncategorized)
-*   Miscellaneous (miscellaneous)
-*   Bills (bills)
-*   Connectivity (bills_connectivity)
-*   Insurance (bills_insurance)
-*   Taxes (bills_taxes)
-*   Service Fees (bills_service_fees)
-*   Shelter (shelter)
-*   Home (shelter_home)
-*   Utilities (shelter_utilities)
-*   Upkeep (shelter_upkeep)
-*   Shopping (shopping)
-*   Clothing (shopping_clothing)
-*   Gadgets (shopping_gadgets)
-*   Kids (shopping_kids)
-*   Pets (shopping_pets)
-*   Transfers (transfers)
-
-#### Inflows
-*   Income (income)
-*   Salary (income_salary)
-*   Sidegig (income_sidegig)
-*   Business (income_business)
-*   Interest (income_interest)
+Inflows: Income→income | Salary→income_salary | Sidegig→income_sidegig | Business→income_business | Interest→income_interest
 """
 
 
@@ -218,7 +184,8 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
         self.temperature = 0.5
         self.top_p = 0.95
         self.top_k = 40
-        self.max_output_tokens = 4096
+        # Enough for JSON + ≤320-char insight; keeps generation cheap vs 4k ceiling.
+        self.max_output_tokens = 1152
         self.safety_settings = [
             types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
             types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
@@ -261,8 +228,9 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
                 contents=contents,
                 config=cfg,
             ):
-                if chunk.text is not None:
-                    output_text += chunk.text
+                piece = _extract_stream_chunk_text(chunk)
+                if piece:
+                    output_text += piece
                 if hasattr(chunk, "candidates") and chunk.candidates:
                     for candidate in chunk.candidates:
                         if hasattr(candidate, "content") and candidate.content:
@@ -321,7 +289,26 @@ The significant decrease in leisure spending is due to a reduction in the number
         "output": """{
   "key": "spend_vs_forecast:2026-05:Leisure",
   "insight_correct": true,
-  "insight": "g{Leisure is way down to g{$11} at g{[Leisure](/leisure/monthly)}}. April had streaming plus AMC ($41.68); May so far is just Spotify ($11), after a much higher March."
+  "insight": "g{Leisure is way down to g{$11} at g{[Leisure](/leisure/monthly)}}. April had streaming plus AMC ($41.68); May so far is just Spotify ($11), after a much higher March. 😊"
+}""",
+    },
+    {
+        "name": "spend_vs_forecast_leisure_entertainment_zero_early_month",
+        "input": """# Key
+
+spend_vs_forecast:2026-05:Leisure
+
+# Insight
+
+Entertainment is significantly down this month at $0.
+
+# Drivers
+
+The $0 spent on entertainment so far in May is not necessarily a permanent change; it reflects the fact that no entertainment transactions have posted to your account in the first six days of the month. In April, you had multiple recurring and one-off charges, including Netflix ($116.40 and $112.80) and StubHub ($93.90). The drop simply indicates that these regular subscription cycles or discretionary purchases have not yet occurred or hit your account during the early part of this month.""",
+        "output": """{
+  "key": "spend_vs_forecast:2026-05:Leisure",
+  "insight_correct": true,
+  "insight": "g{Entertainment is down at g{$0} this month at g{[Entertainment](/leisure_entertainment/monthly)}}, as usual subscriptions and discretionary purchases have not yet posted early in May. 📆"
 }""",
     },
     {
@@ -340,7 +327,7 @@ Your food spending this week is characterized by a shift toward convenience, des
         "output": """{
   "key": "spend_vs_forecast:2026-05:Food",
   "insight_correct": true,
-  "insight": "g{Food is down to g{$231} at g{[Meals](/meals/weekly)}} with g{delivery at g{$91}} edging out g{dining out at g{$84}}. DoorDash, Uber Eats, and Grubhub made up most prepared meals versus Five Guys, Wendy's, and McDonald's."
+  "insight": "Your total g{[Meals](/meals/weekly)} spend is down to g{$231} this week, as Dining Out decreased to $84 (e.g., Five Guys, Wendy's) while Delivered Food rose to $91 via services like DoorDash and Uber Eats. 📉"
 }""",
     },
     {
@@ -359,7 +346,7 @@ The reduction in Dining Out is primarily due to a lower volume of transactions c
         "output": """{
   "key": "spend_vs_forecast:2026-05:Food",
   "insight_correct": true,
-  "insight": "g{Dining out is down to g{$105} and food to g{$188} at g{[Meals](/meals/weekly)}}. You had two dining trips this week vs six last week ($299); no Walmart groceries vs $189 before."
+  "insight": "Your g{[Meals](/meals/weekly)} spend is down to g{$188} this week, with dining out at Five Guys ($17) and Chipotle ($88) significantly lower and no grocery spending recorded."
 }""",
     },
     {
@@ -378,7 +365,83 @@ The insight indicating $0 spend is inaccurate. While spending on meals_delivered
         "output": """{
   "key": "spend_vs_forecast:2026-05:Food",
   "insight_correct": false,
-  "insight": "g{Food spend is g{$24} so far at g{[Meals](/meals/monthly)}} — not $0. Drivers show AM PM Convenience $24; delivered/grocery buckets are quiet early in May vs heavier March and April."
+  "insight": "Your g{[Meals](/meals/monthly)} spend is down at g{$24} so far this month — not $0 — driven by a $24.00 charge at AM PM Convenience. This reflects a significant decrease compared to previous months as you have not yet made your typical grocery or delivery purchases. ⚠️"
+}""",
+    },
+    {
+        "name": "spend_vs_forecast_food_zero_accurate_early_may_keeps_direction",
+        "input": """# Key
+
+spend_vs_forecast:2026-05:Food
+
+# Insight
+
+Dining Out is significantly down this month at $0. Groceries is significantly down this month at $0. Food is thus significantly down this month to $0.
+
+# Drivers
+
+The reported $0 spend for May 2026 accurately reflects that there have been no recorded dining out or grocery transactions processed for the month of May as of May 6th. In contrast, you spent $1,201.43 on food in April and $2,400.93 in March. The current \"significant drop\" is simply due to this being very early in the month.""",
+        "output": """{
+  "key": "spend_vs_forecast:2026-05:Food",
+  "insight_correct": true,
+  "insight": "As of early this month, your g{[Meals](/meals/monthly)} spend is down to g{$0} — not a significant drop, but simply because the month has just begun. ⚠️"
+}""",
+    },
+    {
+        "name": "spend_vs_forecast_uncategorized_weekly_not_monthly",
+        "input": """# Key
+
+spend_vs_forecast:2026-05:Uncategorized
+
+# Insight
+
+Uncategorized is slightly up this week at $2988.
+
+# Drivers
+
+The spike in uncategorized spending this week is driven by a single large transaction: **Property Group LLC for $2,850.00**. This makes up the vast majority of the $2,988.42 currently listed as uncategorized. Smaller items contributing to the total include an ATM withdrawal ($100.00) and a charge at the School Cafeteria ($38.42), both from May 3rd.""",
+        "output": """{
+  "key": "spend_vs_forecast:2026-05:Uncategorized",
+  "insight_correct": true,
+  "insight": "r{[Uncategorized](/uncategorized/weekly)} is up this week at r{$2988}, primarily driven by a $2,850 property payment alongside smaller ATM and school cafeteria charges. 😟"
+}""",
+    },
+    {
+        "name": "spend_vs_goal_dining_out_over_budget_penny_style",
+        "input": """# Key
+
+spend_vs_goal:2026-05-03:Dining Out
+
+# Insight
+
+Dining Out significantly exceeded your limit this week at $79.
+
+# Drivers
+
+Your spending in **Dining Out** reached $78.89 for the current week, an increase of $35.19 compared to last week, with purchases including Olive Garden and Dunkin' Donuts.""",
+        "output": """{
+  "key": "spend_vs_goal:2026-05-03:Dining Out",
+  "insight_correct": true,
+  "insight": "You exceeded your budget for r{[Dining Out](/meals_dining_out/weekly)} this week at r{$79} due to spending at Olive Garden and Dunkin' Donuts. 😟"
+}""",
+    },
+    {
+        "name": "spent_vs_goal_groceries_over_limit_costco_publix_applebees",
+        "input": """# Key
+
+spent_vs_goal:2026-04-26:Groceries
+
+# Insight
+
+Groceries significantly exceeded your limit last week at $414.
+
+# Drivers
+
+The grocery spend was driven primarily by two large trips: Costco: $190.12 and Publix: $163.92. Additionally, there was a $59.56 transaction at Applebee's that was categorized as meals_groceries. This appears to be a miscategorization, as dining out typically falls under meals_dining_out. Excluding this restaurant charge, your grocery spending would have been $354.04, which still exceeds your typical weekly spend of ~$180–$190 but is significantly closer to your average.""",
+        "output": """{
+  "key": "spent_vs_goal:2026-04-26:Groceries",
+  "insight_correct": true,
+  "insight": "You blew past your grocery budget at r{[Groceries](/meals_groceries/weekly)} last week at r{$414}: Costco ~$190 and Publix ~$164 carried most of it; Applebee's ~$60 is tagged groceries but reads like dining out — without it you're still ~$354 vs ~$180–190 typical. ⚠️"
 }""",
     },
 ]
