@@ -104,10 +104,7 @@ Return a JSON object with:
 
 - `key`: exactly as given under **# Key**
 - `insight_correct`: boolean. **true** if the **# Insight** body is consistent with what the **# Drivers** section states; **false** if drivers contradict, correct, or invalidate the insight (e.g. inaccurate totals, missing categories, partial month not reflected in the headline). Judge using **only** those two sections, no outside facts.
-- `insight`: a rationalized message formatted as:
-
-Line 1: one punchy sentence (include linked+colored category and main amount per Coloring rules). If `insight_correct` is false, Line 1 may reflect the correction implied by **# Drivers** while staying factual to **# Drivers** only.
-Line 2: 1–2 short sentences grounded in the **# Drivers** body. **Do not** prefix with "Drivers:".
+- `insight`: one continuous **single-line** rationalized message (no newline characters). Combine (a) a punchy opening that includes the linked+colored category and main amount per Coloring rules, then (b) 1–2 short clauses grounded in **# Drivers**—join with a space or light punctuation, not a line break. If `insight_correct` is false, the opening may reflect the correction implied by **# Drivers** only. **Do not** prefix with "Drivers:".
 
 ## Rules
 
@@ -128,7 +125,7 @@ Use these wrappers exactly:
 
 **Always color:**
 - The linked category (wrap the full link token): `g{[Leisure](/leisure/monthly)}` or `r{[Leisure](/leisure/monthly)}`
-- The main dollar amount you cite in Line 1: `g{$11}` or `r{$11}`
+- The main dollar amount you cite in the headline clause: `g{$11}` or `r{$11}`
 
 **Color consistency:** the category link and the main amount must use the **same** color.
 
@@ -310,39 +307,79 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
 TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "spend_vs_forecast_leisure_down",
-        "insight_input": {
-            "key": "spend_vs_forecast:2026-05:Leisure",
-            "insight": "Leisure is significantly down this month at $11.",
-            "drivers": "The significant decrease in leisure spending is due to a reduction in the number and type of entertainment transactions compared to previous months. In April, you had four leisure transactions ($76.15 total) including streaming subscriptions and a cinema visit (AMC Theatres: $41.68). So far in May, the only leisure transaction is your monthly Spotify subscription ($10.99 on May 3). March saw notably higher spending ($584.50) due to a higher volume of transactions.",
-        },
-        "ideal_response": "2 lines: headline + driver text; preserve key; linked+colored category; no invented facts; concise.",
+        "input": """# Key
+
+spend_vs_forecast:2026-05:Leisure
+
+# Insight
+
+Leisure is significantly down this month at $11.
+
+# Drivers
+
+The significant decrease in leisure spending is due to a reduction in the number and type of entertainment transactions compared to previous months. In April, you had four leisure transactions ($76.15 total) including streaming subscriptions and a cinema visit (AMC Theatres: $41.68). So far in May, the only leisure transaction is your monthly Spotify subscription ($10.99 on May 3). March saw notably higher spending ($584.50) due to a higher volume of transactions.""",
+        "output": """{
+  "key": "spend_vs_forecast:2026-05:Leisure",
+  "insight_correct": true,
+  "insight": "g{Leisure is way down to g{$11} at g{[Leisure](/leisure/monthly)}}. April had streaming plus AMC ($41.68); May so far is just Spotify ($11), after a much higher March."
+}""",
     },
     {
         "name": "spend_vs_forecast_food_weekly_mix",
-        "insight_input": {
-            "key": "spend_vs_forecast:2026-05:Food",
-            "insight": "Dining Out is significantly down this week at $84. Delivered Food is significantly up this week at $91. Food is thus significantly down this week to $231.",
-            "drivers": "Your food spending this week is characterized by a shift toward convenience, despite an overall decline in total food expenditure compared to last week ($275). While **Dining Out** spending totaled $84 (e.g., Five Guys: $39, Wendy's: $23, McDonald's: $21), **Delivered Food** (DoorDash, Uber Eats, Grubhub) reached $91, suggesting that delivery services have overtaken dining out as your primary method for prepared meals this week.",
-        },
-        "ideal_response": "2 lines: linked+colored Meals (weekly); driver summary; preserve key; concise.",
+        "input": """# Key
+
+spend_vs_forecast:2026-05:Food
+
+# Insight
+
+Dining Out is significantly down this week at $84. Delivered Food is significantly up this week at $91. Food is thus significantly down this week to $231.
+
+# Drivers
+
+Your food spending this week is characterized by a shift toward convenience, despite an overall decline in total food expenditure compared to last week ($275). While **Dining Out** spending totaled $84 (e.g., Five Guys: $39, Wendy's: $23, McDonald's: $21), **Delivered Food** (DoorDash, Uber Eats, Grubhub) reached $91, suggesting that delivery services have overtaken dining out as your primary method for prepared meals this week.""",
+        "output": """{
+  "key": "spend_vs_forecast:2026-05:Food",
+  "insight_correct": true,
+  "insight": "g{Food is down to g{$231} at g{[Meals](/meals/weekly)}} with g{delivery at g{$91}} edging out g{dining out at g{$84}}. DoorDash, Uber Eats, and Grubhub made up most prepared meals versus Five Guys, Wendy's, and McDonald's."
+}""",
     },
     {
         "name": "spend_vs_forecast_food_week_dining_down_volume",
-        "insight_input": {
-            "key": "spend_vs_forecast:2026-05:Food",
-            "insight": "Dining Out is significantly down this week at $105.  Food is thus significantly down this week to $188.",
-            "drivers": "The reduction in Dining Out is primarily due to a lower volume of transactions compared to the previous week. In the prior week (Apr 26–May 2), you had 6 Dining Out transactions totaling $299, whereas this week (May 3–9) you had only 2 transactions (Five Guys: $17, Chipotle: $88). The overall Food total is also lower because you had no Grocery spending this week, compared to $189 at Walmart in the prior week.",
-        },
-        "ideal_response": "2 lines; weekly Meals link; preserve key.",
+        "input": """# Key
+
+spend_vs_forecast:2026-05:Food
+
+# Insight
+
+Dining Out is significantly down this week at $105.  Food is thus significantly down this week to $188.
+
+# Drivers
+
+The reduction in Dining Out is primarily due to a lower volume of transactions compared to the previous week. In the prior week (Apr 26–May 2), you had 6 Dining Out transactions totaling $299, whereas this week (May 3–9) you had only 2 transactions (Five Guys: $17, Chipotle: $88). The overall Food total is also lower because you had no Grocery spending this week, compared to $189 at Walmart in the prior week.""",
+        "output": """{
+  "key": "spend_vs_forecast:2026-05:Food",
+  "insight_correct": true,
+  "insight": "g{Dining out is down to g{$105} and food to g{$188} at g{[Meals](/meals/weekly)}}. You had two dining trips this week vs six last week ($299); no Walmart groceries vs $189 before."
+}""",
     },
     {
         "name": "spend_vs_forecast_food_month_zero_vs_actual",
-        "insight_input": {
-            "key": "spend_vs_forecast:2026-05:Food",
-            "insight": "Delivered Food is significantly down this month at $0. Groceries is significantly down this month at $0. Food is thus significantly down this month to $0.",
-            "drivers": "The insight indicating $0 spend is inaccurate. While spending on meals_delivered_food and meals_groceries has not been recorded yet in May, you have spent $24.00 on food so far this month, which is categorized as meals_dining_out (Merchant: AM PM Convenience, $24.00). The significant drop compared to April ($286.07) and March ($345.51) is due to the fact that we are only six days into May, and you have not yet made your typical recurring grocery or food delivery purchases for the month.",
-        },
-        "ideal_response": "insight_correct: false; 2 lines; monthly Meals; drivers correct the $0 rollup.",
+        "input": """# Key
+
+spend_vs_forecast:2026-05:Food
+
+# Insight
+
+Delivered Food is significantly down this month at $0. Groceries is significantly down this month at $0. Food is thus significantly down this month to $0.
+
+# Drivers
+
+The insight indicating $0 spend is inaccurate. While spending on meals_delivered_food and meals_groceries has not been recorded yet in May, you have spent $24.00 on food so far this month, which is categorized as meals_dining_out (Merchant: AM PM Convenience, $24.00). The significant drop compared to April ($286.07) and March ($345.51) is due to the fact that we are only six days into May, and you have not yet made your typical recurring grocery or food delivery purchases for the month.""",
+        "output": """{
+  "key": "spend_vs_forecast:2026-05:Food",
+  "insight_correct": false,
+  "insight": "g{Food spend is g{$24} so far at g{[Meals](/meals/monthly)}} — not $0. Drivers show AM PM Convenience $24; delivered/grocery buckets are quiet early in May vs heavier March and April."
+}""",
     },
 ]
 
@@ -394,17 +431,20 @@ def run_test(test_name_or_index_or_dict, optimizer: RationalizedPennyInsightsVer
         optimizer = RationalizedPennyInsightsVerbalizerOptimizer()
 
     if isinstance(test_name_or_index_or_dict, dict):
-        if "insight_input" not in test_name_or_index_or_dict:
-            print("Invalid test dict: must contain 'insight_input' key.")
+        di = test_name_or_index_or_dict
+        if "input" in di:
+            payload = di["input"]
+        elif "insight_input" in di:
+            payload = di["insight_input"]
+        else:
+            print("Invalid test dict: must contain 'input' or 'insight_input' key.")
             return None
-        name = test_name_or_index_or_dict.get("name", "custom_test")
+        name = di.get("name", "custom_test")
         print(f"\n{'='*80}\nRunning test: {name}\n{'='*80}\n")
-        result = _run_test_with_logging(test_name_or_index_or_dict["insight_input"], optimizer)
-        if test_name_or_index_or_dict.get("ideal_response"):
-            print(
-                "\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n"
-                + test_name_or_index_or_dict["ideal_response"] + "\n" + "=" * 80 + "\n"
-            )
+        result = _run_test_with_logging(payload, optimizer)
+        ideal = di.get("output") or di.get("ideal_response")
+        if ideal:
+            print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + ideal + "\n" + "=" * 80 + "\n")
         return result
 
     tc = get_test_case(test_name_or_index_or_dict)
@@ -412,12 +452,10 @@ def run_test(test_name_or_index_or_dict, optimizer: RationalizedPennyInsightsVer
         print(f"Test case '{test_name_or_index_or_dict}' not found.")
         return None
     print(f"\n{'='*80}\nRunning test: {tc['name']}\n{'='*80}\n")
-    result = _run_test_with_logging(tc["insight_input"], optimizer)
-    if tc.get("ideal_response"):
-        print(
-            "\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n"
-            + tc["ideal_response"] + "\n" + "=" * 80 + "\n"
-        )
+    result = _run_test_with_logging(tc["input"], optimizer)
+    ideal = tc.get("output") or tc.get("ideal_response")
+    if ideal:
+        print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + ideal + "\n" + "=" * 80 + "\n")
     return result
 
 
