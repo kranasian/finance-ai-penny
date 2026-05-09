@@ -1,0 +1,803 @@
+"""
+Propose-next-steps rubrics optimizer.
+
+Use this to iterate on a checker system prompt (e.g. for a future Penny template)
+that scores a **three-part** grader bundle (rationalize outcome, propose outcome, propose `calls`).
+
+Run from `finance-ai-penny` repo root:
+
+  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test all
+  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test good_aligned
+  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test multi_two_contexts_synthesized
+  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --model gemini-flash-lite-latest
+
+**LLM checker input**
+
+The grader expects **three** inputs, matching production Hermes/DB shapes:
+
+1. **`rationalize_agent_outcome`** — Markdown from **`/rationalize_per_category`** (same as the
+   **`ai_agent_outcomes.agent_outcome`** row for **`type = rationalize_per_category`** that was fed
+   into `/propose_next_steps`).
+2. **`propose_agent_outcome`** — Markdown from **`/propose_next_steps`** (same as the
+   **`ai_agent_outcomes.agent_outcome`** row for **`type = propose_next_steps`**: **`# Proposal`**
+   section only).
+3. **`calls`** — JSON array from the **propose_next_steps** row’s **`calls`** field (same shape as
+   Hermes `ai_agent_outcomes.calls`). Use **`[]`** when there were no round-trips.
+
+These are wrapped for the model as **`<RATIONALIZE>`**, **`<PROPOSAL>`**, and **`<CALLS>`** (calls
+rendered to markdown via `calls_to_markdown`). See `bundle_checker_input`.
+
+**Multi rationalize (`propose_next_steps_multi`)** — same **`<PROPOSAL>`** and **`<CALLS>`** (propose run), but
+evidence is **`Multiple prior rationalize contexts:`** + **`<CONTEXTS>`** … (each **`<CONTEXT>`** has
+**`<RATIONALIZE>`** and optional **`<RATIONALIZE_CALLS>`**). See `bundle_checker_input_multi`.
+
+**Quality axis (one score in output)**
+
+| Axis | What it measures |
+|------|------------------|
+| **completeness** | **Coverage + execution completeness:** important rationalize **Next steps** / drivers are addressed in **`<PROPOSAL>`** (or explicitly parked with a concrete blocker), and propose **`<CALLS>`** support what is proposed. |
+
+**Multiple rounds:** Source `calls` has **one object per LLM round-trip**; the markdown lists them as
+**`# Round 1`**, **`# Round 2`**, … with **`## Invoked tools`** under each when present.
+
+Optional: grade from disk:
+
+  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --input-json /path/to/bundle.json
+
+`bundle.json` shape (**single** propose):
+
+  {
+    "rationalize_agent_outcome": "<markdown from rationalize row>",
+    "propose_agent_outcome": "<markdown from propose_next_steps row>",
+    "calls": [ ... ]
+  }
+
+Or **multi**:
+
+  {
+    "contexts": [
+      {"rationalize_agent_outcome": "...", "calls": []},
+      {"rationalize_agent_outcome": "...", "calls": [...]}
+    ],
+    "propose_agent_outcome": "<markdown from propose_next_steps_multi row>",
+    "calls": [ ... ]
+  }
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Any, Dict
+
+try:
+  from dotenv import load_dotenv
+except Exception:  # pragma: no cover
+  load_dotenv = None
+from google import genai
+from google.genai import types
+
+if load_dotenv is not None:
+  load_dotenv()
+
+_TEST_SEPARATOR = "=" * 72
+_SECTION_RULE = "-" * 72
+
+
+def _print_section_banner(title: str) -> None:
+  print(f"\n{_SECTION_RULE}\n{title}\n{_SECTION_RULE}\n")
+
+
+def _tool_args_to_fenced_block(args: Any) -> str:
+  """Format tool arguments for markdown (fenced block)."""
+  if args is None:
+    return ""
+  if isinstance(args, str):
+    s = args.strip()
+    if not s:
+      return ""
+    try:
+      parsed = json.loads(s)
+      inner = json.dumps(parsed, indent=2, ensure_ascii=False)
+      lang = "json"
+    except Exception:
+      inner = s
+      lang = "text"
+  else:
+    inner = json.dumps(args, indent=2, ensure_ascii=False)
+    lang = "json"
+  return f"```{lang}\n{inner}\n```\n"
+
+
+def rationalize_calls_to_markdown(calls: list[Any]) -> str:
+  """Stored rationalize ``calls`` inside ``<RATIONALIZE_CALLS>`` (Hermes-aligned)."""
+  if not isinstance(calls, list) or len(calls) == 0:
+    return ""
+  parts: list[str] = []
+  for idx, turn in enumerate(calls, start=1):
+    parts.append(f"# Round {idx}\n\n")
+    if not isinstance(turn, dict):
+      parts.append(f"- _(non-object round):_ `{type(turn).__name__}`\n\n")
+      continue
+    tcs = turn.get("tool_calls")
+    if not isinstance(tcs, list) or not tcs:
+      parts.append("_No tool calls this round._\n\n")
+      continue
+    parts.append("## Invoked tools\n\n")
+    for tci, tc in enumerate(tcs, start=1):
+      if not isinstance(tc, dict):
+        parts.append(f"{tci}. _(invalid tool call entry)_\n\n")
+        continue
+      name = tc.get("tool_name") or tc.get("name")
+      fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+      if name is None and isinstance(fn, dict):
+        name = fn.get("name")
+      args = tc.get("args") if "args" in tc else tc.get("arguments")
+      if args is None and isinstance(fn, dict):
+        args = fn.get("arguments")
+      name_s = str(name or "(unknown_tool)")
+      parts.append(f"{tci}. **`{name_s}`**\n\n")
+      fence = _tool_args_to_fenced_block(args)
+      if fence:
+        parts.append(fence)
+      parts.append("\n")
+  return "".join(parts).rstrip() + "\n"
+
+
+def calls_to_markdown(calls: list[Any]) -> str:
+  """Render Hermes-style `calls` list as readable markdown for the grader."""
+  if not isinstance(calls, list) or len(calls) == 0:
+    return "_No LLM round-trips._\n"
+  parts: list[str] = []
+  for idx, turn in enumerate(calls, start=1):
+    parts.append(f"# Round {idx}\n")
+    if not isinstance(turn, dict):
+      parts.append(f"- _(non-object round):_ `{type(turn).__name__}`\n\n")
+      continue
+    meta_lines: list[str] = []
+    for key in ("call_number", "latency_ms", "input_tokens", "output_tokens", "total_tokens"):
+      if key in turn and turn[key] is not None:
+        meta_lines.append(f"- **{key}:** {turn[key]}")
+    if meta_lines:
+      parts.append("\n".join(meta_lines) + "\n\n")
+    tcs = turn.get("tool_calls")
+    if not isinstance(tcs, list) or not tcs:
+      parts.append("_No tool calls this round._\n\n")
+      continue
+    parts.append("## Invoked tools\n\n")
+    for tci, tc in enumerate(tcs, start=1):
+      if not isinstance(tc, dict):
+        parts.append(f"{tci}. _(invalid tool call entry)_\n\n")
+        continue
+      name = tc.get("tool_name") or tc.get("name")
+      fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+      if name is None and isinstance(fn, dict):
+        name = fn.get("name")
+      args = tc.get("args") if "args" in tc else tc.get("arguments")
+      if args is None and isinstance(fn, dict):
+        args = fn.get("arguments")
+      name_s = str(name or "(unknown_tool)")
+      parts.append(f"{tci}. **`{name_s}`**\n\n")
+      fence = _tool_args_to_fenced_block(args)
+      if fence:
+        parts.append(fence)
+      parts.append("\n")
+  return "".join(parts).rstrip() + "\n"
+
+
+def bundle_checker_input(
+  *,
+  rationalize_agent_outcome: str,
+  propose_agent_outcome: str,
+  calls: list[Any],
+) -> str:
+  """Build grader message: ``<RATIONALIZE>``, ``<PROPOSAL>``, ``<CALLS>``. ``calls`` may be ``[]``."""
+  ra = (rationalize_agent_outcome or "").strip()
+  pa = (propose_agent_outcome or "").strip()
+  if not ra or not pa:
+    raise ValueError(
+      "rationalize_agent_outcome and propose_agent_outcome must be non-empty markdown strings."
+    )
+  if not isinstance(calls, list):
+    raise TypeError("calls must be a list (use [] if the propose row has no LLM round-trips).")
+  out = (
+    f"<RATIONALIZE>\n\n{ra}\n\n</RATIONALIZE>\n\n"
+    f"<PROPOSAL>\n\n{pa}\n\n</PROPOSAL>\n"
+  )
+  calls_md = calls_to_markdown(calls)
+  out += f"\n<CALLS>\n\n{calls_md}\n</CALLS>\n"
+  return out
+
+
+def _append_proposal_and_calls(out: str, propose_agent_outcome: str, calls: list[Any]) -> str:
+  pa = (propose_agent_outcome or "").strip()
+  if not pa:
+    raise ValueError("propose_agent_outcome must be non-empty.")
+  if not isinstance(calls, list):
+    raise TypeError("calls must be a list (use [] if the propose row has no LLM round-trips).")
+  calls_md = calls_to_markdown(calls)
+  return (
+    out
+    + f"<PROPOSAL>\n\n{pa}\n\n</PROPOSAL>\n\n"
+    + f"<CALLS>\n\n{calls_md}\n</CALLS>\n"
+  )
+
+
+def bundle_checker_input_multi(
+  *,
+  contexts: list[dict[str, Any]],
+  propose_agent_outcome: str,
+  calls: list[Any],
+) -> str:
+  """
+  Grader bundle for ``propose_next_steps_multi``: ``CONTEXTS`` (same outer shape as Hermes), then ``<PROPOSAL>``, ``<CALLS>``.
+  Each context dict: ``rationalize_agent_outcome`` (str), optional ``calls`` (list, rationalize row trace).
+  """
+  if not isinstance(contexts, list) or not contexts:
+    raise ValueError("contexts must be a non-empty list of dicts.")
+  inner_parts: list[str] = []
+  for i, ctx in enumerate(contexts, start=1):
+    if not isinstance(ctx, dict):
+      raise TypeError(f"contexts[{i - 1}] must be a dict")
+    ra = (ctx.get("rationalize_agent_outcome") or "").strip()
+    if not ra:
+      raise ValueError(f"contexts[{i - 1}].rationalize_agent_outcome must be non-empty")
+    body = ra.rstrip("\n")
+    chunks: list[str] = [
+      f'<CONTEXT index="{i}">\n\n',
+      "<RATIONALIZE>\n\n",
+      body,
+      "\n\n</RATIONALIZE>\n",
+    ]
+    calls_val = ctx.get("calls")
+    if isinstance(calls_val, list) and len(calls_val) > 0:
+      md = rationalize_calls_to_markdown(calls_val)
+      if md.strip():
+        chunks.append("\n<RATIONALIZE_CALLS>\n\n")
+        chunks.append(md.rstrip("\n") + "\n")
+        chunks.append("\n</RATIONALIZE_CALLS>\n")
+    chunks.append("\n</CONTEXT>")
+    inner_parts.append("".join(chunks))
+  inner = "\n\n".join(inner_parts)
+  head = (
+    "Multiple prior rationalize contexts:\n\n"
+    "<CONTEXTS>\n\n"
+    + inner
+    + "\n\n</CONTEXTS>\n\n"
+  )
+  return _append_proposal_and_calls(head, propose_agent_outcome, calls)
+
+
+CHECKER_USER_MSG_PREFIX = (
+  "Grade **completeness** only (one axis).\n"
+  "Input may be **single-context** (`<RATIONALIZE>` / `<PROPOSAL>` / `<CALLS>`) or **multi-context** "
+  "(`Multiple prior rationalize contexts:` + `<CONTEXTS>` …, then `<PROPOSAL>`, then `<CALLS>`).\n\n"
+)
+
+
+_AXIS_SCHEMA = types.Schema(
+  type=types.Type.OBJECT,
+  required=["score", "notes"],
+  properties={
+    "score": types.Schema(type=types.Type.INTEGER, description="Integer 1–5."),
+    "notes": types.Schema(type=types.Type.STRING, description="One short sentence."),
+  },
+)
+
+OUTPUT_SCHEMA = types.Schema(
+  type=types.Type.OBJECT,
+  required=["completeness"],
+  properties={
+    "completeness": _AXIS_SCHEMA,
+  },
+)
+
+
+SYSTEM_PROMPT = """You are a strict rubric grader.
+
+Input order: evidence (`<RATIONALIZE>` in one or more `<CONTEXT>` blocks), then `<PROPOSAL>`, then propose-run `<CALLS>`.
+Treat all `<RATIONALIZE>` bodies across contexts as one combined evidence set. Do not use `<RATIONALIZE_CALLS>` for scoring.
+Grade only what is present; do not infer missing facts.
+
+Return only JSON matching schema with one axis:
+- `completeness`: `score` 1-5 and one short `notes` sentence.
+
+Notes-writing rules:
+- `notes` must be concise and direct.
+- For scores 1-4, list all major issues found in the proposal bundle (coverage gaps, misplaced open items, and call/proposal mismatches), not just one issue.
+- Prefer one sentence with compact clauses separated by semicolons.
+- Keep issue phrases short and concrete; avoid generic lead-ins like "The proposal fails to...".
+- For score 5, keep notes brief and do not add unnecessary justification.
+- Issue checklist for scores 1-4 (mention every applicable item):
+  - Missing impactful rationalize step(s) in proposed next steps (e.g., rule creation, recategorization, budgeting).
+  - Penny-executable actions parked under open items instead of proposed next steps.
+  - Missing propose-run calls when execution is required, or calls that are unrelated/misaligned.
+  - Name omitted impactful actions explicitly (e.g., missing rule creation, missing recategorization, missing budget creation) when they apply.
+  - When actions are parked in open items, name the parked actions explicitly.
+
+Scoring rule for `completeness`:
+1) Coverage/execution fit:
+   - Important rationalize next steps must appear in `## Proposed next steps` (not only in open items).
+   - Only clearly non-impact items may be omitted without major penalty.
+   - Penny-executable actions (goals, categorization rules, recategorization, transaction-data analyses) should be proposed; keep in open items only when a concrete blocker is stated.
+2) Tool-trace consistency:
+   - `<CALLS>` must support proposed actions with relevant tools/args.
+   - If calls are unrelated to proposal actions, score low (usually 1-2).
+   - If calls are clearly unrelated to both proposal actions and rationalize priorities, assign score = 1.
+   - If no propose calls exist while proposal requires tool execution, score 3 when proposal is otherwise grounded; use 1-2 only when there are additional major grounding/coverage failures.
+3) Open-items quality:
+   - Open items should be truly unresolved dependencies, specific and useful.
+
+Calibration:
+- 5: no meaningful completeness gap.
+- 4: minor omission/mismatch, no major execution gap.
+- 3: clear but fixable gap.
+- 2: multiple material issues.
+- 1: largely fails (major coverage miss and/or severe call mismatch).
+
+Score anchors:
+- If proposal is mostly grounded but moves Penny-executable actions to open items, score 3 unless there are additional major failures.
+- If one or more impactful rationalize next steps are omitted but remaining parts are grounded, cap at 3.
+- Use 4 only for minor/non-impact omissions.
+- When key actionable items are present but parked under open items instead of proposed next steps, do not score below 3 solely for that mistake (even if calls are empty).
+- If grounded content is present and the primary defect is "actionable items parked as open items," assign score = 3.
+"""
+
+
+# Minimal fixtures: rationalize snippet + propose bundle + synthetic calls
+_RATIONALIZE_BASE = """# Rationalize What
+
+Explain: Food and fees pattern this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- Groceries: $420 this month.
+- Service Fees / interest: $85 this month.
+
+## Drivers
+
+Several Costco and Trader Joe's transactions appear miscategorized as Miscellaneous.
+Interest charges persist due to carried revolving balance.
+
+## Next steps
+
+1. Create a categorization rule so Costco and Trader Joe's map to Groceries.
+2. Recategorize past miscategorized grocery transactions by transaction IDs after retrieval.
+3. Create a monthly spending budget for Service Fees to reduce recurring interest.
+4. Review APR details to confirm whether rate changes drove this month's fee movement.
+"""
+
+_PROPOSAL_PERFECT = """# Proposal
+
+## Proposed next steps
+
+1. **Create** a merchant rule to map Costco and Trader Joe's to Groceries for past and future transactions.
+2. **Retrieve** candidate grocery transactions currently under Miscellaneous, then **recategorize** confirmed IDs into Groceries.
+3. **Create** a monthly Service Fees budget target to keep interest charges trending down.
+
+## Open items (not addressed)
+
+1. **Review** APR and card statement terms to verify whether fee changes came from rate shifts versus balance behavior.
+"""
+
+_CALLS_PERFECT: list[dict[str, Any]] = [
+  {
+    "tool_calls": [
+      {
+        "tool_name": "propose_create_categorization_rule",
+        "args": json.dumps(
+          {
+            "rule": {"name_sub_in": ["costco", "trader joe"]},
+            "ai_category_id": 4,
+            "scope": "future_and_past",
+            "rationale": "Known grocery merchants are miscategorized as Miscellaneous.",
+          }
+        ),
+      },
+      {
+        "tool_name": "propose_retrieve_transactions",
+        "args": json.dumps(
+          {
+            "date_range": {"start": "2026-04-01", "end": "2026-04-30"},
+            "merchant_name_sub_in": ["costco", "trader joe"],
+            "current_category": "miscellaneous",
+          }
+        ),
+      },
+      {
+        "tool_name": "propose_recategorize_transactions",
+        "args": json.dumps(
+          {
+            "transaction_ids": [1101, 1102, 1109],
+            "target_category": "groceries",
+            "rationale": "Correct known misclassified grocery transactions.",
+          }
+        ),
+      },
+      {
+        "tool_name": "propose_create_goal",
+        "args": json.dumps(
+          {
+            "category": "bills_service_fees",
+            "goal_type": "spending_budget",
+            "goal_title": "Cap Service Fees",
+            "target_amount": 75,
+            "time_horizon": "monthly",
+            "rationale": "Keep recurring interest charges under control.",
+          }
+        ),
+      },
+    ],
+  },
+]
+
+_PROPOSAL_CALLS_MISMATCH = """# Proposal
+
+## Proposed next steps
+
+1. **Create** a merchant rule to map Costco and Trader Joe's to Groceries.
+2. **Recategorize** confirmed miscategorized grocery transactions into Groceries.
+3. **Create** a monthly Service Fees budget.
+
+## Open items (not addressed)
+
+1. **Review** APR details and statement notes.
+"""
+
+_CALLS_CALLS_MISMATCH: list[dict[str, Any]] = [
+  {
+    "tool_calls": [
+      {
+        "tool_name": "propose_create_goal",
+        "args": json.dumps(
+          {
+            "category": "entertainment",
+            "goal_type": "spending_budget",
+            "goal_title": "Limit Streaming",
+            "target_amount": 40,
+            "time_horizon": "monthly",
+            "rationale": "Unrelated optimization.",
+          }
+        ),
+      }
+    ],
+  },
+]
+
+_PROPOSAL_NO_CALLS = """# Proposal
+
+## Proposed next steps
+
+1. **Retrieve** miscategorized Costco and Trader Joe's transactions and **recategorize** them to Groceries.
+2. **Create** a monthly Service Fees budget to reduce recurring interest charges.
+
+## Open items (not addressed)
+
+1. **Review** APR details for possible rate changes.
+"""
+
+_CALLS_NO_CALLS: list[dict[str, Any]] = []
+
+_PROPOSAL_ACTIONABLE_PARKED_AS_OPEN = """# Proposal
+
+## Proposed next steps
+
+1. **Review** APR details and current statement notes.
+
+## Open items (not addressed)
+
+1. **Create** a monthly Service Fees budget to reduce recurring interest charges.
+2. **Create** a categorization rule for Costco and Trader Joe's to Groceries.
+3. **Recategorize** miscategorized grocery transactions using retrieved IDs.
+"""
+
+_CALLS_ACTIONABLE_PARKED_AS_OPEN: list[dict[str, Any]] = [
+  {
+    "tool_calls": [],
+  },
+]
+
+_PROPOSAL_MISSING_IMPACTFUL = """# Proposal
+
+## Proposed next steps
+
+1. **Create** a merchant rule to map Costco and Trader Joe's to Groceries.
+
+## Open items (not addressed)
+
+1. **Review** APR details and statement notes.
+"""
+
+_CALLS_MISSING_IMPACTFUL: list[dict[str, Any]] = [
+  {
+    "tool_calls": [
+      {
+        "tool_name": "propose_create_categorization_rule",
+        "args": json.dumps(
+          {
+            "rule": {"name_sub_in": ["costco", "trader joe"]},
+            "ai_category_id": 4,
+            "scope": "future_and_past",
+            "rationale": "Capture repeat grocery misclassification.",
+          }
+        ),
+      }
+    ],
+  },
+]
+
+_RATIONALIZE_WITH_NON_IMPACTFUL = """# Rationalize What
+
+Explain: Food and fees pattern this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- Groceries: $420 this month.
+- Service Fees / interest: $85 this month.
+
+## Drivers
+
+Several grocery merchants are miscoded; interest charges remain.
+
+## Next steps
+
+1. Create a categorization rule so Costco and Trader Joe's map to Groceries.
+2. Recategorize past miscategorized grocery transactions by transaction IDs after retrieval.
+3. Create a monthly spending budget for Service Fees.
+4. Optionally add a brief monthly journal note explaining grocery seasonality.
+"""
+
+_RATIONALIZE_TRACE_CALLS: list[dict[str, Any]] = [
+  {
+    "tool_calls": [
+      {
+        "tool_name": "retrieve_user_spending_transactions_by_sql",
+        "args": json.dumps(
+          {
+            "sql_query": "SELECT * FROM user_spending_transactions WHERE date >= '2026-04-01' AND date <= '2026-04-30' ORDER BY date DESC",
+          }
+        ),
+      }
+    ],
+  },
+  {
+    "tool_calls": [
+      {
+        "tool_name": "lookup_user_aggregate_spending",
+        "args": json.dumps({"date_in_range": "2026-04-15", "granularity": "monthly"}),
+      }
+    ],
+  },
+  {
+    "tool_calls": [],
+  },
+]
+
+_PROPOSAL_MISSING_NON_IMPACTFUL = """# Proposal
+
+## Proposed next steps
+
+1. **Create** a merchant rule to map Costco and Trader Joe's to Groceries.
+2. **Retrieve** candidate miscategorized grocery transactions, then **recategorize** confirmed IDs.
+3. **Create** a monthly Service Fees budget target.
+
+## Open items (not addressed)
+
+1. **Review** APR details and statement terms.
+"""
+
+_CALLS_MISSING_NON_IMPACTFUL: list[dict[str, Any]] = list(_CALLS_PERFECT)
+
+TEST_CASES: list[dict[str, Any]] = [
+  {
+    "name": "calls_do_not_match_proposal",
+    "ideal_response": {
+      "completeness": {"score": 1, "notes": "Proposal omits a retrieval step before recategorization and uses an unrelated entertainment call, so proposal actions and calls are materially misaligned with rationalize priorities."},
+    },
+    "payload": bundle_checker_input_multi(
+      contexts=[{"rationalize_agent_outcome": _RATIONALIZE_BASE.strip(), "calls": _RATIONALIZE_TRACE_CALLS}],
+      propose_agent_outcome=_PROPOSAL_CALLS_MISMATCH.strip(),
+      calls=_CALLS_CALLS_MISMATCH,
+    ),
+  },
+  {
+    "name": "perfect_proposal_and_calls",
+    "ideal_response": {
+      "completeness": {"score": 5, "notes": "Complete and well-aligned."},
+    },
+    "payload": bundle_checker_input_multi(
+      contexts=[{"rationalize_agent_outcome": _RATIONALIZE_BASE.strip(), "calls": _RATIONALIZE_TRACE_CALLS}],
+      propose_agent_outcome=_PROPOSAL_PERFECT.strip(),
+      calls=_CALLS_PERFECT,
+    ),
+  },
+  {
+    "name": "no_calls_even_if_necessary",
+    "ideal_response": {
+      "completeness": {"score": 3, "notes": "Proposal includes executable recategorization and budget actions but has no propose-run call trace to validate execution support and does not explicitly include the rationalize rule-creation step."},
+    },
+    "payload": bundle_checker_input_multi(
+      contexts=[{"rationalize_agent_outcome": _RATIONALIZE_BASE.strip(), "calls": _RATIONALIZE_TRACE_CALLS}],
+      propose_agent_outcome=_PROPOSAL_NO_CALLS.strip(),
+      calls=_CALLS_NO_CALLS,
+    ),
+  },
+  {
+    "name": "actionable_steps_wrongly_parked_open",
+    "ideal_response": {
+      "completeness": {"score": 3, "notes": "Proposal parks key executable actions (rule creation, recategorization, and budgeting) in open items instead of proposed steps and provides no supporting calls for execution."},
+    },
+    "payload": bundle_checker_input_multi(
+      contexts=[{"rationalize_agent_outcome": _RATIONALIZE_BASE.strip(), "calls": _RATIONALIZE_TRACE_CALLS}],
+      propose_agent_outcome=_PROPOSAL_ACTIONABLE_PARKED_AS_OPEN.strip(),
+      calls=_CALLS_ACTIONABLE_PARKED_AS_OPEN,
+    ),
+  },
+  {
+    "name": "missing_impactful_rationalize_steps",
+    "ideal_response": {
+      "completeness": {"score": 3, "notes": "Proposal keeps only the categorization-rule thread but misses impactful recategorization and budgeting actions from rationalize and leaves the resulting execution plan incomplete."},
+    },
+    "payload": bundle_checker_input_multi(
+      contexts=[{"rationalize_agent_outcome": _RATIONALIZE_BASE.strip(), "calls": _RATIONALIZE_TRACE_CALLS}],
+      propose_agent_outcome=_PROPOSAL_MISSING_IMPACTFUL.strip(),
+      calls=_CALLS_MISSING_IMPACTFUL,
+    ),
+  },
+  {
+    "name": "missing_non_impactful_rationalize_steps",
+    "ideal_response": {
+      "completeness": {"score": 5, "notes": "Complete coverage of impactful steps."},
+    },
+    "payload": bundle_checker_input_multi(
+      contexts=[{"rationalize_agent_outcome": _RATIONALIZE_WITH_NON_IMPACTFUL.strip(), "calls": _RATIONALIZE_TRACE_CALLS}],
+      propose_agent_outcome=_PROPOSAL_MISSING_NON_IMPACTFUL.strip(),
+      calls=_CALLS_MISSING_NON_IMPACTFUL,
+    ),
+  },
+]
+
+
+class ProposeNextStepsCheckerOptimizer:
+  def __init__(
+    self,
+    model_name: str = "gemini-flash-lite-latest",
+    *,
+    max_output_tokens: int = 256,
+    thinking_budget: int = 0,
+  ):
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+      raise ValueError("GEMINI_API_KEY environment variable is not set.")
+    self.client = genai.Client(api_key=api_key)
+    self.model_name = model_name
+    self.temperature = 0.0
+    self.top_p = 0.95
+    self.max_output_tokens = max_output_tokens
+    self.thinking_budget = thinking_budget
+    self.system_prompt = SYSTEM_PROMPT
+    self.safety_settings = [
+      types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+      types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+      types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+      types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
+    ]
+
+  def grade(self, bundled_input: str) -> Dict[str, Any]:
+    user_msg = (
+      CHECKER_USER_MSG_PREFIX
+      + (bundled_input or "")
+      + "\n\nRespond with the JSON object only."
+    )
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
+    cfg = types.GenerateContentConfig(
+      temperature=self.temperature,
+      top_p=self.top_p,
+      max_output_tokens=self.max_output_tokens,
+      safety_settings=self.safety_settings,
+      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      thinking_config=types.ThinkingConfig(thinking_budget=self.thinking_budget, include_thoughts=True),
+      response_mime_type="application/json",
+      response_schema=OUTPUT_SCHEMA,
+    )
+    out = self.client.models.generate_content(model=self.model_name, contents=contents, config=cfg)
+    text = (out.text or "").strip()
+    try:
+      return json.loads(text)
+    except Exception:
+      s = text[text.find("{") : text.rfind("}") + 1] if ("{" in text and "}" in text) else "{}"
+      return json.loads(s)
+
+
+def main() -> None:
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--test", type=str, default="all", help="Test name or 'all'.")
+  parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
+  parser.add_argument("--max-output-tokens", type=int, default=256)
+  parser.add_argument("--thinking-budget", type=int, default=0)
+  parser.add_argument(
+    "--input-json",
+    type=str,
+    default=None,
+    help='JSON with "propose_agent_outcome", "calls", and either "rationalize_agent_outcome" (single) or '
+    '"contexts" array (multi); see module docstring.',
+  )
+  args = parser.parse_args()
+
+  opt = ProposeNextStepsCheckerOptimizer(
+    model_name=args.model,
+    max_output_tokens=args.max_output_tokens,
+    thinking_budget=args.thinking_budget,
+  )
+
+  if args.input_json:
+    raw = open(args.input_json, encoding="utf-8").read()
+    obj = json.loads(raw)
+    if not isinstance(obj, dict):
+      raise SystemExit("--input-json must contain a JSON object")
+    pao = obj.get("propose_agent_outcome")
+    calls_raw = obj.get("calls")
+    ctx_list = obj.get("contexts")
+    if not isinstance(pao, str) or not pao.strip():
+      raise SystemExit('--input-json requires non-empty string "propose_agent_outcome".')
+    if not isinstance(calls_raw, list):
+      raise SystemExit(
+        '--input-json requires "calls" as a JSON array (use [] if the propose row has no calls).'
+      )
+    if isinstance(ctx_list, list) and ctx_list:
+      bundle = bundle_checker_input_multi(
+        contexts=ctx_list,
+        propose_agent_outcome=pao.strip(),
+        calls=calls_raw,
+      )
+    else:
+      rao = obj.get("rationalize_agent_outcome")
+      if not isinstance(rao, str) or not rao.strip():
+        raise SystemExit(
+          '--input-json requires either "contexts" (non-empty array) or non-empty "rationalize_agent_outcome".'
+        )
+      bundle = bundle_checker_input(
+        rationalize_agent_outcome=rao.strip(),
+        propose_agent_outcome=pao.strip(),
+        calls=calls_raw,
+      )
+    _print_section_banner("# LLM Checker Input (--input-json)")
+    print(bundle)
+    result = opt.grade(bundle)
+    _print_section_banner("# LLM Checker Response")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return
+
+  if args.test == "all":
+    cases = TEST_CASES
+  else:
+    tc = next((t for t in TEST_CASES if t["name"] == args.test), None)
+    if tc is None:
+      raise SystemExit(f"Unknown test: {args.test!r}")
+    cases = [tc]
+
+  for i, tc in enumerate(cases):
+    if i:
+      print(f"\n{_TEST_SEPARATOR}\n")
+    print(f"# Test: {tc['name']}\n")
+    _print_section_banner("# LLM Checker Input")
+    print(tc["payload"])
+    result = opt.grade(tc["payload"])
+    _print_section_banner("# LLM Checker Response")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    if tc.get("ideal_response") is not None:
+      _print_section_banner("# Ideal Response")
+      print(json.dumps(tc["ideal_response"], indent=2, ensure_ascii=False))
+
+  print(f"\n{_TEST_SEPARATOR}\n")
+  print(f"# Total tests: {len(cases)}\n")
+
+
+if __name__ == "__main__":
+  main()
