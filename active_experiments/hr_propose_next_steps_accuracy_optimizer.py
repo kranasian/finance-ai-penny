@@ -894,6 +894,20 @@ class ProposeNextStepsAccuracyCheckerOptimizer:
       response_schema=self.output_schema,
     )
     out = self.client.models.generate_content(model=self.model_name, contents=contents, config=cfg)
+    thought_summary = ""
+    if hasattr(out, "candidates") and out.candidates:
+      for candidate in out.candidates:
+        if hasattr(candidate, "content") and candidate.content:
+          if hasattr(candidate.content, "parts") and candidate.content.parts:
+            for part in candidate.content.parts:
+              if hasattr(part, "thought") and part.thought:
+                if hasattr(part, "text") and part.text:
+                  thought_summary += part.text
+    if thought_summary.strip():
+      print(f"{'=' * 80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
     text = (out.text or "").strip()
     try:
       return json.loads(text)
