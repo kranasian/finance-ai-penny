@@ -1,7 +1,8 @@
 """
 Second-stage optimizer: turns **Top Takeaways** markdown (the artifact produced by
 ``top_takeaways_verbose_optimizer.py`` — ``# Top Takeaways``, ``## Highlights``, ``## Lowlights``)
-into a document that opens with ``# TLDR`` (H1), then ``## Highlights`` / ``## Lowlights``, then ``# Details`` with the same pair—each subsection uses ``- `` bullets.
+into **TLDR only**: ``# TLDR`` (H1), then ``## Highlights`` and ``## Lowlights`` with ``- `` bullets.
+The model reply must not add any headings or sections after ``## Lowlights``.
 
 Run from ``finance-ai-penny`` repo root:
 
@@ -49,7 +50,7 @@ SYSTEM_PROMPT = """You are **Penny**.
 
 The user message contains **Top Takeaways** markdown: ``# Top Takeaways``, ``## Highlights``, and ``## Lowlights`` with ``- `` bullets. This is produced by an upstream rollup step.
 
-Your task is to rewrite it into **TLDR** and **Details**, each mirroring the source shape with **Highlights** and **Lowlights** subsections. The **first line** of your reply must be the H1 ``# TLDR`` (not ``# Top Takeaways``), then the tree below.
+Your task is to rewrite it into **TLDR only**: mirror the source with ``## Highlights`` and ``## Lowlights`` under one H1. The **first line** of your reply must be exactly ``# TLDR`` (not ``# Top Takeaways``), then the tree below. **Do not** add a second H1, a second copy of Highlights/Lowlights, or any other headings or sections—your last message ends after the ``## Lowlights`` bullets.
 
 # TLDR
 
@@ -61,27 +62,31 @@ Your task is to rewrite it into **TLDR** and **Details**, each mirroring the sou
 
 - ...
 
-# Details
+**TLDR (true “too long; didn’t read”):** **Ultra-compact** — what someone skims in a few seconds. The upstream Top Takeaways already holds the full story; you **only** distill it here—leave nuance unstated rather than stretching bullets.
 
-## Highlights
+- **Length:** Aim **≤18 words** per TLDR bullet; **never exceed 22 words** (count the finished bullet, link anchors included).
+- **Shape:** **Exactly one short sentence** per bullet. **One main claim** — a single subject–verb spine. **Do not** use **semicolons**. **Do not** add a second full claim via comma splices (patterns like “…, excluding …”, “…, driven by …”, “…, largely due to …”, “…, including …” packing another fact—pick one headline; drop the rest).
+- **Content:** Lead with the **headline outcome** (what moved / what matters) and **at most one** key number or date range when the source centers on it.
+- **Links:** Whenever the source bullet includes ``[text](/path)``, the TLDR bullet for that theme must include **at least one** such link with the same ``href`` verbatim (anchor text may be tightened). Keep the link **inside** the sentence (**Link in sentence**: never a lone ``[Label](path)`` after a final ``.``). Do **not** drop drill-down links.
+- **Anchor vs path:** You may shorten anchor wording, but it must still describe the **same** category as the numeric id in that link’s ``href`` (do not imply **Food** on a **Groceries** path, or swap rollup vs leaf). Never change ``href``. Do not re-label a link so the anchor names a **different** category than the source bullet paired with that ``href``.
 
-- ...
+**Bad vs good (TLDR):**
 
-## Lowlights
+- **Bad:** ``Your early-month [Salary](/cashflow/36/monthly/2026-05) of $6,369.24 remains consistent with your regular pay cycle, excluding the one-time bonus seen in March.`` (two beats)
+- **Better:** ``May 1–10 [Salary](/cashflow/36/monthly/2026-05) matches April’s early-month level.``
 
-- ...
-
-**TLDR (true “too long; didn’t read”):** **Ultra-compact** — what someone skims in a few seconds. Each bullet: **at most one short sentence**; lead with the **headline outcome** (what moved / what matters); **no** multi-clause stacks, **no** semicolon laundry lists, **no** repeating every merchant or figure line from the source (that belongs in Details). If a bullet could be dropped into Details with only light editing, it is **too long** for TLDR — cut it down. **Whenever the source bullet you are compressing includes a Markdown drill-down ``[text](/path)``, the TLDR bullet for that theme must still include at least one such link with the same ``href``** (anchor text may be tightened); keep the link **inside** the sentence (same **Link in sentence** idea as upstream: do not tack ``[Label](path)`` alone after a final period). Do **not** strip links from TLDR only. Aim **~25 words or fewer** per TLDR bullet when feasible.
-
-**Details:** The **full** story: multiple sentences allowed; amounts, merchants, date ranges, comparisons, and nuance from the source. Each Details bullet should be **clearly longer and denser** than its TLDR counterpart for the same theme. Keep content aligned with the same subsection (highlights vs lowlights) as in the source.
+- **Bad:** ``Monthly [Uncategorized](/cashflow/-1/monthly/2026-05) …, driven by a lower volume of miscellaneous transactions.``
+- **Better:** ``[Uncategorized](/cashflow/-1/monthly/2026-05) is down for early May vs March and April.``
 
 Rules:
 - Ground everything in the provided Top Takeaways text only. Do **not** invent transactions, amounts, or dates.
 - When you cite numbers or dates, copy them exactly from the input.
-- When the input includes Markdown drill-down links ``[text](/path)``, **preserve them** in TLDR and Details (same ``href`` verbatim); you may tighten anchor text but do not drop or change URLs and do not insert a space after ``(`` in links. In TLDR, keep links **inside** the sentence (not a lone trailing link after ``.``). **Do not** omit links from TLDR while keeping them in Details for the same theme.
+- When the input includes Markdown drill-down links ``[text](/path)``, **preserve them** (same ``href`` verbatim); you may tighten anchor text but it must stay **truthful to that path’s category** (same rule as **Anchor vs path** above); do not drop or change URLs and do not insert a space after ``(`` in links. Do not pair that ``href`` with a new anchor that names a **different** category than in the source. Keep links **inside** the sentence (not a lone trailing link after ``.``).
 - For bullets about **uncategorized- or large-transaction** themes (typically ``/cashflow/transaction/…`` links on those flows), keep the same **observational** tone as vs-forecast rollup bullets in the source: **do not** add action items or imperatives (“confirm”, “verify”, “should”, “until you act”) unless the input states them verbatim.
-- **Bullet budget:** Under ``# TLDR``, at most **3** ``- `` bullets under ``## Highlights`` and at most **3** under ``## Lowlights``. Under ``# Details``, at most **3** under each of ``## Highlights`` and ``## Lowlights``. Use fewer if the source is thin; never exceed 3 in any subsection. Include all four ``##`` subsections (two under each H1) even when a bucket needs only one bullet or is minimal.
-- Output **only** this heading tree in order: ``# TLDR`` (H1, first line) → ``## Highlights`` → ``## Lowlights`` → ``# Details`` → ``## Highlights`` → ``## Lowlights``. Do **not** emit ``# Top Takeaways`` in your reply; no greeting or sign-off; do not add any other headings beyond those six lines.
+- **Transaction ``href``:** Reuse the Top Takeaways bullet’s transaction link **verbatim**—do not swap in a different path shape for the same charge (e.g. do not replace ``/cashflow/transaction/…`` from the source with ``/cashflow/-1/transaction/…`` you invented, or the reverse).
+- **Bullet budget:** At most **3** ``- `` bullets under ``## Highlights`` and at most **3** under ``## Lowlights``. Use fewer if the source is thin; never exceed 3 per subsection. Include **both** ``##`` subsections even when one bucket is minimal.
+- **Pairing:** When the source has **≤3** bullets in a subsection, keep the same count there when possible; each TLDR bullet should map to a source bullet in order. If one source bullet already has two links, you may use one TLDR bullet with **both** links in one short sentence—do not invent extra themes.
+- Output **only**: ``# TLDR`` → ``## Highlights`` → ``## Lowlights``. Do **not** emit ``# Top Takeaways`` or any heading other than those three; no greeting or sign-off.
 - Under each ``##`` subsection use **only** ``- `` bullets (no numbered lists).
 - Preserve bold labels (``**Label:**``) when helpful; match the tone of the source (direct, friendly).
 """
@@ -108,7 +113,7 @@ def _extract_stream_chunk_text(chunk: Any) -> str:
 
 
 class TopTakeawaysTldrOptimizer:
-    """Gemini one-shot: Top Takeaways markdown → ``# TLDR`` / ``# Details`` with ``## Highlights`` and ``## Lowlights`` under each."""
+    """Gemini one-shot: Top Takeaways markdown → ``# TLDR`` with ``## Highlights`` and ``## Lowlights`` only."""
 
     def __init__(
         self,
@@ -189,38 +194,26 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Highlights
 
-- **Salary rhythm:** Early-month [salary](/cashflow/36/monthly/2026-05) through May 10 matches the same window in April; the earlier “drop vs March” reflects a one-time bonus and payroll timing in March, not a pay cut.
-- **Food spend:** [Meals](/cashflow/1/monthly/2026-05) totals are lower in early May partly because only 10 days are counted vs full prior months; drivers also flag Applebee’s charges categorized as groceries.
+- Your early-month [Salary](/cashflow/36/monthly/2026-05) of $6,369.24 is consistent with your regular pay cycle, mirroring the amount received during the same period in April. The significant variance compared to March ($17,369.24) is fully explained by the one-time $8,800 "Genentech US Bonus" and higher "CA State Payroll" amounts received in the first half of March.
+- While weekly spikes occur, your overall [Uncategorized](/cashflow/-1/monthly/2026-05) spending is trending downward this month at $6,644.34 compared to $7,681.54 in April. This improvement is driven by a lower volume of miscellaneous transactions—18 in May versus 28 in April—rather than changes to major recurring charges like the $5,700 monthly payment to "Property Group LLC."
 
 ## Lowlights
 
-- **Uncategorized spike:** Last week [Uncategorized](/cashflow/-1/weekly/2026-05-03) jumped to about $6,382, driven heavily by two Property Group LLC payments ($2,850 each) and possible duplicate recurring charges (Community Pool, Costco, BP).
-- **Uncategorized trend:** Month-to-date [Uncategorized](/cashflow/-1/monthly/2026-05) is slightly down vs March/April; large recurring Property Group LLC charges still dominate, with fewer small miscellaneous transactions so far in May.
+- A recent surge in [Uncategorized](/cashflow/-1/weekly/2026-05-03) spending to $6,382.12 for the week of May 3–9 is largely driven by two $2,850 payments to "Property Group LLC." Additionally, the presence of duplicate entries for recurring charges like "Community Pool" ($83.06 x 2), "Costco" ($69.71 x 2), and "BP" ($49.56 x 2) suggests potential data reconciliation issues across your accounts.
+- Your [Groceries](/cashflow/4/monthly/2026-05) spending appears to contain miscategorized dining expenses, such as an $85.36 charge at "Applebee's" recorded on May 2nd. While total food spending is down to $1,859.34 for the first 10 days of May, these classification errors obscure the true distinction between your grocery budget and dining out costs.
 """,
         "output": """
 # TLDR
 
 ## Highlights
 
-- **Salary:** Early [salary](/cashflow/36/monthly/2026-05) matches April; March was higher on bonus timing, not a pay cut.
-- **Food:** [Meals](/cashflow/1/monthly/2026-05) looks lower partly because May is only 10 days vs full prior months.
+- **Salary:** Early [Salary](/cashflow/36/monthly/2026-05) matches April at $6,369.24 while March looked higher on a one-time bonus and payroll timing.
+- **Uncategorized:** [Uncategorized](/cashflow/-1/monthly/2026-05) is at $6,644.34 in early May with fewer small transactions than April’s $7,681.54.
 
 ## Lowlights
 
-- **Uncategorized week:** [Uncategorized](/cashflow/-1/weekly/2026-05-03) spiked near $6,382 on big Property Group LLC hits and possible duplicate recurring charges.
-- **Uncategorized month:** [Uncategorized](/cashflow/-1/monthly/2026-05) is slightly down vs March/April while large Property Group LLC repeats still dominate.
-
-# Details
-
-## Highlights
-
-- **Salary rhythm:** Early-month [salary](/cashflow/36/monthly/2026-05) through May 10 matches the same window in April at the same dollar level; the “drop vs March” in the Explain line reflects March’s one-time Genentech bonus and higher CA State Payroll in early March, not a structural pay cut.
-- **Food spend:** [Meals](/cashflow/1/monthly/2026-05) totals for early May are lower partly because only 10 days are in the window compared with full April and March months; the rationalize text also flags Applebee’s dining charges categorized as groceries, which can skew grocery totals.
-
-## Lowlights
-
-- **Uncategorized spike:** Last week [Uncategorized](/cashflow/-1/weekly/2026-05-03) jumped to about $6,382, driven heavily by two Property Group LLC payments ($2,850 each) and possible duplicate recurring charges (Community Pool, Costco, BP).
-- **Uncategorized trend:** Month-to-date [Uncategorized](/cashflow/-1/monthly/2026-05) is slightly down vs March/April; large recurring Property Group LLC charges still dominate, with fewer small miscellaneous transactions so far in May.
+- **Uncategorized week:** [Uncategorized](/cashflow/-1/weekly/2026-05-03) spiked to about $6,382 on Property Group LLC payments and possible duplicate recurring charges.
+- **Groceries:** [Groceries](/cashflow/4/monthly/2026-05) mixes Applebee’s dining into grocery totals with early-May food spend near $1,859.
 """,
     },
     {
@@ -230,32 +223,22 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Highlights
 
-- **Income stability:** May 1–10 [salary](/cashflow/36/monthly/2026-05) aligns with April’s same window; March’s higher early-month income included bonus and payroll lifts.
+- May 1–10 [Salary](/cashflow/36/monthly/2026-05) at $6,369.24 aligns with April’s same early-month window at the same dollar level. March’s higher early-month figure reflected one-time Genentech bonus and higher CA State Payroll in early March, not a structural pay cut in your regular rhythm.
 
 ## Lowlights
 
-- **Groceries vs dining:** [Food](/cashflow/1/monthly/2026-05) looks “down” partly from comparing 10 days of May to full months; Applebee’s may be miscategorized under groceries.
+- [Groceries](/cashflow/4/monthly/2026-05) early-May totals look lower partly because only 10 days of May are in the window compared with full April and March months. Applebee’s dining charges (e.g. $85.36 on May 2) still appear categorized as groceries, which skews grocery totals versus true dining spend.
 """,
         "output": """
 # TLDR
 
 ## Highlights
 
-- **Income:** May 1–10 [salary](/cashflow/36/monthly/2026-05) tracks April; March was higher on bonus and payroll timing.
+- **Income:** May 1–10 [Salary](/cashflow/36/monthly/2026-05) tracks April’s early-month level with March higher on bonus timing.
 
 ## Lowlights
 
-- **Food mix:** [Food](/cashflow/1/monthly/2026-05) looks “down” partly from a 10-day May window vs full months; Applebee’s may sit under groceries.
-
-# Details
-
-## Highlights
-
-- **Income stability:** May 1–10 [salary](/cashflow/36/monthly/2026-05) aligns with April’s same window; March’s higher early-month income included bonus and payroll lifts called out in the source.
-
-## Lowlights
-
-- **Groceries vs dining:** [Food](/cashflow/1/monthly/2026-05) looks “down” partly from comparing 10 days of May to full months; Applebee’s may be miscategorized under groceries until you recategorize those dining charges.
+- **Groceries mix:** [Groceries](/cashflow/4/monthly/2026-05) looks down on a short May window and may tuck Applebee’s dining under groceries.
 """,
     },
     {
@@ -265,35 +248,24 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Highlights
 
-- **Uncategorized outflow:** The insight flags [Property Group LLC](/cashflow/transaction/123) as an uncategorized **$2,850** outflow with **Clothing** as the likely category.
+- While weekly spikes occur, your overall [Uncategorized](/cashflow/-1/monthly/2026-05) spending is trending downward this month at $6,644.34 compared to $7,681.54 in April, with fewer miscellaneous transactions in early May even as large Property Group LLC charges remain.
 
 ## Lowlights
 
-- **Uncategorized mix:** Uncategorized totals still include [Property Group LLC](/cashflow/transaction/123) at **$2,850** while that charge posts without a category.
-- **Large dining outflow:** [Burger King](/cashflow/transaction/456) shows a **$40** single-ticket outflow on 05/09.
+- A recent surge in [Uncategorized](/cashflow/-1/weekly/2026-05-03) spending to $6,382.12 for the week of May 3–9 is largely driven by two $2,850 payments to "Property Group LLC," with duplicate-looking lines for Community Pool, Costco, and BP suggesting reconciliation noise.
+- A $2,850 [Property Group LLC](/cashflow/transaction/123) on May 5 repeats a similar May 3 hit, so the week’s spike is concentrated in a few big hits rather than many small unknowns.
 """,
         "output": """
 # TLDR
 
 ## Highlights
 
-- **Uncategorized:** [Property Group LLC](/cashflow/transaction/123) posts uncategorized at **$2,850** with Clothing as the likely category.
+- **Uncategorized:** [Uncategorized](/cashflow/-1/monthly/2026-05) is down vs April at $6,644.34 with fewer small transactions while large Property Group LLC repeats remain.
 
 ## Lowlights
 
-- **Bucket mix:** Uncategorized totals still carry [Property Group LLC](/cashflow/transaction/123) while it posts without a category.
-- **Dining ticket:** [Burger King](/cashflow/transaction/456) recorded a **$40** outflow on 05/09.
-
-# Details
-
-## Highlights
-
-- **Uncategorized outflow:** The insight flags [Property Group LLC](/cashflow/transaction/123) as an uncategorized **$2,850** outflow with **Clothing** as the likely category.
-
-## Lowlights
-
-- **Uncategorized mix:** Uncategorized totals still include [Property Group LLC](/cashflow/transaction/123) at **$2,850** while that charge posts without a category.
-- **Large dining outflow:** [Burger King](/cashflow/transaction/456) shows a **$40** single-ticket outflow on 05/09.
+- **Uncategorized week:** [Uncategorized](/cashflow/-1/weekly/2026-05-03) spiked to about $6,382 on two $2,850 Property Group LLC hits and possible duplicate recurring charges.
+- **Large transaction:** The $2,850 [Property Group LLC](/cashflow/transaction/123) echoes May 3 Property Group LLC so the week clusters on few big hits.
 """,
     },
     {
@@ -303,44 +275,30 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Highlights
 
-- **Uncategorized outflow:** The insight flags [Property Group LLC](/cashflow/transaction/123) as an uncategorized **$2,850** outflow with **Clothing** as the likely category.
-- **Leisure vs plan:** [Leisure](/cashflow/7/monthly/2026-05) is up vs forecast on weekend entertainment and a concert ticket early in May.
-- **Shopping lift:** [Shopping](/cashflow/11/monthly/2026-05) is up vs forecast after two online orders for accessories and home goods.
+- Your early-month [Salary](/cashflow/36/monthly/2026-05) of $6,369.24 is consistent with your regular pay cycle, mirroring the amount received during the same period in April, while March’s higher early-month income reflected one-time bonus and payroll lifts rather than a structural pay change.
+- Your [Groceries](/cashflow/4/monthly/2026-05) spending appears to contain miscategorized dining expenses, such as an $85.36 charge at "Applebee's" recorded on May 2nd, which skews grocery totals versus true dining spend in early May.
+- **Forecast vs actual:** [Groceries](/cashflow/4/monthly/2026-05) is tracking a few hundred dollars below your typical monthly pace, while [Food](/cashflow/1/monthly/2026-05) is roughly on forecast for the month-to-date window.
 
 ## Lowlights
 
-- **Uncategorized mix:** Uncategorized totals still include [Property Group LLC](/cashflow/transaction/123) at **$2,850** while that charge posts without a category.
-- **Large dining outflow:** [Burger King](/cashflow/transaction/456) shows a **$40** single-ticket outflow on 05/09.
-- **Commutes and bills:** [Transport](/cashflow/8/monthly/2026-05) is down vs forecast with fewer commutes and no fuel fill-ups yet in early May, while [Bills](/cashflow/9/monthly/2026-05) is slightly up vs forecast from an annual software renewal posting in the first week of May.
+- A recent surge in [Uncategorized](/cashflow/-1/weekly/2026-05-03) spending to $6,382.12 for the week of May 3–9 is largely driven by two $2,850 payments to "Property Group LLC," with duplicate-looking lines for Community Pool, Costco, and BP suggesting reconciliation noise.
+- While weekly spikes occur, your overall [Uncategorized](/cashflow/-1/monthly/2026-05) spending is trending downward this month at $6,644.34 compared to $7,681.54 in April, with fewer miscellaneous transactions in early May even as large Property Group LLC charges remain.
+- A $2,850 [Property Group LLC](/cashflow/transaction/123) on May 5 repeats a similar May 3 hit, so the week’s spike is concentrated in a few big hits rather than many small unknowns.
 """,
         "output": """
 # TLDR
 
 ## Highlights
 
-- **Uncategorized:** [Property Group LLC](/cashflow/transaction/123) posts uncategorized at **$2,850** with Clothing as the likely category.
-- **Leisure:** [Leisure](/cashflow/7/monthly/2026-05) is up vs forecast on weekend entertainment and a concert ticket.
-- **Shopping:** [Shopping](/cashflow/11/monthly/2026-05) is up vs forecast on two early-month accessory and home-goods orders.
+- **Salary:** Early [Salary](/cashflow/36/monthly/2026-05) matches April at $6,369.24 while March looked higher on bonus and payroll timing.
+- **Groceries mix:** [Groceries](/cashflow/4/monthly/2026-05) tucks Applebee’s dining into grocery totals in early May.
+- **Forecast vs actual:** [Groceries](/cashflow/4/monthly/2026-05) runs a few hundred under typical pace while [Food](/cashflow/1/monthly/2026-05) sits near forecast month to date.
 
 ## Lowlights
 
-- **Bucket mix:** Uncategorized totals still carry [Property Group LLC](/cashflow/transaction/123) while it posts without a category.
-- **Dining ticket:** [Burger King](/cashflow/transaction/456) recorded a **$40** outflow on 05/09.
-- **Transport and bills:** [Transport](/cashflow/8/monthly/2026-05) is down vs forecast with fewer commutes and no fuel fill-ups yet; [Bills](/cashflow/9/monthly/2026-05) is slightly up on an annual software renewal in early May.
-
-# Details
-
-## Highlights
-
-- **Uncategorized outflow:** The insight flags [Property Group LLC](/cashflow/transaction/123) as an uncategorized **$2,850** outflow with **Clothing** as the likely category.
-- **Leisure vs plan:** [Leisure](/cashflow/7/monthly/2026-05) is up vs forecast on weekend entertainment and a concert ticket early in May.
-- **Shopping lift:** [Shopping](/cashflow/11/monthly/2026-05) is up vs forecast after two online orders for accessories and home goods.
-
-## Lowlights
-
-- **Uncategorized mix:** Uncategorized totals still include [Property Group LLC](/cashflow/transaction/123) at **$2,850** while that charge posts without a category.
-- **Large dining outflow:** [Burger King](/cashflow/transaction/456) shows a **$40** single-ticket outflow on 05/09.
-- **Commutes and bills:** [Transport](/cashflow/8/monthly/2026-05) is down vs forecast with fewer commutes and no fuel fill-ups yet in early May, while [Bills](/cashflow/9/monthly/2026-05) is slightly up vs forecast from an annual software renewal posting in the first week of May.
+- **Uncategorized week:** [Uncategorized](/cashflow/-1/weekly/2026-05-03) spiked to about $6,382 on two $2,850 Property Group LLC hits and possible duplicate recurring charges.
+- **Uncategorized month:** [Uncategorized](/cashflow/-1/monthly/2026-05) is down vs April at $6,644.34 with fewer small transactions while large Property Group LLC repeats remain.
+- **Large transaction:** The $2,850 [Property Group LLC](/cashflow/transaction/123) echoes May 3 Property Group LLC so the week clusters on few big hits.
 """,
     },
 ]
@@ -398,7 +356,7 @@ def main(*, test: str | None) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Top Takeaways → TLDR & Details with Highlights/Lowlights each (Gemini one-shot)")
+    parser = argparse.ArgumentParser(description="Top Takeaways → # TLDR with Highlights/Lowlights only (Gemini one-shot)")
     parser.add_argument("--test", type=str, default=None, help='Index, test name, or "all"')
     args = parser.parse_args()
     main(test=args.test)
