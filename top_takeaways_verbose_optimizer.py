@@ -5,7 +5,7 @@ The **user message** is built by ``build_top_takeaways_user_message_from_context
 ``build_top_takeaways_user_message`` for all-rationalize runs). Each **context** has a required ``tap_link`` and
 **exactly one** of: ``rationalize_agent_outcome`` (full rationalize markdown) or ``insight`` (plain text for
 non-rationalized transaction alerts such as ``uncat_txn`` / ``large_txn``), optionally with ``insight_kind`` for the
-XML ``type`` on ``<TRANSACTION_INSIGHT>``.
+XML ``type`` on ``<TRANSACTION_INSIGHT>``. Each ``<TAP_LINK>`` body is one line ``<Category name> - /cashflow/...`` when a name is known (or path-only for non-category taps).
 
 The **system instruction** is the canonical top-takeaways prompt (``_TOP_TAKEAWAYS_PROMPT``).
 This one-shot Gemini path has **no** finance tools; the model should rely on the pasted rationalize markdown only.
@@ -26,6 +26,8 @@ import re
 import warnings
 from typing import Any
 
+from categories import get_name
+
 try:
     from dotenv import load_dotenv
 except Exception:  # pragma: no cover
@@ -42,6 +44,83 @@ if load_dotenv is not None:
     load_dotenv()
 
 GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
+_RE_FIRST_CASHFLOW_PATH = re.compile(r"/cashflow/[^\s)]+")
+
+
+def _category_id_from_cashflow_path(path: str) -> int | None:
+    """Leading integer category id in ``/cashflow/<id>/…``, else ``None``."""
+    p = (path or "").strip()
+    if not p.startswith("/cashflow/"):
+        return None
+    rest = p[len("/cashflow/") :].lstrip("/")
+    if not rest or rest.lower().startswith("transaction/"):
+        return None
+    m = re.match(r"^-?\d+", rest)
+    if not m:
+        return None
+    try:
+        return int(m.group(0))
+    except ValueError:
+        return None
+
+
+def _first_cashflow_path_in_tap_link_inner(inner: str) -> str | None:
+    if not isinstance(inner, str) or not inner.strip():
+        return None
+    for line in inner.splitlines():
+        m = _RE_FIRST_CASHFLOW_PATH.search(line.strip())
+        if m:
+            return m.group(0).strip()
+    m = _RE_FIRST_CASHFLOW_PATH.search(inner)
+    return m.group(0).strip() if m else None
+
+
+def _tap_link_name_for_category_id(cat_id: int) -> str | None:
+    """Display name for ``<TAP_LINK>`` when derived from a Penny category id (id ``1`` is shown as **Food**)."""
+    if cat_id == 1:
+        return "Food"
+    nm = get_name(cat_id)
+    if isinstance(nm, str) and nm.strip():
+        return nm.strip()
+    return None
+
+
+def _tap_link_category_display_name(*, tap_path: str, ctx: dict[str, Any]) -> str:
+    raw = ctx.get("tap_link_category_name")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    meta = ctx.get("metadata")
+    if isinstance(meta, dict):
+        for k in ("tap_link_category_name", "category_display_name", "category_name"):
+            v = meta.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        cid_raw = meta.get("category_id")
+        if cid_raw is not None:
+            try:
+                cid = int(cid_raw)
+            except (TypeError, ValueError):
+                cid = None
+            if cid is not None:
+                nm = _tap_link_name_for_category_id(cid)
+                if nm:
+                    return nm
+    cid = _category_id_from_cashflow_path(tap_path)
+    if cid is not None:
+        nm = _tap_link_name_for_category_id(cid)
+        if nm:
+            return nm
+    return ""
+
+
+def _tap_link_xml_inner_line(*, tap_path: str, ctx: dict[str, Any]) -> str:
+    p = tap_path.strip()
+    label = _tap_link_category_display_name(tap_path=p, ctx=ctx)
+    if label:
+        return f"{label} - {p}"
+    return p
+
+
 # Production top-takeaways template ``thinking_budget`` — do not set to 0.
 TOP_TAKEAWAYS_THINKING_BUDGET = 256
 # Generous cap so multi-context rollups (plus thinking-enabled models) are not truncated mid-markdown.
@@ -59,16 +138,18 @@ def build_top_takeaways_user_message_from_contexts(*, contexts: list[dict[str, A
 
     Each dict **must** include:
 
-    - ``tap_link`` (str): relative drill-down URL.
+    - ``tap_link`` (str): relative drill-down URL (``/cashflow/...``).
+
+    Optional:
+
+    - ``tap_link_category_name`` (str): display name printed before the URL inside ``<TAP_LINK>`` (defaults from ``metadata`` or from the path’s category id).
+    - ``metadata`` (dict): may include ``category_id``, ``category_name``, or ``tap_link_category_name`` for the tap line label.
 
     And **exactly one** of:
 
     - ``rationalize_agent_outcome`` (str): full rationalize markdown (``# Rationalize What`` …), wrapped in ``<RATIONALIZE>``.
     - ``insight`` (str): **non-rationalized** insight text only (e.g. ``uncat_txn`` / ``large_txn`` copy), wrapped in ``<TRANSACTION_INSIGHT>``.
-
-    Optional:
-
-    - ``insight_kind`` (str): attribute for ``<TRANSACTION_INSIGHT type="...">`` (e.g. ``uncat_txn``, ``large_txn``). Sanitized if needed.
+    - ``insight_kind`` (str, optional): attribute for ``<TRANSACTION_INSIGHT type="...">`` (e.g. ``uncat_txn``, ``large_txn``). Sanitized if needed.
     """
     if not isinstance(contexts, list) or not contexts:
         raise ValueError("contexts must be a non-empty list")
@@ -103,7 +184,7 @@ def build_top_takeaways_user_message_from_contexts(*, contexts: list[dict[str, A
                     "\n\n</TRANSACTION_INSIGHT>\n",
                 ]
             )
-        chunks.extend(["\n<TAP_LINK>\n\n", tl, "\n\n</TAP_LINK>\n", "\n</CONTEXT>"])
+        chunks.extend(["\n<TAP_LINK>\n\n", _tap_link_xml_inner_line(tap_path=tl, ctx=ctx), "\n\n</TAP_LINK>\n", "\n</CONTEXT>"])
         inner_parts.append("".join(chunks))
     inner = "\n\n".join(inner_parts)
     return "<CONTEXTS>\n\n" + inner + "\n\n</CONTEXTS>\n"
@@ -131,25 +212,28 @@ SYSTEM_PROMPT = """You are **Penny**.
 You will be given multiple **top takeaway contexts** inside ``<CONTEXTS>...</CONTEXTS>``. Each block is one context, in order:
 1. ``<CONTEXT index="1">`` (index counts up for each block)
 2. **Body** — **either** ``<RATIONALIZE>`` … ``</RATIONALIZE>`` (full prior rationalize markdown) **or** ``<TRANSACTION_INSIGHT type="…">`` … ``</TRANSACTION_INSIGHT>`` (a **single insight string** only: not rationalized — no ``# Rationalize What`` / Figures / Drivers). Types include e.g. ``uncat_txn``, ``large_txn``.
-3. ``<TAP_LINK>`` — **only** the relative drill-down URL for that context (nothing else inside this tag). **Every context includes one** — required.
+3. ``<TAP_LINK>`` — one line: ``<Category display name> - <relative drill-down URL>`` when a name is provided (e.g. ``Salary - /cashflow/36/monthly/2026-05``). The part after `` - `` must be the relative URL only (starts with ``/``). **Every context includes one** — required.
 4. ``</CONTEXT>``
 
-Your goal is to synthesize a short **rollup** across all contexts: **highlights** (positive patterns, wins, healthy habits) and **lowlights** (concerns, risks, drag, overspending, gaps).
+Your goal is to synthesize a **substantive rollup** across all contexts: **highlights** (positive patterns, wins, healthy habits) and **lowlights** (concerns, risks, drag, overspending, gaps). Each bullet should read as a **mini-briefing**—rich enough that a reader grasps the **what**, **how much**, **compared to what**, and **why** (drivers) without opening the drill-down, while staying within the bullet budget.
 
-**What to ignore for Highlights / Lowlights:** For ``<RATIONALIZE>`` contexts only: treat ``## Next steps`` as **out of scope**. Base bullets on **Figures and Drivers** plus the ``Explain:`` line. For ``<TRANSACTION_INSIGHT>`` contexts: the **only** ground truth is the insight text inside that tag — there are no Figures/Drivers; do **not** invent amounts or merchants not stated there. For ``type="uncat_txn"`` and ``type="large_txn"``, write in the same **observational** register as **vs-forecast** rationalize **Drivers** (declarative, third person: what the spend reflects, what is driven by, what posted when) — **no** action items, imperatives, or “next steps” you invent (e.g. no “confirm”, “verify”, “should”, “until you act”, “tidy”, “worth checking”).
+**What to use for Highlights / Lowlights:** For ``<RATIONALIZE>`` contexts, base bullets on **Figures and Drivers** plus the ``Explain:`` line. **Go deep:** weave in **multiple** concrete details from Figures (period labels, dollar amounts, prior-window comparisons) and Drivers (named payees, payroll or bonus lines, miscategorization examples, volume or timing mechanisms). Prefer **several connected sentences** per bullet when the source supports it—do **not** compress rich rationalize into a thin headline if the Figures/Drivers give more. Copy numbers and dates **exactly** as written. For ``<TRANSACTION_INSIGHT>`` contexts: the **only** ground truth is the insight text inside that tag — there are no Figures/Drivers; do **not** invent amounts or merchants not stated there. For ``type="uncat_txn"`` and ``type="large_txn"``, write in the same **observational** register as **vs-forecast** rationalize **Drivers** (declarative, third person: what the spend reflects, what is driven by, what posted when) — **no** invented action items or imperatives (e.g. no “confirm”, “verify”, “should”, “until you act”, “tidy”, “worth checking”).
 
 Rules:
-- Ground every bullet in the provided body for that context. For rationalize contexts, exclude ``## Next steps`` from grounding. Do not invent transactions, ids, or amounts.
+- Ground every bullet in the provided body for that context. For rationalize contexts, ground claims in ``## Figures`` and ``## Drivers`` as well as ``Explain:``. Do not invent transactions, ids, or amounts.
+- **Depth (``<RATIONALIZE>``):** Within each ``- `` bullet, use **as much relevant Figures/Drivers material as fits**—typically **two to four sentences** when the context is meaty. Include **at least two** concrete facts (e.g. two amounts, or an amount plus a named driver, or a comparison across periods plus the mechanism). If you only restate ``Explain:`` without Figures/Drivers specifics, the bullet is **too shallow**.
 - **Tap link anchor:** For ``<RATIONALIZE>`` contexts, choose the phrase you wrap in ``[...](tap_link)`` **only** from ``# Rationalize What`` / ``Explain:`` (ignore ``## Figures``, ``## Drivers``, and slugs like ``meals_groceries`` for this choice):
   1. If Explain **names a parent / umbrella category** in that same line, use **that parent’s wording** (verbatim casing from Explain) as the **primary** linked label.
   2. **Otherwise** use the **first leaf** category name in Explain (first such name in reading order).
   3. For ``<TRANSACTION_INSIGHT>`` contexts, choose a **short natural phrase from the insight text itself** as the link anchor (e.g. merchant name like “Property Group LLC” or “Burger King”, the word **Uncategorized**, or **Clothing** when it names a likely category — pick the clearest single anchor that fits the sentence; use **that** visible text with this context’s ``<TAP_LINK>`` URL).
-  4. At least one Markdown link per bullet that summarizes a context must use the chosen anchor and **exactly** that context’s ``<TAP_LINK>`` URL as ``href`` (add a second link only if another context is also summarized in the same bullet).
-- **Tap links:** Each context’s drill-down URL appears **only** in ``<TAP_LINK>``. Use ``[chosen label](path_from_TAP_LINK)`` as above. The path is relative (starts with ``/``); copy it verbatim — no extra domains or query strings. **Link syntax:** ``[text](/path)`` with **no whitespace** between ``(`` and ``/`` — never ``[text]( /path)``. If multiple contexts appear in one bullet, include one correct link per context with each context’s own label rule and path.
+  4. At least one Markdown link per bullet that summarizes a context must use the chosen anchor and **exactly** the ``/cashflow/...`` path from that context’s ``<TAP_LINK>`` line (the substring after `` - ``) as ``href`` (add a second link only if another context is also summarized in the same bullet).
+- **Tap label vs Markdown anchor (hard rule):** When ``<TAP_LINK>`` is ``Name - /cashflow/...``, the ``[...]`` anchor for **that** path must name the **same** category as **Name**—do not attach that URL to a different category label (e.g. do not write **Groceries** or **Dining** on a tap whose line says **Food**). If Explain’s wording would disagree with **Name**, align the **link anchor** with **Name** and carry Explain’s nuance in the surrounding sentence without mislabeling the drill-down.
+- **Tap links:** The ``<TAP_LINK>`` line pairs a **display name** with the tap path. In Markdown, use **only** the ``/cashflow/...`` portion as ``href``—copy it verbatim; do not paste the leading ``Name - `` prefix into links. **Link syntax:** ``[text](/path)`` with **no whitespace** between ``(`` and ``/`` — never ``[text]( /path)``. If multiple contexts appear in one bullet, include one correct link per context with each context’s own label rule and path. **Never** paste one context’s ``/cashflow/...`` URL next to another context’s category name.
+- **Anchor vs path:** The ``href`` must be **exactly** the ``/cashflow/...`` path from that context’s ``<TAP_LINK>`` line (same context block). The visible ``[anchor]`` must name the **same** Penny category level that URL opens (parent rollup vs leaf): align with the **display name** in ``<TAP_LINK>`` when it names a category; do not write **Food** on a tap that points at **Groceries** or **Meals** alone, or **Groceries** on a tap meant for a different rollup. Do not paste another context’s path into a sentence tied to a different Explain theme.
 - **Link in sentence:** The linked category must be **woven into the sentence** as normal grammar (subject, object, or “in …” phrase) — not bolted on after a period. **Bad:** ``…following bonus payouts in March. [Salary](/cashflow/…)`` **Good:** ``…following March bonus payouts; [Salary](/cashflow/…) matches your usual early-month rhythm`` or ``Early-month [Salary](/cashflow/…) matches April…``. Do not end a clause with ``.`` and then append only a bare link.
 - **Tools:** You may call finance tools when helpful—especially to **verify** totals, reconcile conflicting numbers across contexts, or confirm whether a claim in the markdown still matches current data. Prefer tools when verification would materially increase confidence; otherwise rely on the pasted rationalize text.
-- Merge semantically duplicate ideas into one bullet; avoid repeating the same point under different wording.
-- **Bullet budget:** At most **3** ``- `` bullets under ``## Highlights`` and at most **3** under ``## Lowlights`` (six total max). If contexts are very thin, use fewer; never exceed 3 per section.
+- Merge semantically duplicate ideas into one bullet; avoid repeating the same point under different wording. When merging, keep the **combined** bullet **fully detailed** (do not drop figures or drivers just to shorten).
+- **Bullet budget:** At most **3** ``- `` bullets under ``## Highlights`` and at most **3** under ``## Lowlights`` (six total max). If contexts are very thin, use fewer; never exceed 3 per section. **Prefer longer, denser bullets** over many short ones—use the budget for **depth**, not for splitting one story into vague fragments.
 - Your **written reply** must not include raw ``llm_calls`` text or pasted tool-call payloads.
 - **Final reply:** After any tool calls, your **only** user-visible text follows the markdown format below — **no** standalone preamble or wrap-up outside it. The first line of your last message must be exactly ``# Top Takeaways``.
 
@@ -166,8 +250,8 @@ Final message format (MUST match exactly — nothing else in the last message):
 - ...
 
 Notes:
-- Use `- ` bullets only (no numbered lists in these sections). Inline Markdown links ``[text](/path)`` inside bullets are required for each context summarized; anchor text follows **Tap link anchor** rules (Explain-based for ``<RATIONALIZE>``, insight-text-based for ``<TRANSACTION_INSIGHT>``); path from that context’s ``<TAP_LINK>`` with **no space** after ``(``. The linked phrase must read as part of the sentence (**Link in sentence** rule), not a trailing tag after the final period.
-- Keep the tone short and direct (match the rationalize voice). For ``uncat_txn`` / ``large_txn`` insights, match **vs-forecast Drivers** observational tone, not advisory copy.
+- Use `- ` bullets only (no numbered lists in these sections). Inline Markdown links ``[text](/path)`` inside bullets are required for each context summarized; anchor text follows **Tap link anchor** rules (Explain-based for ``<RATIONALIZE>``, insight-text-based for ``<TRANSACTION_INSIGHT>``), subject to **Tap label vs Markdown anchor** when ``<TAP_LINK>`` includes a display name; ``href`` is the ``/cashflow/...`` path from that context’s ``<TAP_LINK>`` line with **no space** after ``(``. The linked phrase must read as part of the sentence (**Link in sentence** rule), not a trailing tag after the final period. **Anchor vs path** (same subsection in Rules): label and ``href`` must describe the same category level, and you must not apply one context’s URL to another context’s category name.
+- Match the rationalize voice: **direct, readable, and thorough**—high information density per bullet, not telegraphic stubs. For ``uncat_txn`` / ``large_txn`` insights, match **vs-forecast Drivers** observational tone, not advisory copy.
 - Start each bullet with a **bold** short label when helpful (e.g. **Savings:** …).
 - Do not add introductory or closing sentences outside the ``# Top Takeaways`` structure.
 """
@@ -440,7 +524,7 @@ The "significant drop" in salary compared to early March is due to a large, one-
 
 <TAP_LINK>
 
-/cashflow/36/monthly/2026-05
+Salary - /cashflow/36/monthly/2026-05
 
 </TAP_LINK>
 
@@ -475,7 +559,7 @@ Additionally, your transaction history shows some potential miscategorization: s
 
 <TAP_LINK>
 
-/cashflow/1/monthly/2026-05
+Food - /cashflow/1/monthly/2026-05
 
 </TAP_LINK>
 
@@ -505,7 +589,7 @@ The spike in uncategorized spending is primarily driven by two large payments to
 
 <TAP_LINK>
 
-/cashflow/-1/weekly/2026-05-03
+Uncategorized - /cashflow/-1/weekly/2026-05-03
 
 </TAP_LINK>
 
@@ -535,7 +619,7 @@ The "Uncategorized" spend is trending downward compared to prior months. A signi
 
 <TAP_LINK>
 
-/cashflow/-1/monthly/2026-05
+Uncategorized - /cashflow/-1/monthly/2026-05
 
 </TAP_LINK>
 
@@ -586,7 +670,7 @@ The "significant drop" in salary compared to early March is due to a large, one-
 
 <TAP_LINK>
 
-/cashflow/36/monthly/2026-05
+Salary - /cashflow/36/monthly/2026-05
 
 </TAP_LINK>
 
@@ -621,7 +705,7 @@ Additionally, your transaction history shows some potential miscategorization: s
 
 <TAP_LINK>
 
-/cashflow/1/monthly/2026-05
+Food - /cashflow/1/monthly/2026-05
 
 </TAP_LINK>
 
@@ -657,7 +741,7 @@ Uncategorized outflow transaction for Property Group LLC for $2,850 with a likel
 
 <TAP_LINK>
 
-/cashflow/transaction/123
+Property Group LLC - /cashflow/transaction/123
 
 </TAP_LINK>
 
@@ -673,7 +757,7 @@ Large outflow transaction with Burger King for $40 last 05/09.
 
 <TAP_LINK>
 
-/cashflow/transaction/456
+Burger King - /cashflow/transaction/456
 
 </TAP_LINK>
 
@@ -702,7 +786,7 @@ Higher leisure spend vs forecast is driven by weekend entertainment and one conc
 
 <TAP_LINK>
 
-/cashflow/7/monthly/2026-05
+Leisure - /cashflow/7/monthly/2026-05
 
 </TAP_LINK>
 
@@ -731,7 +815,7 @@ Lower transport vs forecast reflects fewer commutes and no fuel fill-ups yet in 
 
 <TAP_LINK>
 
-/cashflow/8/monthly/2026-05
+Transport - /cashflow/8/monthly/2026-05
 
 </TAP_LINK>
 
@@ -760,7 +844,7 @@ Slight uptick vs forecast from annual software renewal posting in the first week
 
 <TAP_LINK>
 
-/cashflow/9/monthly/2026-05
+Bills - /cashflow/9/monthly/2026-05
 
 </TAP_LINK>
 
@@ -789,7 +873,7 @@ Shopping vs forecast rose after two online orders (electronics accessories and h
 
 <TAP_LINK>
 
-/cashflow/11/monthly/2026-05
+Shopping - /cashflow/44/monthly/2026-05
 
 </TAP_LINK>
 
@@ -804,7 +888,7 @@ Shopping vs forecast rose after two online orders (electronics accessories and h
 
 - **Uncategorized outflow:** The insight flags [Property Group LLC](/cashflow/transaction/123) as an uncategorized **$2,850** outflow with **Clothing** as the likely category.
 - **Leisure vs plan:** [Leisure](/cashflow/7/monthly/2026-05) is up vs forecast on weekend entertainment and a concert ticket early in May.
-- **Shopping lift:** [Shopping](/cashflow/11/monthly/2026-05) is up vs forecast after two online orders for accessories and home goods.
+- **Shopping lift:** [Shopping](/cashflow/44/monthly/2026-05) is up vs forecast after two online orders for accessories and home goods.
 
 ## Lowlights
 
