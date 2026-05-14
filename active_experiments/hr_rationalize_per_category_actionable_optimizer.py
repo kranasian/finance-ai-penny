@@ -1,5 +1,5 @@
 """
-Rationalize rubric checker optimizer: **Actionable** — AI-executable **## Next steps** (instruction-level specificity; categorization targets must use valid category slugs).
+Rationalize rubric checker optimizer: **Actionable** — score **only** AI-facing **## Next steps** (instruction-level specificity; categorization targets must use valid category slugs). If there are **no** AI-facing steps, score **defaults to 5**.
 
 Use this to iterate on the system_prompt that will be stored in `penny_templates`
 for the checker template `Chk:RationalizePerCategoryActionable`.
@@ -73,11 +73,15 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """Rubric grader. Input: markdown with `# Rationalize Response`. Judge **only** `## Next steps`. Read Figures/Drivers **only** to interpret references—**do not** score those sections for quality, truth, or completeness.
+SYSTEM_PROMPT = """Rubric grader. Input: markdown with `# Rationalize Response`. Judge **only** `## Next steps` that are **for the AI** (product-executable instructions). Read Figures/Drivers **only** to interpret references in those steps—**do not** score Figures or Drivers for quality, truth, or completeness.
 
 **AI-facing line** = tells product/AI to **recategorize**, **merchant→category rule**, **budget/goal** with numbers and horizon, or **historical analysis** with explicit scope (merchants/categories/dates, **or** detect **missing expected recurring payments** for a **named month** by contrasting with **prior months** in history)—not generic “review finances.”
 
-**Human-only lines** (lifestyle, “spend less,” vague self-review): **ignore** for the numeric score. The score follows the **weakest AI-facing line** only. If there are **no** AI-facing lines → **1**.
+**Human-only lines** (lifestyle, “spend less,” vague self-review): **not** AI-facing. They **do not** affect the numeric score.
+
+**Default when there are no AI-facing lines** (empty `## Next steps`, section missing, or **only** human-only / non-product bullets): **5**. There is nothing for the AI to execute, so there is nothing to mark down.
+
+When **one or more** AI-facing lines exist, the score follows the **weakest** AI-facing line only (ignore human-only lines beside them).
 
 **Executable** = another model could run it **without inventing** missing inputs: match text or merchant set, **numeric** budget/goal + period, and for any assign/recategorize/rule (and category-scoped budgets): **exactly one** target slug from the Category List (character-for-character). Multiple allowed slugs named for **one** operation (“A or B”) = **not** one target → treat as **2**.
 
@@ -116,14 +120,14 @@ SYSTEM_PROMPT = """Rubric grader. Input: markdown with `# Rationalize Response`.
 - `income_interest`
 - `transfers`
 
-**Scores (1–5)** — worst AI line wins; **1** if no AI lines.
+**Scores (1–5)** — if **no** AI-facing lines → **5** (default). If **≥1** AI-facing line → worst AI line wins:
 - **5** — Every AI line executable; category targets are valid list tokens; no unresolved “pick one of several categories” for a single action.
 - **4** — **Single** defect: one invalid slug **or** one mildly underspecified AI line; otherwise strong.
 - **3** — **Two or more** stacked defects (e.g. multiple invalid slugs, or invalid slug **and** vagueness).
 - **2** — Main AI categorization leaves **which one** category unresolved among alternatives, or core parameters missing, **or** the step(s) sit **outside in-scope levers** (e.g. automatic bank→card payment transfers / external autopay scheduling).
-- **1** — Missing section, or **only** non-AI steps.
+- **1** — Only when ≥1 AI-facing line: worst line is below the bar for **2** (e.g. mutually contradictory AI instructions with no resolution path).
 
-**`notes`**: One sentence on the decisive issue (invalid slug, ambiguous multi-target categorization, no AI steps, out-of-scope payment automation, or all clear). If **5** and a **human-only** bullet sits next to solid AI steps, say human lines were **ignored for the score**.
+**`notes`**: One sentence on the decisive issue (invalid slug, ambiguous multi-target categorization, out-of-scope payment automation, all AI lines clear, **or** no AI-facing steps so default **5**). If **5** with a mix of solid AI steps and human-only bullets, say human lines were **ignored for the score**.
 
 Return only JSON `{score, notes}` per schema.
 """
@@ -142,11 +146,15 @@ Explain: Several Zelle payments to Maria are sitting in uncategorized spend this
 
 ## Figures
 
-- Multiple “Zelle to Maria” lines remain uncategorized.
+* **Current Month (Apr 1–30, 2026) — uncategorized Zelle to Maria:** $840.00 across 6 posted transfers (still coded as generic spend / `miscellaneous` in the ledger).
+* **Prior Month (Mar 1–31, 2026) — same payee pattern:** $600.00 across 4 transfers, also uncategorized at month-end.
+* **Two Months Ago (Feb 1–28, 2026):** $200.00 across 2 transfers; one line was manually recategorized mid-month, the remainder stayed uncategorized.
 
 ## Drivers
 
-Peer-to-peer pattern is stable; memos consistently include Zelle and Maria.
+The April activity is concentrated in repeatable peer-to-peer outflows where memos consistently include **“Zelle”** and **“Maria”** (for example **Zelle payment to Maria: $140.00** on April 6 and **Zelle to Maria — thank you: $200.00** on April 19). Nothing in the descriptions suggests merchant card spend; the pattern looks like personal transfers rather than dining or shopping.
+
+March shows the same payee text with higher frequency but the same lack of a stable category assignment, which is why April’s uncategorized bucket still contains the full run of Maria Zelle lines despite the totals growing month over month.
 
 ## Next steps
 
@@ -165,11 +173,16 @@ Explain: Dining out is elevated this month at $620. (2026-04-01 to 2026-04-30)
 
 ## Figures
 
-- Dining out: $620 this month.
+* **Current Month (Apr 1–30, 2026) — `meals_dining_out`:** $620.00 (restaurant / delivery outflows only; groceries excluded).
+* **Prior Month (Mar 1–31, 2026) — `meals_dining_out`:** $410.00.
+* **Two Months Ago (Feb 1–28, 2026) — `meals_dining_out`:** $385.00.
+* **April share of total spend (all categories):** dining represents a materially larger slice vs March even though total household spend is only modestly higher.
 
 ## Drivers
 
-Restaurant spend is above the user’s typical range.
+The lift is not a single anomaly: April includes multiple elevated tickets (for example **Brasserie North: $118.42** on April 12 and **Sushi Yamato: $96.10** on April 26) plus a higher cadence of smaller coffee and lunch charges that still route to `meals_dining_out`.
+
+Compared with March, you have more weekend restaurant clusters and fewer “groceries-only” weeks; that combination explains most of the +$210 month-over-month change without requiring a data correction.
 
 ## Next steps
 
@@ -189,11 +202,15 @@ Explain: Walmart spend is elevated and split across categories this month. (2026
 
 ## Figures
 
-- Walmart-tagged lines total about $480 across mixed categories.
+* **Current Month (Apr 1–30, 2026) — all Walmart-tagged spend:** $482.63 across 11 posted lines.
+* **Within April, current ledger coding (pre-review):** $215.40 remains in `meals_groceries`, $198.10 in `shelter_upkeep`, and $69.13 is still split/flagged as “needs category confirmation” on import.
+* **Prior Month (Mar 1–31, 2026) — Walmart-tagged spend:** $305.20 with a cleaner memo profile (mostly grocery-like descriptions).
 
 ## Drivers
 
-Receipt mix suggests both groceries and home upkeep, but the split is unclear from memos alone.
+April’s Walmart charges include mixed signals in the memos: several lines read like pantry and household consumables (**Walmart Grocery pickup: $84.22** on April 4), while others look like hardware and small home repairs (**Walmart Store #1441 — hardware: $63.77** on April 17). A few ambiguous “Walmart.com” charges lack item detail, which is why the importer left a residual bucket uncategorized.
+
+That pattern matches your Rationalize prompt: spend is elevated versus March, and the category split is genuinely unclear from text alone—so the narrative risk is misclassification if we force everything into a single bucket too early.
 
 ## Next steps
 
@@ -212,11 +229,15 @@ Explain: Coinbase purchase debits are still landing in miscellaneous this month.
 
 ## Figures
 
-- Coinbase-labeled debits remain in `miscellaneous`.
+* **Current Month (Apr 1–30, 2026) — Coinbase-labeled debits posted to `miscellaneous`:** $750.00 across 3 ACH pulls (no merchant category override applied).
+* **Prior Month (Mar 1–31, 2026) — same pattern:** $500.00 across 2 pulls, also in `miscellaneous` at month close.
+* **Two Months Ago (Feb 1–28, 2026):** $0.00 with Coinbase in the memo field (no exchange-linked activity that month).
 
 ## Drivers
 
-Descriptions read like crypto exchange funding rather than general shopping.
+The April lines are classic exchange funding descriptors (for example **COINBASE INC. ACH DEBIT: $250.00** on April 2 and **COINBASE.COM WEB PURCHASE: $300.00** on April 18). They do not resemble normal card shopping at a retailer, and there is no stable mapping yet from the bank feed to a non-`miscellaneous` Penny category.
+
+Because the amounts are recurring in shape (multiple pulls in one month) but the ledger keeps coding them as miscellaneous, the “still landing in miscellaneous” framing in your Rationalize prompt matches what we see in the categorized totals.
 
 ## Next steps
 
@@ -226,7 +247,7 @@ Descriptions read like crypto exchange funding rather than general shopping.
   {
     "name": "only_human_next_step_not_ai_actionable",
     "batch": 4,
-    "output": '{"score": 1, "notes": "Only a human behavior tip; no AI-executable product instruction."}',
+    "output": '{"score": 5, "notes": "No AI-facing next steps; score defaults to 5."}',
     "input": """# Rationalize What
 
 Explain: Discretionary spend is up this month. (2026-04-01 to 2026-04-30)
@@ -235,11 +256,16 @@ Explain: Discretionary spend is up this month. (2026-04-01 to 2026-04-30)
 
 ## Figures
 
-- Discretionary categories are up vs last month.
+* **Current Month (Apr 1–30, 2026) — combined discretionary (`leisure_entertainment` + `leisure_travel` + `shopping_clothing` + `shopping_gadgets`):** $1,095.40.
+* **Prior Month (Mar 1–31, 2026) — same bucket definition:** $820.75.
+* **Two Months Ago (Feb 1–28, 2026):** $790.20.
+* **April lift vs March (absolute):** +$274.65, driven more by frequency than by one or two huge charges.
 
 ## Drivers
 
-General lift across small purchases.
+The increase is broad-based: entertainment subscriptions ticked up slightly, but the bigger change is a higher count of mid-sized discretionary purchases (new headphones, weekend tickets, and a few apparel orders) rather than a single outlier transaction.
+
+March was comparatively quiet in apparel and gadgets, so April’s month-over-month change is visible in both the category totals and the transaction list even though essentials like rent and utilities look stable.
 
 ## Next steps
 
@@ -258,11 +284,16 @@ Explain: Credit card balance is up and minimum payments are larger this month. (
 
 ## Figures
 
-- Card balance and payment lines are elevated vs last month.
+* **Current Month (Apr 1–30, 2026) — statement balance (primary card, ending 4412):** $4,860.00 outstanding as of April 28 close (up from March’s statement snapshot).
+* **Prior Month (Mar 1–31, 2026) — statement balance (same card):** $3,220.00.
+* **April minimum due / payment lines posted:** minimum due **$122.00** vs March minimum due **$78.00**; scheduled payment amount in the ledger also increased accordingly.
+* **April net new purchases on the card (approx., from feed):** +$1,540.00 after payments and credits.
 
 ## Drivers
 
-Higher statement balance drives larger required payments.
+The larger minimum is mechanically tied to the higher statement balance: you carried more into April and added net new spend after the prior cycle’s payment. The feed shows fewer large paydowns in early April compared with March, so the required minimum moves up even without assuming any penalty APR change.
+
+Your Rationalize prompt is directionally right: both the balance level and the minimum payment line items are elevated versus last month, and the payment cadence in the transaction history looks tighter around the due date.
 
 ## Next steps
 
@@ -281,11 +312,16 @@ Explain: Total spend looks lower than usual this month; some recurring bills may
 
 ## Figures
 
-- April 2026 spend is down vs typical full-month run rates.
+* **Current Month (Apr 1–30, 2026) — all-category outflows (cash + card + ACH debits):** $6,420.00.
+* **Prior Month (Mar 1–31, 2026) — same definition:** $8,910.00.
+* **Two Months Ago (Feb 1–28, 2026):** $8,540.00.
+* **April “full month run rate” context:** if you annualize only the first 21 days of April vs the first 21 days of March, totals still trail—so the softness is not solely “April isn’t finished yet.”
 
 ## Drivers
 
-Several merchants that usually post monthly have not appeared yet on the ledger.
+April is missing several recurring anchors that normally appear every month in the ledger between the 1st and the 25th (for example your typical **CityPower Electric** ACH and **BroadbandCo** autopay). In the prior six months, those payees posted like clockwork, but April’s feed shows no matching debit lines yet.
+
+That gap is consistent with “lower than usual” spend: it may be timing/posting delay, a skipped bill, or a changed payment method—but the pattern is visible as absent transactions rather than as a category miscode.
 
 ## Next steps
 
