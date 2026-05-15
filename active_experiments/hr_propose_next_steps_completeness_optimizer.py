@@ -56,11 +56,7 @@ TEST_CASES: list[dict[str, Any]] = [
   {
     "name": "good_costco_rule_automated",
     "batch": 1,
-    "input": """<CONTEXTS>
-
-<CONTEXT index="1">
-
-<RATIONALIZE>
+    "input": """<RATIONALIZE_1>
 
 # Rationalize What
 
@@ -80,11 +76,7 @@ Several Costco transactions appear miscategorized as Miscellaneous.
 
 Create a categorization rule so Costco is always groceries.
 
-</RATIONALIZE>
-
-</CONTEXT>
-
-</CONTEXTS>
+</RATIONALIZE_1>
 
 <PROPOSAL>
 
@@ -100,9 +92,10 @@ Create a categorization rule so Costco is always groceries.
 
 </PROPOSAL>
 
-<CALLS>
+<PROPOSAL_TOOL_CALLS>
 
 # Round 1
+
 ## Invoked tools
 
 1. **`propose_create_categorization_rule`**
@@ -118,18 +111,14 @@ Create a categorization rule so Costco is always groceries.
 }
 ```
 
-</CALLS>
+</PROPOSAL_TOOL_CALLS>
 """,
     "output": '{"score": 5, "notes": "Covers the rationalize next step with a concrete proposal, matching tool automation, and a sensible open item."}',
   },
   {
     "name": "bad_unrelated_merchant_recategorize",
     "batch": 1,
-    "input": """<CONTEXTS>
-
-<CONTEXT index="1">
-
-<RATIONALIZE>
+    "input": """<RATIONALIZE_1>
 
 # Rationalize What
 
@@ -149,11 +138,7 @@ Several Costco transactions appear miscategorized as Miscellaneous.
 
 Create a categorization rule so Costco is always groceries.
 
-</RATIONALIZE>
-
-</CONTEXT>
-
-</CONTEXTS>
+</RATIONALIZE_1>
 
 <PROPOSAL>
 
@@ -169,9 +154,10 @@ Create a categorization rule so Costco is always groceries.
 
 </PROPOSAL>
 
-<CALLS>
+<PROPOSAL_TOOL_CALLS>
 
 # Round 1
+
 ## Invoked tools
 
 1. **`propose_recategorize_transactions`**
@@ -186,18 +172,14 @@ Create a categorization rule so Costco is always groceries.
 }
 ```
 
-</CALLS>
+</PROPOSAL_TOOL_CALLS>
 """,
     "output": '{"score": 1, "notes": "Does not address the Costco rule next step and substitutes unrelated recategorization work."}',
   },
   {
     "name": "uncategorized_ambiguous_user_open_items_five",
     "batch": 2,
-    "input": """<CONTEXTS>
-
-<CONTEXT index="1">
-
-<RATIONALIZE>
+    "input": """<RATIONALIZE_1>
 
 # Rationalize What
 
@@ -218,11 +200,7 @@ Merchant strings are vague or describe many goods/services; Penny cannot assign 
 1. Leave those uncategorized charges for the user to categorize manually where Penny cannot infer one category.
 2. Add a narrow merchant rule only for merchants with an unambiguous category (e.g. “PUREGYM MONTHLY” → Health & Fitness).
 
-</RATIONALIZE>
-
-</CONTEXT>
-
-</CONTEXTS>
+</RATIONALIZE_1>
 
 <PROPOSAL>
 
@@ -238,9 +216,10 @@ Merchant strings are vague or describe many goods/services; Penny cannot assign 
 
 </PROPOSAL>
 
-<CALLS>
+<PROPOSAL_TOOL_CALLS>
 
 # Round 1
+
 ## Invoked tools
 
 1. **`propose_create_categorization_rule`**
@@ -256,18 +235,14 @@ Merchant strings are vague or describe many goods/services; Penny cannot assign 
 }
 ```
 
-</CALLS>
+</PROPOSAL_TOOL_CALLS>
 """,
     "output": '{"score": 5, "notes": "Ambiguous uncategorized transactions correctly parked for user categorization under Open items; unambiguous rule automated with matching calls."}',
   },
   {
     "name": "verify_categorizations_in_proposed_only_four",
     "batch": 2,
-    "input": """<CONTEXTS>
-
-<CONTEXT index="1">
-
-<RATIONALIZE>
+    "input": """<RATIONALIZE_1>
 
 # Rationalize What
 
@@ -287,11 +262,7 @@ Several large electronics charges were auto-tagged; streaming merchants look con
 
 1. Verify that recent electronics and streaming subscription transactions are categorized correctly before locking month-end views.
 
-</RATIONALIZE>
-
-</CONTEXT>
-
-</CONTEXTS>
+</RATIONALIZE_1>
 
 <PROPOSAL>
 
@@ -307,9 +278,10 @@ Several large electronics charges were auto-tagged; streaming merchants look con
 
 </PROPOSAL>
 
-<CALLS>
+<PROPOSAL_TOOL_CALLS>
 
 # Round 1
+
 ## Invoked tools
 
 1. **`propose_retrieve_transactions`**
@@ -328,18 +300,14 @@ Several large electronics charges were auto-tagged; streaming merchants look con
 }
 ```
 
-</CALLS>
+</PROPOSAL_TOOL_CALLS>
 """,
     "output": '{"score": 4, "notes": "Final confirmation that categorizations are correct belongs with the user under Open items; placing full verification only under Proposed is a minor structure gap despite retrieval support."}',
   },
   {
     "name": "historical_metric_in_open_not_proposed_four",
     "batch": 3,
-    "input": """<CONTEXTS>
-
-<CONTEXT index="1">
-
-<RATIONALIZE>
+    "input": """<RATIONALIZE_1>
 
 # Rationalize What
 
@@ -360,11 +328,7 @@ More café visits mid-month.
 1. From the last 12 months of historical transactions, compute median monthly coffee spend to size a realistic reduction target.
 2. Propose a monthly coffee spending goal informed by that median (not above it).
 
-</RATIONALIZE>
-
-</CONTEXT>
-
-</CONTEXTS>
+</RATIONALIZE_1>
 
 <PROPOSAL>
 
@@ -380,9 +344,10 @@ More café visits mid-month.
 
 </PROPOSAL>
 
-<CALLS>
+<PROPOSAL_TOOL_CALLS>
 
 # Round 1
+
 ## Invoked tools
 
 1. **`propose_create_goal`**
@@ -398,18 +363,14 @@ More café visits mid-month.
 }
 ```
 
-</CALLS>
+</PROPOSAL_TOOL_CALLS>
 """,
     "output": '{"score": 4, "notes": "Historical median computation belongs under Proposed with Penny data work; parking it only under Open while proposing the goal alone is a minor completeness/structure gap."}',
   },
   {
     "name": "incomplete_dropped_rationalize_steps_two",
     "batch": 3,
-    "input": """<CONTEXTS>
-
-<CONTEXT index="1">
-
-<RATIONALIZE>
+    "input": """<RATIONALIZE_1>
 
 # Rationalize What
 
@@ -427,11 +388,7 @@ Explain: Household bills and subscriptions snapshot. (2026-04-01 to 2026-04-30)
 2. Review whether any streaming charges should be split or merged across months.
 3. Set a monthly combined cap goal for streaming subscriptions for the next quarter.
 
-</RATIONALIZE>
-
-</CONTEXT>
-
-</CONTEXTS>
+</RATIONALIZE_1>
 
 <PROPOSAL>
 
@@ -447,9 +404,10 @@ Explain: Household bills and subscriptions snapshot. (2026-04-01 to 2026-04-30)
 
 </PROPOSAL>
 
-<CALLS>
+<PROPOSAL_TOOL_CALLS>
 
 # Round 1
+
 ## Invoked tools
 
 1. **`propose_create_categorization_rule`**
@@ -465,18 +423,14 @@ Explain: Household bills and subscriptions snapshot. (2026-04-01 to 2026-04-30)
 }
 ```
 
-</CALLS>
+</PROPOSAL_TOOL_CALLS>
 """,
     "output": '{"score": 3, "notes": "Delivers only the utilities rule while omitting streaming review and the streaming cap goal; Open items falsely list none despite remaining work."}',
   },
   {
     "name": "service_fees_budget_and_reviews_open_five",
     "batch": 4,
-    "input": """<CONTEXTS>
-
-<CONTEXT index="1">
-
-<RATIONALIZE>
+    "input": """<RATIONALIZE_1>
 
 # Rationalize What
 
@@ -497,11 +451,7 @@ Credit card interest charges decreased.
 1. Consider setting a budget for service fees to keep interest charges low.
 2. Review APR / statement details to confirm why interest changed.
 
-</RATIONALIZE>
-
-</CONTEXT>
-
-</CONTEXTS>
+</RATIONALIZE_1>
 
 <PROPOSAL>
 
@@ -518,9 +468,10 @@ Credit card interest charges decreased.
 
 </PROPOSAL>
 
-<CALLS>
+<PROPOSAL_TOOL_CALLS>
 
 # Round 1
+
 ## Invoked tools
 
 1. **`propose_create_goal`**
@@ -536,10 +487,7 @@ Credit card interest charges decreased.
 }
 ```
 
-# Round 2
-_No tool calls this round._
-
-</CALLS>
+</PROPOSAL_TOOL_CALLS>
 """,
     "output": '{"score": 5, "notes": "Creates a concrete budget with matching goal tool call and parks human APR and debt follow-ups under Open items."}',
   },
@@ -559,15 +507,15 @@ def _build_output_schema(_types: Any) -> Any:
 
 SYSTEM_PROMPT = """You are a strict completeness-only grader. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
 
-**Bundle:** `<CONTEXTS>` … `<PROPOSAL>` … `<CALLS>` (this propose run only; ignore `<RATIONALIZE_CALLS>`). Grade only visible text; do not invent facts. Ignore factual accuracy and whether tool choice is ideal.
+**Bundle:** `<RATIONALIZE_N>` … `<PROPOSAL>` … `<PROPOSAL_TOOL_CALLS>` (this propose run only: `# Round N`, then `## Invoked tools` per round). Grade only visible text; do not invent facts. Ignore factual accuracy and whether tool choice is ideal.
 
 **Penny limits (drive completeness; do not penalize correct human handoffs):**
 - **Uncategorized Penny cannot resolve:** Some transactions stay uncategorized because the spend is too vague or bundles many goods/services, so **Penny cannot assign one category without guessing.** User/manual categorization of those rows under **Open items** (or equivalent) is **complete and correct**; **do not** require `propose_*` categorization or recategorization tools for that work, and **do not** treat missing tools there as an automation gap.
 - **Final “are labels correct?”:** **Penny cannot fully verify categorical accuracy** the way the user ultimately can. Retrieval, heuristics, or bulk relabel proposals are **not** substitute for the user’s final attestation. If the proposal frames **definitive** verification that labels are **fully correct** as **only** Penny work under **Proposed next steps** (even with tools), treat that as **sectioning error → prefer score 4** when coverage otherwise holds; that confirmation belongs under **Open items** for the user.
 
 **Completeness:**
-1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE>` bodies; no silent drops.
-2. **Automation:** If **Proposed next steps** assign Penny execution (goals, rules, retrieve/recategorize, **historical aggregates/patterns**), `<CALLS>` must include matching tool invocations across rounds. Steps covered by the two **Penny limits** bullets above do **not** need tools.
+1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE_N>` bodies; no silent drops.
+2. **Automation:** If **Proposed next steps** assign Penny execution (goals, rules, retrieve/recategorize, **historical aggregates/patterns**), `<PROPOSAL_TOOL_CALLS>` must include matching tool invocations **across rounds** (scan every `# Round N` block). Steps covered by the two **Penny limits** bullets above do **not** need tools.
 3. **Structure:** Penny-executable work (including historical computation when proposed as Penny’s) belongs in **Proposed** unless a concrete blocker is stated; user-final steps in **Open**.
 
 **Historical statistic vs goal:** Rationalize asks for (A) a **historical statistic** and (B) a **goal informed by** it. If (A) appears **only** under Open while (B) is under Proposed with matching goal tools, that is **one sectioning defect → 4** (statistic should be Proposed Penny work). If (A) is **missing** from PROPOSAL, coverage is weaker (**often 3**).
@@ -575,11 +523,11 @@ SYSTEM_PROMPT = """You are a strict completeness-only grader. Return JSON `{scor
 **Scoring anchors (worst match wins):**
 - **1** — Primary rationalize next step **wholly unaddressed** while PROPOSAL pursues **different** transaction subjects (e.g. wrong merchant vs named rule target), **or** primary step replaced by unrelated work—**use 1, not 2**, even if tools exist.
 - **2** — Whole context thread dropped, **or** **≥2** `## Next steps` bullets missing from both Proposed and Open while Open falsely says **none**, **or** several bullets missing.
-- **3** — Proposed Penny work without matching `<CALLS>`, **or** a **primary** Penny ask only under Open with **no** Proposed mirror, **or** clear partial coverage (not the statistic-split case below).
+- **3** — Proposed Penny work without matching `<PROPOSAL_TOOL_CALLS>`, **or** a **primary** Penny ask only under Open with **no** Proposed mirror, **or** clear partial coverage (not the statistic-split case below).
 - **4** — Single sectioning issue, threads otherwise present: **(a)** user-only final label-truth check only under Proposed (see Penny limits); **(b)** historical metric only in Open next to a Proposed goal with tools—**4**, not 3, when the metric text exists in Open; **(c)** thin wording only.
 - **5** — Full coverage; tools match Proposed Penny work; Proposed/Open coherent, including **user** categorization for Penny-unmappable uncategorized charges under Open.
 
-**`notes`:** One sentence (semicolons allowed); name gaps or affirm coverage, tools, and split. For multi-`<CONTEXT>` **5**, name each context theme checked.
+**`notes`:** One sentence (semicolons allowed); name gaps or affirm coverage, tools, and split. For multi-`<RATIONALIZE_N>` **5**, name each context theme checked.
 """
 
 
