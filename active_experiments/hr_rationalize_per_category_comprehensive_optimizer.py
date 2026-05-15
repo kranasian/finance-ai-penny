@@ -271,11 +271,41 @@ class CheckerOptimizer:
     if self.thinking_budget > 0:
       cfg_kwargs["thinking_config"] = types.ThinkingConfig(
         thinking_budget=self.thinking_budget,
-        include_thoughts=False,
+        include_thoughts=True,
       )
     cfg = types.GenerateContentConfig(**cfg_kwargs)
-    out = self.client.models.generate_content(model=self.model_name, contents=contents, config=cfg)
-    text = (out.text or "").strip()
+    output_text = ""
+    thought_summary = ""
+
+    for chunk in self.client.models.generate_content_stream(
+      model=self.model_name,
+      contents=contents,
+      config=cfg,
+    ):
+      if chunk.text is not None:
+        output_text += chunk.text
+
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
+
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
+
+    text = output_text.strip()
+    if not text:
+      raise ValueError("Empty response from model. Check API key and model availability.")
     try:
       return json.loads(text)
     except Exception:
