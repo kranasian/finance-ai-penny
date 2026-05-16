@@ -8,6 +8,8 @@ import argparse
 import json
 import os
 import time
+from typing import Any
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -16,11 +18,13 @@ load_dotenv()
 
 DEFAULT_MODEL = "gemini-flash-lite-latest"
 
-SYSTEM_PROMPT = """Input: groups `{id, name, transactions[]}` with lines `DATE  $AMOUNT  category_token`.
-
-Output JSON with `shelter_ids` (rent/mortgage principal outflow streams) and `excluded_ids` (everything else).
+SYSTEM_PROMPT = """Input JSON: [{id,name,transactions[]}], each tx line contains date, signed $amount, category_token.
 
 Amount direction: `+$` = outflow, `-$` = inflow. Rent/mortgage must be outflows.
+Hard rules:
+1) Direction comes ONLY from sign: `$x` outflow, `-$x` inflow. Never infer direction from name/category.
+2) Rent/mortgage principal are outflows; inflows cannot be shelter evidence.
+3) Evaluate each id independently and return every id exactly once in shelter_transaction_ids or excluded_transaction_ids.
 
 Classify each group independently from outflow dates, outflow amounts, and name text. Ignore non-`shelter_home` category tokens for the housing decision (they are often mislabeled); never pick shelter because a line says insurance, travel, entertainment, etc. When excluding, anchor reasons in dates, amounts, in/out mix, and names—not mainly in a non-`shelter_home` category token.
 
@@ -34,50 +38,62 @@ Favor housing-scale outflows (often hundreds-to-low-thousands with drift) only w
 
 Do not classify as shelter from amount size alone or from a wrong category. If the name is not clearly housing-related, require both: (1) housing-scale outflows and (2) recurring date pattern among those outflows.
 
-Exclude travel/lodging-style reversal clusters, same-day wash transfers and P2P-style pulsing where inflows cancel outflows without a stable rent-like rhythm, credit-card payments, tax-only flows, retail/micro-spend scatter, and generic small-loan installment patterns. `shelter_utilities` marks utilities (energy, water, etc.), not rent or mortgage—do not place utilities-only groups in `shelter_ids` based on that tag alone. The token `transfer` is often mislabeled rent; never drop shelter on that label alone.
+Exclude travel/lodging-style reversal clusters, same-day wash transfers and P2P-style pulsing where inflows cancel outflows without a stable rent-like rhythm, credit-card payments, tax-only flows, retail/micro-spend scatter, and generic small-loan installment patterns. `shelter_utilities` marks utilities (energy, water, etc.), not rent or mortgage—do not place utilities-only groups in shelter_transaction_ids based on that tag alone. The token `transfer` is often mislabeled rent; never drop shelter on that label alone.
 
 When three or more outflows repeat on any plausible payment cadence as above (single amount or two alternating housing-scale amounts within the cycle) with only minor extra charges/noise, keep as possible shelter even if the name is generic like "Payment" or lines are tagged `transfer`.
 
 Tie-breaker: if a group has no inflows and shows the same outflow amount—or the same repeating pair of outflow amounts—on a recognizable repeating schedule across at least three such outflows, do not exclude solely for being labeled transfer/uncategorized; treat as likely shelter unless explicit non-housing evidence exists.
 
 
-Notes: max 3 sentences, no numeric ids, explain cadence + amounts (name words only when cadence is ambiguous)."""
+## Output (JSON only)
+- `shelter_transaction_ids`: recurring rent/mortgage principal outflow stream ids per policy above.
+- `excluded_transaction_ids`: all other input ids.
+- Every input id appears exactly once across the two lists (partition).
+- `notes`: <=3 sentences, merchant names only, cite sign/cadence/amount facts briefly (no numeric ids).
 
-OUTPUT_SCHEMA = types.Schema(
-  type=types.Type.OBJECT,
-  required=["shelter_ids", "excluded_ids", "notes"],
-  properties={
-    "shelter_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
-    "excluded_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
-    "notes": types.Schema(type=types.Type.STRING),
-  },
-)
-
-SAFETY_SETTINGS = [
-  types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
-  types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
-  types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
-  types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
-]
+Return **only** the JSON object matching the schema (`shelter_transaction_ids`, `excluded_transaction_ids`, `notes`)."""
 
 
-def _compare_shelter_id_sets(actual_text: str, ideal_text: str) -> tuple[bool, str]:
-  """Compare shelter_ids and excluded_ids only (ignores notes wording)."""
+def _build_output_schema(_types: Any) -> Any:
+  return _types.Schema(
+    type=_types.Type.OBJECT,
+    required=["shelter_transaction_ids", "excluded_transaction_ids", "notes"],
+    properties={
+      "shelter_transaction_ids": _types.Schema(
+        type=_types.Type.ARRAY,
+        items=_types.Schema(type=_types.Type.INTEGER),
+        description="Ids of recurring rent/mortgage principal outflow streams; every input id appears here or in excluded_transaction_ids.",
+      ),
+      "excluded_transaction_ids": _types.Schema(
+        type=_types.Type.ARRAY,
+        items=_types.Schema(type=_types.Type.INTEGER),
+        description="All other input ids not classified as rent/mortgage shelter.",
+      ),
+      "notes": _types.Schema(
+        type=_types.Type.STRING,
+        description="<=3 sentences; merchant names only; brief sign/cadence/amount facts (no numeric ids).",
+      ),
+    },
+  )
+
+
+def _compare_id_sets(actual_text: str, ideal_text: str) -> tuple[bool, str]:
+  """Compare shelter_transaction_ids and excluded_transaction_ids only (ignores notes wording)."""
   try:
     actual = json.loads(actual_text or "{}")
     ideal = json.loads(ideal_text or "{}")
   except json.JSONDecodeError as exc:
     return False, f"invalid JSON ({exc})"
-  a_s = set(actual.get("shelter_ids", []))
-  a_e = set(actual.get("excluded_ids", []))
-  i_s = set(ideal.get("shelter_ids", []))
-  i_e = set(ideal.get("excluded_ids", []))
+  a_s = set(actual.get("shelter_transaction_ids", []))
+  a_e = set(actual.get("excluded_transaction_ids", []))
+  i_s = set(ideal.get("shelter_transaction_ids", []))
+  i_e = set(ideal.get("excluded_transaction_ids", []))
   if a_s != i_s or a_e != i_e:
     return (
       False,
-      f"shelter_ids model={sorted(a_s)} ideal={sorted(i_s)}; excluded_ids model={sorted(a_e)} ideal={sorted(i_e)}",
+      f"shelter_transaction_ids model={sorted(a_s)} ideal={sorted(i_s)}; excluded_transaction_ids model={sorted(a_e)} ideal={sorted(i_e)}",
     )
-  return True, "shelter_ids and excluded_ids match reference"
+  return True, "shelter_transaction_ids and excluded_transaction_ids match reference"
 
 
 class RentMortgageDetectionOptimizer:
@@ -86,25 +102,35 @@ class RentMortgageDetectionOptimizer:
     if not api_key:
       raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY must be set.")
     self.client = genai.Client(api_key=api_key)
+    self._types = types
     self.model_name = model_name
     self.thinking_budget = thinking_budget
     self.max_output_tokens = max_output_tokens
     self.temperature = 0.3
     self.top_p = 0.95
+    self.system_prompt = SYSTEM_PROMPT
+    self.safety_settings = [
+      self._types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
+    ]
+    self.output_schema = _build_output_schema(self._types)
 
   def generate_response(self, prompt_override: str) -> str:
     print("## LLM Input\n")
     print(prompt_override)
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_override)])]
-    config = types.GenerateContentConfig(
+    t = self._types
+    contents = [t.Content(role="user", parts=[t.Part.from_text(text=prompt_override)])]
+    config = t.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       response_mime_type="application/json",
-      response_schema=OUTPUT_SCHEMA,
-      safety_settings=SAFETY_SETTINGS,
-      system_instruction=[types.Part.from_text(text=SYSTEM_PROMPT)],
-      thinking_config=types.ThinkingConfig(
+      response_schema=self.output_schema,
+      safety_settings=self.safety_settings,
+      system_instruction=[t.Part.from_text(text=self.system_prompt)],
+      thinking_config=t.ThinkingConfig(
         thinking_budget=self.thinking_budget,
         include_thoughts=True,
       ),
@@ -177,7 +203,7 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"shelter_ids":[382819],"excluded_ids":[3907,24951],"notes":"The Bilt rent stream is housing-scale and explicitly rent-labeled; Kaiser insurance and travel reversals do not show rent or mortgage payment cadence."}""",
+    "output": """{"shelter_transaction_ids":[382819],"excluded_transaction_ids":[3907,24951],"notes":"Bilt Rent: one housing-scale +$3898.52 outflow with shelter_home tag and rent-labeled name. Kaiser and Chase Travel lack recurring rent/mortgage outflow cadence."}""",
   },
   {
     "batch": 2,
@@ -213,7 +239,7 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"shelter_ids":[4672],"excluded_ids":[546756,42849],"notes":"Payment shows bimonthly rent or mortgage payments at different amounts, with a payment for another purpose in between. Viewparadise and Zelle from Marilyn R Velez are lines are one-off or mixed-direction transfer activity without repeated monthly housing cadence, so no rent or mortgage principal stream is identified."}""",
+    "output": """{"shelter_transaction_ids":[4672],"excluded_transaction_ids":[546756,42849],"notes":"Payment: bimonthly housing-scale +$1500/$2000 outflows with recurring anchors; small +$50 is noise between debits. Viewparadise is one outflow; Zelle shows mixed +/- without rent-like rhythm."}""",
   },
   {
     "batch": 3,
@@ -253,7 +279,7 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"shelter_ids":[103619,4771],"excluded_ids":[388],"notes":"AVA Commons shows recurring housing-scale debits across months; Walmart is payroll/retail/cash activity without rent or mortgage recurrence; Chase Payment shows monthly payments possibly for mortgage."}""",
+    "output": """{"shelter_transaction_ids":[103619,4771],"excluded_transaction_ids":[388],"notes":"AVA Commons: recurring shelter_home outflows across months at housing scale. Chase Payment: monthly +$500 outflow cadence. Walmart: salary inflows and micro retail, not shelter."}""",
   },
   {
     "batch": 4,
@@ -290,7 +316,7 @@ TEST_CASES = [
     ]
   }
 ]""",
-    "output": """{"shelter_ids":[],"excluded_ids":[119912,617991,1494],"notes":"MoneyLion and AliExpress activity is short-cycle transfer or micro-spend behavior, not month-over-month housing principal cadence."}""",
+    "output": """{"shelter_transaction_ids":[],"excluded_transaction_ids":[119912,617991,1494],"notes":"MoneyLion streams show advance/repay +/- pulsing without housing-scale recurring outflow cadence. AliExpress lines are micro outflows, not rent or mortgage."}""",
   },
 ]
 
@@ -324,10 +350,9 @@ def run_test(test_name_or_index_or_dict: int | str | dict, optimizer: RentMortga
   if tc.get("output"):
     print("## Ideal output (reference):")
     print(tc["output"])
-    if result and result.strip():
-      ok, detail = _compare_shelter_id_sets(result, tc["output"])
-      print("## Sandbox execution (ID sets vs reference):")
-      print("PASS" if ok else "FAIL")
+    if result.strip():
+      ok, detail = _compare_id_sets(result, tc["output"])
+      print("## ID-set match:", "PASS" if ok else "FAIL")
       print(detail)
   return result
 
