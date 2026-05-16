@@ -23,7 +23,7 @@ SYSTEM_PROMPT = """Input JSON: [{id,name,transactions[]}], each tx line contains
 Hard rules:
 1) Direction comes ONLY from sign: `$x` inflow, `-$x` outflow. Never infer direction from name/category.
 2) Salaries are inflows; outflows cannot be salary evidence.
-3) Evaluate each id independently and return every id exactly once in salary_ids or excluded_ids.
+3) Evaluate each id independently and return every id exactly once in salary_transaction_ids or excluded_transaction_ids.
 
 Per-id checklist:
 - Parse counts: inflow_count, outflow_count, inflow_amounts, date spacing of inflows.
@@ -35,47 +35,57 @@ Per-id checklist:
 - If all listed amounts are positive, the group is inflow-only by definition.
 
 Decision policy:
-- Highest-priority rule: if name contains "payroll" or "direct deposit", classify as salary_ids unless transactions are mostly outflows, clearly advance/transfer-reversal behavior, or **all inflows share one calendar date** (same-day clusters are not recurring income).
-- If category suggests salary/income, assume salary_ids UNLESS strong contrary evidence exists (sparse inflows, **no rough paycheck gap pattern** across +dates, mixed with clear non-wage pattern, mostly outflows, or advance/reversal loop).
-- If category is not salary, still classify as salary_ids when +inflows show a **rough paycheck-like gap pattern** (not merely different dates) and wage-like scale; name is only secondary.
+- Highest-priority rule: if name contains "payroll" or "direct deposit", classify as salary unless transactions are mostly outflows, clearly advance/transfer-reversal behavior, or **all inflows share one calendar date** (same-day clusters are not recurring income).
+- If category suggests salary/income, assume salary UNLESS strong contrary evidence exists (sparse inflows, **no rough paycheck gap pattern** across +dates, mixed with clear non-wage pattern, mostly outflows, or advance/reversal loop).
+- If category is not salary, still classify as salary when +inflows show a **rough paycheck-like gap pattern** (not merely different dates) and wage-like scale; name is only secondary.
 - Recurring positive inflows must not be excluded only because merchant/category looks like spending.
 
 Minimum salary evidence:
-- **Same-day veto:** If **every** inflow line shares the **same calendar date** (YYYY-MM-DD), that pattern is **not recurring income**; **do not** classify as salary_ids on recurrence/cadence or on Exception A/B below—same-day clusters are excluded_ids for wage-recurrence purposes.
-- General rule: require >=3 inflows with **recurring cadence** for salary_ids: **>=2 different calendar dates** **and** sorted +inflow gaps that **roughly** fit one paycheck rhythm (weekly/biweekly/semimonthly/monthly bands above)—**not** “different dates only.”
-- Exception A: if name contains "payroll" or "direct deposit" and there are >=2 inflows (>=40) on **>=2 different calendar dates**, classify as salary_ids (name shortcut still **does not** bypass **same-day veto**).
-- Exception B: if there are >=4 inflows on **>=2 different calendar dates** and **gap pattern** is near-monthly or biweekly (rough interval consistency), classify as salary_ids even when category/name look like shopping.
-- If only 1-2 inflows and no strong payroll/direct-deposit name, classify as excluded_ids.
-- Guardrail: names implying bill/transfer automation (e.g., "autopay", "payment", transfer-like wording) are excluded_ids unless strong payroll/direct-deposit wording is present.
+- **Same-day veto:** If **every** inflow line shares the **same calendar date** (YYYY-MM-DD), that pattern is **not recurring income**; **do not** classify as salary on recurrence/cadence or on Exception A/B below—same-day clusters are excluded for wage-recurrence purposes.
+- General rule: require >=3 inflows with **recurring cadence** for salary: **>=2 different calendar dates** **and** sorted +inflow gaps that **roughly** fit one paycheck rhythm (weekly/biweekly/semimonthly/monthly bands above)—**not** “different dates only.”
+- Exception A: if name contains "payroll" or "direct deposit" and there are >=2 inflows (>=40) on **>=2 different calendar dates**, classify as salary (name shortcut still **does not** bypass **same-day veto**).
+- Exception B: if there are >=4 inflows on **>=2 different calendar dates** and **gap pattern** is near-monthly or biweekly (rough interval consistency), classify as salary even when category/name look like shopping.
+- If only 1-2 inflows and no strong payroll/direct-deposit name, classify as excluded.
+- Guardrail: names implying bill/transfer automation (e.g., "autopay", "payment", transfer-like wording) are excluded unless strong payroll/direct-deposit wording is present.
 
 Behavior anchors:
-- Four monthly `+$839.18` entries labeled shopping => salary_ids (recurring inflow stream).
-- Transfer-labeled "Autopay" inflow series => excluded_ids (transfer/bill automation pattern).
-- Two inflows with payroll/direct-deposit naming => salary_ids.
-- Two inflows mixed with several outflows and no payroll/direct-deposit naming => excluded_ids.
-- Many identical inflows **all on the same calendar date** => excluded_ids (same day is not recurring income cadence).
-- +Inflows on **several different dates** but **irregular gaps** (no rough weekly/biweekly/monthly family) => excluded_ids unless Exception A applies.
+- Four monthly `+$839.18` entries labeled shopping => salary (recurring inflow stream).
+- Transfer-labeled "Autopay" inflow series => excluded (transfer/bill automation pattern).
+- Two inflows with payroll/direct-deposit naming => salary.
+- Two inflows mixed with several outflows and no payroll/direct-deposit naming => excluded.
+- Many identical inflows **all on the same calendar date** => excluded (same day is not recurring income cadence).
+- +Inflows on **several different dates** but **irregular gaps** (no rough weekly/biweekly/monthly family) => excluded unless Exception A applies.
 
-salary_ids = recurring wage-like inflow streams (variable amounts allowed) across **>=2 calendar dates** with a **rough interval pattern**, plus short histories with strong payroll/direct-deposit naming when dates differ; **same-date-only inflows are never recurring income** for this purpose.
-excluded_ids = all other ids.
-notes: <=3 sentences, names only, cite sign/gap-pattern/recurrence/amount facts briefly (note same-day-only or irregular spacing when relevant)."""
+## Output (JSON only)
+- `salary_transaction_ids`: recurring wage-like inflow stream ids per policy above.
+- `excluded_transaction_ids`: all other input ids.
+- Every input id appears exactly once across the two lists (partition).
+- `notes`: <=3 sentences, merchant names only, cite sign/gap-pattern/recurrence/amount facts briefly.
 
-OUTPUT_SCHEMA = types.Schema(
-  type=types.Type.OBJECT,
-  required=["salary_transaction_ids", "excluded_transaction_ids", "notes"],
-  properties={
-    "salary_transaction_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
-    "excluded_transaction_ids": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.INTEGER)),
-    "notes": types.Schema(type=types.Type.STRING),
-  },
-)
+Return **only** the JSON object matching the schema (`salary_transaction_ids`, `excluded_transaction_ids`, `notes`)."""
 
-SAFETY_SETTINGS = [
-  types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
-  types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
-  types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
-  types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
-]
+
+def _build_output_schema(_types: Any) -> Any:
+  return _types.Schema(
+    type=_types.Type.OBJECT,
+    required=["salary_transaction_ids", "excluded_transaction_ids", "notes"],
+    properties={
+      "salary_transaction_ids": _types.Schema(
+        type=_types.Type.ARRAY,
+        items=_types.Schema(type=_types.Type.INTEGER),
+        description="Ids of recurring wage-like inflow streams; every input id appears here or in excluded_transaction_ids.",
+      ),
+      "excluded_transaction_ids": _types.Schema(
+        type=_types.Type.ARRAY,
+        items=_types.Schema(type=_types.Type.INTEGER),
+        description="All other input ids not classified as salary.",
+      ),
+      "notes": _types.Schema(
+        type=_types.Type.STRING,
+        description="<=3 sentences; merchant names only; brief sign/gap-pattern/recurrence/amount facts.",
+      ),
+    },
+  )
 
 
 def _compare_id_sets(actual_text: str, ideal_text: str) -> tuple[bool, str]:
@@ -103,25 +113,35 @@ class SalaryDetectionOptimizer:
     if not api_key:
       raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY must be set.")
     self.client = genai.Client(api_key=api_key)
+    self._types = types
     self.model_name = model_name
     self.thinking_budget = thinking_budget
     self.max_output_tokens = max_output_tokens
     self.temperature = 0.3
     self.top_p = 0.95
+    self.system_prompt = SYSTEM_PROMPT
+    self.safety_settings = [
+      self._types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+      self._types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
+    ]
+    self.output_schema = _build_output_schema(self._types)
 
   def generate_response(self, prompt_override: str) -> str:
     print("## LLM Input\n")
     print(prompt_override)
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_override)])]
-    config = types.GenerateContentConfig(
+    t = self._types
+    contents = [t.Content(role="user", parts=[t.Part.from_text(text=prompt_override)])]
+    config = t.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       response_mime_type="application/json",
-      response_schema=OUTPUT_SCHEMA,
-      safety_settings=SAFETY_SETTINGS,
-      system_instruction=[types.Part.from_text(text=SYSTEM_PROMPT)],
-      thinking_config=types.ThinkingConfig(
+      response_schema=self.output_schema,
+      safety_settings=self.safety_settings,
+      system_instruction=[t.Part.from_text(text=self.system_prompt)],
+      thinking_config=t.ThinkingConfig(
         thinking_budget=self.thinking_budget,
         include_thoughts=True,
       ),
