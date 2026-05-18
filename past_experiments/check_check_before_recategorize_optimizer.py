@@ -16,9 +16,25 @@ load_dotenv()
 SYSTEM_PROMPT = """You are an AI evaluator for check_before_recategorize outputs.
 
 ## Task
-Review `REVIEW_NEEDED` against `EVAL_INPUT`.
+Review `REVIEW_NEEDED` against `EVAL_INPUT` (and IDEAL_OUTPUT when grading golden cases).
 Return strict JSON only:
 {"good_copy": boolean, "info_correct": boolean, "eval_text": string}
+
+## Membership rules (apply when judging info_correct)
+`EVAL_INPUT` has `# Categorize Request` (filters) and `# Transactions` (a proposed member list). Grade whether `rules_satisfied` and `rationale`/`notes` correctly apply those filters—not category taste or whether recategorization should run.
+
+**Output style (membership verify)**
+- `rules_satisfied` true = every bullet passes every mapped filter; false = at least one bullet fails.
+- When false, rationale may cite only failing line(s); it need not recap passing bullets.
+- When true, a short all-clear rationale is sufficient.
+- Do not fail info_correct because the rationale omits passing lines or does not restate the target category.
+
+**Payee/name matching**
+- **Default fuzzy**: case-insensitive substring contains—e.g. “Chipotle transactions”, “transactions with Amazon”, “from PayPal”. Extra words OK (Chipotle #1842, CHEWY.COM).
+- **Exact** only when explicit or implicit: labelled/named as '…', must be exactly/equal to '…'. Same characters and order, **case-insensitive** (SPOTIFY USA = Spotify USA; Venmo Transfer ≠ exactly Venmo). Never treat exact as case-sensitive.
+- **includes/contains** in the request → substring contains per wording.
+
+Flag info_correct false when REVIEW_NEEDED uses the wrong mode (exact on a fuzzy-default request, or fuzzy/contains on an exact/labelled request) or misstates amount/date/account filters.
 
 ## Definitions
 - good_copy: true only when REVIEW_NEEDED follows required output format and style:
@@ -26,10 +42,10 @@ Return strict JSON only:
   - Has exactly one explanation key: notes OR rationale (single-line string)
   - Explanation length is 8-140 chars
   - Explanation is factual and consistent with rules_satisfied
-- info_correct: true only when REVIEW_NEEDED semantically matches IDEAL_OUTPUT verdict and reason quality.
-- eval_text: required if either boolean is false. Use bullet lines; concise, actionable.
-  - Start each bullet with a fix action.
-  - Mention the concrete mismatch from EVAL_INPUT and REVIEW_NEEDED.
+- info_correct: true only when rules_satisfied and rationale/notes match the correct membership verdict for EVAL_INPUT.
+- eval_text: empty string when both booleans are true; otherwise bullet lines—concise, actionable, starting with a fix action.
+
+**Amount/date tolerances** (when present in the request): around/about/approximately/approx amount → [0.95×X, 1.05×X]; around date → ±2 days inclusive.
 
 Return JSON only, no markdown."""
 
@@ -106,10 +122,93 @@ Identify any transaction approximately $20 and mark it as Income Business rather
         },
       }
     )
+
+  chipotle_fuzzy = next(
+    tc for tc in SOURCE_TEST_CASES if tc["name"] == "chipotle_transactions_fuzzy_suffix_pass"
+  )
+  venmo_exact = next(
+    tc for tc in SOURCE_TEST_CASES if tc["name"] == "venmo_exact_name_one_line_differs"
+  )
+  spotify_exact = next(
+    tc for tc in SOURCE_TEST_CASES if tc["name"] == "spotify_usa_exact_name_every_line_all_pass"
+  )
+  instacart_labelled = next(
+    tc for tc in SOURCE_TEST_CASES
+    if tc["name"] == "instacart_costco_delivery_labelled_exact_subset_fail"
+  )
+
+  test_cases.extend(
+    [
+      {
+        "name": "wrong_exact_on_fuzzy_chipotle_request",
+        "eval_input": chipotle_fuzzy["input"],
+        "review_needed": {
+          "rationale": "Mar 9 and Mar 14 payees are not exactly Chipotle.",
+          "rules_satisfied": False,
+        },
+        "ideal_output": {
+          "good_copy": True,
+          "info_correct": False,
+          "eval_text": "Chipotle transactions uses fuzzy matching; Chipotle #1842 and CHIPOTLE MEXICAN GRILL should pass.",
+        },
+      },
+      {
+        "name": "wrong_fuzzy_on_exact_venmo_request",
+        "eval_input": venmo_exact["input"],
+        "review_needed": {
+          "rationale": "Every line contains Venmo.",
+          "rules_satisfied": True,
+        },
+        "ideal_output": {
+          "good_copy": True,
+          "info_correct": False,
+          "eval_text": "Name must be exactly Venmo; Venmo Transfer is not an exact match.",
+        },
+      },
+      {
+        "name": "wrong_case_sensitive_on_exact_spotify",
+        "eval_input": spotify_exact["input"],
+        "review_needed": {
+          "rationale": "Oct 2–3 lines fail case-sensitive Spotify USA match.",
+          "rules_satisfied": False,
+        },
+        "ideal_output": {
+          "good_copy": True,
+          "info_correct": False,
+          "eval_text": "Exact payee match is case-insensitive; SPOTIFY USA and spotify usa satisfy exactly Spotify USA.",
+        },
+      },
+      {
+        "name": "wrong_fuzzy_on_labelled_instacart_request",
+        "eval_input": instacart_labelled["input"],
+        "review_needed": {
+          "rationale": "All lines include Instacart and belong in scope.",
+          "rules_satisfied": True,
+        },
+        "ideal_output": {
+          "good_copy": True,
+          "info_correct": False,
+          "eval_text": "Labelled as Instacart Costco delivery requires an exact payee; Instacart-only lines fail.",
+        },
+      },
+    ]
+  )
   return test_cases
 
 
 TEST_CASES = _build_checker_test_cases()
+
+CHECKER_BATCHES: dict[int, dict[str, object]] = {
+  8: {
+    "name": "Name-match mode errors (fuzzy vs exact)",
+    "tests": [
+      "wrong_exact_on_fuzzy_chipotle_request",
+      "wrong_fuzzy_on_exact_venmo_request",
+      "wrong_case_sensitive_on_exact_spotify",
+      "wrong_fuzzy_on_labelled_instacart_request",
+    ],
+  },
+}
 
 
 class CheckCheckBeforeRecategorizeOptimizer:
@@ -275,14 +374,24 @@ def _matches_ideal_output(actual: dict, ideal: dict) -> bool:
 
 def main(test: str | None = None, batch: int | None = None):
   if batch is not None:
-    if batch not in BATCHES:
-      print(f"Invalid batch number: {batch}. Available batches: {sorted(BATCHES.keys())}")
-      print("\nBatch descriptions:")
-      for batch_number, info in BATCHES.items():
-        names = [SOURCE_TEST_CASES[idx]["name"] for idx in info["tests"]]
-        print(f"  Batch {batch_number}: {info['name']} — {', '.join(names)}")
+    if batch in CHECKER_BATCHES:
+      info = CHECKER_BATCHES[batch]
+      test_names = list(info["tests"])
+      print(f"\nRunning checker batch {batch}: {info['name']}\n")
+      run_tests(test_names=test_names)
       return
-    test_names = [SOURCE_TEST_CASES[idx]["name"] for idx in BATCHES[batch]["tests"]]
+    if batch not in BATCHES:
+      all_batches = sorted(set(BATCHES) | set(CHECKER_BATCHES))
+      print(f"Invalid batch number: {batch}. Available batches: {all_batches}")
+      print("\nSource verify batches (golden tests):")
+      for batch_number, info in BATCHES.items():
+        names = [f"{SOURCE_TEST_CASES[idx]['name']}_golden" for idx in info["tests"]]
+        print(f"  Batch {batch_number}: {info['name']} — {', '.join(names)}")
+      print("\nChecker-only batches:")
+      for batch_number, info in CHECKER_BATCHES.items():
+        print(f"  Batch {batch_number}: {info['name']} — {', '.join(info['tests'])}")
+      return
+    test_names = [f"{SOURCE_TEST_CASES[idx]['name']}_golden" for idx in BATCHES[batch]["tests"]]
     print(f"\nRunning batch {batch}: {BATCHES[batch]['name']}\n")
     run_tests(test_names=test_names)
     return
@@ -322,7 +431,7 @@ if __name__ == "__main__":
     const=1,
     default=None,
     metavar="N",
-    help="Run batch N using source optimizer batch indices.",
+    help="Run batch N (source golden tests 1–7, checker name-match batch 8).",
   )
   args = parser.parse_args()
   main(test=args.test, batch=args.batch)

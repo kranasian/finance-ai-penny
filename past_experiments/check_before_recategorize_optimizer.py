@@ -37,7 +37,6 @@ Input you receive:
 - Transaction line format: `$Amount Name on YYYY-MM-DD` (example: `$10 McDonald's on 2020-08-30`).
 
 Your job: **membership check**—decide whether `# Transactions` is **correct** for the group implied by `# Categorize Request`. For every bullet, verify it satisfies **every** explicit filter that defines the group. Do not judge category sensibility beyond applying those filters literally.
-- If a filter says transactions must be named as something, the transaction name must match exactly with no added/removed letters or words; comparison is case-insensitive.
 
 Strictness — no exceptions:
 - Every filter in the request is mandatory. Do not waive, blend, round away, or partially apply a rule. Do not pass a line because it is "close enough" or because most lines look fine.
@@ -45,7 +44,7 @@ Strictness — no exceptions:
 
 Rules:
 1) Map every explicit filter, then validate each bullet against all of them:
-   - Payee/name: Whenever the request fixes how transactions must be named (from '…', must be exactly/named/equal to a literal, or a full multi-word merchant label such as Instacart Costco delivery), extract the establishment from each bullet (strip noise like `transaction`, `on`, dates), fold case, and require a **case-insensitive exact string match** to that required name—same characters and order; PAYPAL equals PayPal; Venmo Transfer fails against Venmo. Fuzzy matching applies **only** if the request explicitly demands it (includes, contains, something like, similar to, does not have to be exactly, the name does not have to be exactly '…'); then follow that wording strictly (usually case-insensitive substring contains).
+   - Payee/name: **Default fuzzy** = case-insensitive substring contains (strip noise like `transaction`, `on`, dates). Use for “{merchant} transactions”, “transactions with {merchant}”, “from PayPal”. **Exact** only when explicit or implicit: labelled/named as '…', must be exactly/equal to '…'—same chars/order, **case-insensitive** (SPOTIFY USA = Spotify USA; Venmo Transfer ≠ exactly Venmo). includes/contains → substring per wording.
    - Amounts and dates: apply bounds literally (at least / more than / exactly / between). No unstated tolerance except where the request uses around/about/approximately/approx (amount band [0.95*X, 1.05*X]; date band Y−2..Y+2 days).
    - Account: only when the request ties filters to account_id, account, or posts to an account; then every line must show matching account info.
 2) Around amount near $X: [0.95*X, 1.05*X] inclusive.
@@ -64,7 +63,7 @@ TEST_CASES = [
     "name": "chipotle_under_cap_after_cutoff_all_pass",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Chipotle' where each charge was $30 or less on or after 2026-03-01, setting their category to 'meals_dining_out'.
+Re-categorize Chipotle transactions where each charge was $30 or less on or after 2026-03-01, setting their category to 'meals_dining_out'.
 
 # Transactions
 
@@ -82,7 +81,7 @@ Re-categorize all transactions from 'Chipotle' where each charge was $30 or less
     "name": "delta_baggage_minimum_one_shortfall",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Delta Air Lines' as 'travel_airfare' where each charge was at least $55.
+Re-categorize Delta Air Lines transactions as 'travel_airfare' where each charge was at least $55.
 
 # Transactions
 
@@ -135,7 +134,7 @@ Categorize these rows as 'transfers_peer_to_peer'; for each row the name must be
     "name": "sweetgreen_wednesdays_only_all_pass",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Sweetgreen' as 'meals_dining_out' where the transaction date is on a Wednesday.
+Re-categorize Sweetgreen transactions as 'meals_dining_out' where the transaction date is on a Wednesday.
 
 # Transactions
 
@@ -170,7 +169,7 @@ Categorize the Hulu subscription charges as 'leisure_entertainment' where each a
     "name": "paypal_refunds_negative_all_pass",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'PayPal' as 'income_refunds' when the amount is negative.
+Re-categorize PayPal transactions as 'income_refunds' when the amount is negative.
 
 # Transactions
 
@@ -185,10 +184,10 @@ Re-categorize all transactions from 'PayPal' as 'income_refunds' when the amount
     },
   },
   {
-    "name": "instacart_costco_delivery_literal_subset_fail",
+    "name": "instacart_costco_delivery_labelled_exact_subset_fail",
     "input": """# Categorize Request
 
-Re-categorize the Instacart Costco delivery transactions as 'groceries'.
+Re-categorize transactions labelled as 'Instacart Costco delivery' as 'groceries'.
 
 # Transactions
 
@@ -198,7 +197,7 @@ Re-categorize the Instacart Costco delivery transactions as 'groceries'.
 - $62 Instacart Costco on 2026-02-21.
 - $55 Instacart delivery on 2026-02-22.""",
     "output": {
-      "rationale": "Only Feb 18 matches Instacart Costco delivery; other payees differ.",
+      "rationale": "Only Feb 18 is exactly Instacart Costco delivery; other payees differ.",
       "rules_satisfied": False,
     },
   },
@@ -206,7 +205,7 @@ Re-categorize the Instacart Costco delivery transactions as 'groceries'.
     "name": "duke_energy_under_cap_one_spike",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Duke Energy' as 'utilities_electric' when the charge is under $125.
+Re-categorize Duke Energy transactions as 'utilities_electric' when the charge is under $125.
 
 # Transactions
 
@@ -224,7 +223,7 @@ Re-categorize all transactions from 'Duke Energy' as 'utilities_electric' when t
     "name": "apple_store_spend_band_one_outlier",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Apple Store' as 'shopping_electronics' where each charge amount is between $40 and $160.
+Re-categorize Apple Store transactions as 'shopping_electronics' where each charge amount is between $40 and $160.
 
 # Transactions
 
@@ -278,7 +277,7 @@ Re-categorize these transit purchases as 'transport_public_transit' where the na
     "name": "blue_bottle_around_mid_august_window",
     "input": """# Categorize Request
 
-Re-categorize all transactions from 'Blue Bottle' on around August 20, 2026 as 'meals_dining_out'.
+Re-categorize Blue Bottle transactions on around August 20, 2026 as 'meals_dining_out'.
 
 # Transactions
 
@@ -346,6 +345,57 @@ Re-categorize purchases as 'shopping_pet' where the name includes 'Chewy' and ea
       "rules_satisfied": False,
     },
   },
+  {
+    "name": "chipotle_transactions_fuzzy_suffix_pass",
+    "input": """# Categorize Request
+
+Re-categorize Chipotle transactions as 'meals_dining_out' where each charge was $20 or less.
+
+# Transactions
+
+- $11 Chipotle on 2026-03-04.
+- $14 Chipotle #1842 on 2026-03-09.
+- $9 CHIPOTLE MEXICAN GRILL on 2026-03-14.
+- $20 Chipotle Mobile Order on 2026-03-19.""",
+    "output": {
+      "rationale": "Every line fuzzy-matches Chipotle and is at most $20.",
+      "rules_satisfied": True,
+    },
+  },
+  {
+    "name": "amazon_transactions_with_fuzzy_one_miss",
+    "input": """# Categorize Request
+
+Re-categorize transactions with Amazon as 'shopping_online' where each charge was at least $10.
+
+# Transactions
+
+- $24 Amazon.com on 2026-04-01.
+- $18 AMZN MKTP on 2026-04-02.
+- $35 Amazon Fresh on 2026-04-03.
+- $12 Target on 2026-04-04.""",
+    "output": {
+      "rationale": "Apr 4 Target line has no Amazon substring in the payee.",
+      "rules_satisfied": False,
+    },
+  },
+  {
+    "name": "instacart_transactions_fuzzy_pass",
+    "input": """# Categorize Request
+
+Re-categorize Instacart transactions as 'groceries'.
+
+# Transactions
+
+- $95 Instacart Costco delivery on 2026-02-18.
+- $40 Instacart on 2026-02-19.
+- $62 Instacart Costco on 2026-02-21.
+- $55 Instacart delivery on 2026-02-22.""",
+    "output": {
+      "rationale": "Every payee contains Instacart under fuzzy matching.",
+      "rules_satisfied": True,
+    },
+  },
 ]
 
 
@@ -374,13 +424,17 @@ BATCHES: dict[int, dict[str, object]] = {
     "name": "Exact-name all-pass + fuzzy includes one miss",
     "tests": [14, 15],
   },
+  7: {
+    "name": "Fuzzy default: suffix pass, with-X miss, Instacart pass",
+    "tests": [16, 17, 18],
+  },
 }
 
 
 class UpdateTransactionCategoryVerifyOptimizer:
   """Gemini verify client.
 
-  Last live check (16 `TEST_CASES`, all batch indices): `gemini-flash-lite-latest`, max_output_tokens 2048 — 0 golden
+  Last live check (19 `TEST_CASES`, all batch indices): `gemini-flash-lite-latest`, max_output_tokens 2048 — 0 golden
   mismatches on `rules_satisfied`; notes stayed ≤100 chars without spelled-out money/years or banned filler words.
 
   Defaults: `gemini-flash-lite-latest`, `temperature=0.2`, `top_p=0.95`, `top_k=40`,
