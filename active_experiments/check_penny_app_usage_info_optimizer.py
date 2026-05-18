@@ -45,7 +45,12 @@ rules in **Section 3** below. Decide if `REVIEW_NEEDED` is acceptable and give c
 
 **Product & behavior**
 - Hey Penny: AI finance assistant; expense tracking, categorization, subscription-related help;
-  chat-style interface (e.g. iMessage); low-effort “passive” money management.
+  low-effort “passive” money management. Users may **link Penny to iMessage**—messages to/from
+  Penny in the app and iMessage stay **in sync** (same conversation on both; reflected both ways).
+- Users chat in the **Hey Penny app** (**Penny Chat** on **Home**, **Goal-Specific Penny Chat**
+  in goals) **or via iMessage** when linked.
+- If a report or breakdown is not available as a built-in app screen, users may **ask Penny in
+  chat** (do not fail answers that steer users to chat instead of inventing export features).
 - Accounts linked via **Plaid**; **manual addition of transactions is not supported**.
 - Transactions are categorized into **subcategories** (taxonomy leaves). Parent groupings exist
   for rollups in analyses/charts, not as a separate pick instead of a leaf.
@@ -60,6 +65,7 @@ rules in **Section 3** below. Decide if `REVIEW_NEEDED` is acceptable and give c
   whole answer, no long meta preambles (e.g. “Here is the answer:”).
 - **Forbidden in user-facing copy:** dotted-decimal **map codes** (e.g. `1.1`, `2.1.4.1`,
   `1.1.1.5.3`) anywhere—including parentheses. Internal prompt numbering is not shown in the app.
+  **Numbered or bulleted lists of navigation paths** (1. … 2. …) are **allowed** and are not map codes.
 - Prefer **real in-app labels** for navigation (tabs, sections, buttons). **Bold** around labels
   is fine; do not fail `good_copy` solely for reasonable bolding.
 - Tone: dense facts, minimal chit-chat (another layer may add tone).
@@ -77,7 +83,9 @@ rules in **Section 3** below. Decide if `REVIEW_NEEDED` is acceptable and give c
   detail → category where applicable.
 - **Goals:** **Add Goal** / **'+ Add Goal'**; **Active Goals**; **Past Goals**; goal settings
   (e.g. change title, edit amount, end goal); goal-specific Penny chat where applicable.
-- **Insights:** **Love It**; **Report Issue**; **Hide This**.
+- **Insights:** tab stores Penny **highlights**, **reminders**, **alerts**, and similar
+  notification-style messages for organization; actions **Love It**; **Report Issue** (flag a
+  notification as unhelpful/incorrect/wrong); **Hide This**.
 
 **Transaction detail & category**
 - Transaction row/detail includes editable **Transaction Name**, **Amount**, **Account**, **Date**,
@@ -102,12 +110,32 @@ Pets; Public Transit; Car & Fuel; Medical & Pharmacy; Gym & Wellness; Personal C
 Donations & Gifts; Miscellaneous; Uncategorized; Transfers; Salary; Side-Gig; Business; Interest.
 
 **Category facts (selected)**
-- Alcohol etc. → **Entertainment** (not a separate “alcohol” leaf).
+- **Listing options:** For “what categories for food/leisure/etc.” questions, naming a **parent
+  rollup** then its leaves is correct (e.g. **Meals** → **Dining Out**, **Delivered Food**,
+  **Groceries**; **Leisure** → **Entertainment**, **Travel & Vacations**). Do not fail for
+  parent names in that context.
+- **Alcohol** (any context, incl. restaurants/bars) → **Entertainment**, not **Dining Out**;
+  **Split It Up** only if the user asks how to separate meal vs. alcohol on one receipt.
 - Auto insurance → **Car & Fuel** (not **Insurance** leaf for that case).
-- Rent, mortgage, property tax, homeowners insurance, HOA → **Home**; general home supplies /
-  maintenance consumables often **Upkeep** or shopping-type leaves—not treating **Home** as
-  “any household spend.”
+- **Transfers:** own-account moves and **debt/loan principal payments** (mortgage, auto, student,
+  credit-card paydowns, etc.); net ~**zero** in spending analyses (debit on one linked account
+  offset by credit on another—transactions cancel out; not consumption). **Fail** answers that
+  call mortgage/auto/student **principal** paydowns **Home**, **Car & Fuel**, or **Tuition**.
+- **Service Fees:** loan interest, **credit-card interest**, **late credit-card payment fees**,
+  and other **borrowing costs**—not **Transfers**, not income **Interest**.
+- **Interest** (leaf): **income only** (savings/investment interest, dividends)—not loan or
+  credit-card interest **charged** to the user.
+- **Miscellaneous:** must **not** be Penny’s default suggestion unless the user explicitly asks;
+  unknown spend → **Uncategorized** is acceptable.
+- **Home:** rent, property tax, homeowners insurance, HOA/dues (housing spend)—**not** mortgage/
+  loan **principal** paydowns (those → **Transfers**). General home supplies → **Upkeep** or
+  shopping leaves—not **Home** as “any household spend.”
+- **Tuition:** schooling spend; loan **principal** repayments → **Transfers**.
+- **Car & Fuel:** vehicle spend; loan **principal** → **Transfers**.
+- Hobby/informal “custom” labels → **Entertainment** (no custom categories).
 - **Connectivity** is a Bills-area leaf, not under shelter-style groupings in the taxonomy.
+- **iMessage:** Do not fail answers that explain linking, convenience, and two-way sync with
+  in-app Penny chat (app ↔ iMessage reflected both ways).
 
 **Hard constraints**
 - No manual transaction entry; linking required.
@@ -124,8 +152,11 @@ Judge whether `REVIEW_NEEDED` is **consistent** with **Section 3**. `REVIEW_NEED
 even when it does not restate every rule explicitly—**reasonable factual assumptions** and
 compact summaries are **OK**. Mark `info_correct` **false** only when the text **contradicts**
 **Section 3** (e.g. claims manual add exists, invents a screen or category name, wrong core navigation
-for a direct “where” question, or states a capability the product does not have). When
-`EVAL_INPUT` is ambiguous, prefer **lenient** `info_correct` unless there is a clear contradiction.
+for a direct “where” question, mortgage/loan **principal** as **Home** instead of **Transfers**,
+loan/CC **interest** as **Transfers** or income **Interest** instead of **Service Fees**, or states
+a capability the product does not have). When `EVAL_INPUT` is ambiguous, prefer **lenient**
+`info_correct` unless there is a clear contradiction. Mentioning **Miscellaneous** only to say Penny
+does **not** default to it is **not** a contradiction.
 
 #### 6. Output schema
 - `good_copy`: `true` if all **Section 4** checks pass.
@@ -277,6 +308,7 @@ def test_checker() -> None:
                 "Open the **Account** tab, then **Net Worth**. You can switch **Year to Year**, "
                 "**Month to Month**, or **Week to Week** for the line charts."
             ),
+            "expect_pass": True,
         },
         {
             "name": "Map codes in reply (bad copy)",
@@ -284,6 +316,7 @@ def test_checker() -> None:
             "review_needed": (
                 "Go to section **1.1.1.5.3** and use the sliders after opening **Split It Up**."
             ),
+            "expect_pass": False,
         },
         {
             "name": "Hallucinated feature",
@@ -292,17 +325,104 @@ def test_checker() -> None:
                 "Tap **Home**, then **Add Transaction**, and enter the amount. Penny saves it "
                 "without linking a bank."
             ),
+            "expect_pass": False,
+        },
+        {
+            "name": "Mortgage as Transfers (good)",
+            "eval_input": "How would Penny categorize my mortgage payment?",
+            "review_needed": (
+                "Mortgage payments are **Transfers**. Principal paydowns net to ~zero in spending "
+                "because the debit and credit across your linked accounts cancel out."
+            ),
+            "expect_pass": True,
+        },
+        {
+            "name": "Mortgage as Home (bad)",
+            "eval_input": "How would Penny categorize my mortgage payment?",
+            "review_needed": (
+                "Penny categorizes mortgage payments under **Home** along with rent and property tax."
+            ),
+            "expect_pass": False,
+        },
+        {
+            "name": "Late fee as Service Fees (good)",
+            "eval_input": "Where are late credit card payment fees categorized?",
+            "review_needed": (
+                "Late credit card payment fees are **Service Fees**—a cost of borrowing money."
+            ),
+            "expect_pass": True,
+        },
+        {
+            "name": "iMessage sync (good)",
+            "eval_input": "Why am I getting iMessage messages from Penny?",
+            "review_needed": (
+                "Penny is linked to your iMessage for convenience. Messages to/from Penny in the "
+                "app are reflected on iMessage too, and vice versa."
+            ),
+            "expect_pass": True,
         },
     ]
 
+    failures = []
     for i, case in enumerate(test_cases):
         print(f"\n--- Test Case {i + 1}: {case['name']} ---")
         try:
             result = checker.check_output(case["eval_input"], case["review_needed"])
             print(json.dumps(result, indent=2))
+            ok = bool(result.get("good_copy")) and bool(result.get("info_correct"))
+            if ok != case["expect_pass"]:
+                failures.append(case["name"])
+                print(f"UNEXPECTED: expected pass={case['expect_pass']}, got pass={ok}")
         except Exception as e:
             print(f"Error: {e}")
+            failures.append(case["name"])
+
+    if failures:
+        print(f"\nChecker unit tests failed: {failures}")
+    else:
+        print("\nAll checker unit tests behaved as expected.")
+
+
+def run_optimizer_batches_with_checker() -> int:
+    """Generate replies from the usage optimizer and grade with this checker."""
+    from penny_app_usage_info_optimizer import (
+        BATCH_TEST_CASES,
+        PennyAppUsageInfoOptimizer,
+    )
+
+    checker = PennyAppUsageInfoChecker(config={"json": True})
+    optimizer = PennyAppUsageInfoOptimizer()
+    failures: list[str] = []
+
+    for batch_num in sorted(BATCH_TEST_CASES):
+        print(f"\n=== Batch {batch_num} (checker) ===")
+        for case in BATCH_TEST_CASES[batch_num]:
+            name = case["name"]
+            user_input = case["input"]
+            reply = optimizer.generate_response(user_input)["reply"]
+            check = checker.check_output(user_input, reply)
+            ok = check.get("good_copy") and check.get("info_correct")
+            status = "PASS" if ok else "FAIL"
+            print(f"  {status} {name}")
+            if not ok:
+                failures.append(f"B{batch_num}:{name}")
+                if check.get("eval_text"):
+                    print(f"    {check['eval_text'][:220]}")
+    total = sum(len(BATCH_TEST_CASES[b]) for b in BATCH_TEST_CASES)
+    print(f"\nOptimizer batches: {total - len(failures)}/{total} passed")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Penny app usage checker tests.")
+    parser.add_argument(
+        "--batches",
+        action="store_true",
+        help="Run all penny_app_usage_info_optimizer batch cases through this checker.",
+    )
+    args = parser.parse_args()
     test_checker()
+    if args.batches:
+        raise SystemExit(run_optimizer_batches_with_checker())
