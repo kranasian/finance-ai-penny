@@ -11,7 +11,7 @@ Run from `finance-ai-penny` repo root:
   python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --batch 1 --check
   python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all --model gemini-flash-lite-latest
 
-**Fixtures:** nine calibrated cases (batches **1–9**); each supplies **`name`**, **`batch`**, optional **`review_outcome`**, markdown **`input`**, and expected **`output`** JSON.
+**Fixtures:** five calibrated cases (batches **1–5**); each supplies **`name`**, **`batch`**, optional **`review_outcome`**, markdown **`input`**, and expected **`output`** JSON.
 
 **Recommended minimal generation settings** (re-validate with `python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all --check`; rubric: **contradiction**, **necessary grain/scope**, **labels**, **parent–child math**, **data gaps**; out of scope: **narrative explanation depth**, **next steps**):
 
@@ -64,320 +64,213 @@ OUTPUT_SCHEMA = types.Schema(
   properties={
     "score": types.Schema(
       type=types.Type.INTEGER,
-      description="Integer 1-5 rubric score.",
+      description=(
+        "1-5 by impact magnitude only: how much the data issues would mislead or "
+        "leave the reader unable to trust the rationalization—not by issue type."
+      ),
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "Semicolon-separated data-only clauses: unnecessary rows, window, figure data gaps, "
-        "contradiction—never 'did not explain'."
+        "Plain English, semicolon-separated. Cover: malformed labels; unnecessary figure rows "
+        "(wrong grain/family); figure data gaps; driver lacks data to explain a named claim's "
+        "direction/amount. Never critique narrative quality or Next steps."
       ),
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Grade **`## Figures`** + **`## Drivers`** against **`# Rationalize What`**. Core: was the **right data pulled**—**necessary** to support each What insight, or **directly connected** to a category/claim named there?
+SYSTEM_PROMPT = """Grade **`## Figures`** + **`## Drivers`** vs **`# Rationalize What`**. Judge **data only**. List every issue first; then assign **`score` from impact magnitude**—how much the problems would mislead or leave a claim unsupported—not from issue type.
 
-**STEP 1 (stop if true):** Count **distinct category/sub claims** in the What (each named line with amount/direction = 1). If **≥2** and **every** figure row’s **primary** period ends **after** the What’s **end** → **`score` = 1** only (e.g. Groceries + Delivered Food + Dining Out + Food, all primaries May 3–9, What ends May 5). **Never 3** for this pattern.
+**Ignore:** `## Next steps`; writing quality; hedging. Never say "did not explain"—describe missing, unnecessary, or mislabeled **data**.
 
-**Out of scope (never score, never in notes):** **`## Next steps`**; whether Drivers “explain,” narrate, hedge, or pivot; cause depth. Flag **missing on-topic numbers in Figures** (**figure data gap**), never “did not explain” or “drivers failed to.”
+## Parse the What
+- Each named category + amount/direction + shared window = one **claim**.
+- **Grain:** "this week" / week dates → **week**. "this month" / MTD → **month**.
 
-**Per What claim** (each category + window + stated amount/direction if any):
-1. **Connected figure?** On-topic labeled row, primary in the What window, amount matches the stated total → **amounts pulled** (do **not** call a figure-amount gap).
-2. **No figure row** for that claim → **figure data gap** (note: *no [grain] amounts pulled for [claim]*).
-3. **Transaction gap (narrow):** Only when the What names **≥2** categories and **another** named claim has a **dated merchant charge** in Drivers (e.g. `$142.50 at Capital Grille on May 12`, `DoorDash` orders) while this claim’s Drivers **only restate the figure total** with no merchants/dates → note *no transactions pulled to support the $X [claim]* (**≤3**). **Do not** apply on **leaf-only** Whats or when **every** claim lacks dated charges. Never say “no week amounts” when Figures already show the stated total.
-4. **Figure row** for a category **not** named in the What → **unnecessary data** (note the row/slug).
+## What to flag (issues—not scores)
+**Taxonomy / labels:** Parent+child mashed in one figure label when the What lists them separately (e.g. "Income and Salary" when Income, Salary, Interest are separate claims). Wrong family vs What.
+**Figures — necessary:** Per claim, on-topic row, primary window matches What (±1 day OK), amount ≈ stated total. Month claims: MTD primary + same-category prior full months OK. Week claims: week primaries + prior weeks OK.
+**Figures — unnecessary:** Unnamed categories/families; siblings on leaf-only What; full-month rows on week-only What; duplicate overlapping week windows.
+**Drivers — gaps:** For a claim with stated direction/refund, Drivers only restate totals or prior-month compare with no dated merchants, counts, or timing—note *Lacks data to explain cause of [decline/increase] in [category]* even if other claims have rich txns.
+**Drivers — noise:** Sentences about categories not in the What (e.g. travel when only Entertainment is asked).
 
-**Judge order:** wrong family / amount clash → **hard window** → **unnecessary disconnected rows** → **figure data gaps** → draft score.
+Canonical families: Income → Income, Salary, Interest, Side-Gig, Business; Meals → Dining Out, Delivered Food, Groceries; Leisure → Entertainment, Travel; Bills → Service Fees, …; Health → subs in Drivers as `health_*` OK.
 
-**Connected (necessary):** Figures for every category **named** in the What; parent-total rows (**Total Meals**, **Shelter (total)**, **Total Bills**) satisfy parent claims (**Food**, **Shelter**, **Bills**) even if labels differ; **all children under a named parent** (e.g. **Home** + **Utilities** when **Shelter** is named); **MoM/WoW comparison legs** (full April/March vs partial May)—never treat comparison legs as window fails. **Unnecessary:** sibling/parent rows on **leaf-only** What; same-leaf **month** row on **week-only** leaf ask; unrelated families.
+## Scoring: magnitude / impact only
+After listing issues, pick the score whose **impact** best matches the **worst** material problem. Multiple issue types can share the same score.
 
-**Contradiction (→1):** Wrong family; primary **amount** for the **same** window **conflicts** with the What’s stated dollars (e.g. What **$79**, figure **$200**). **Never** contradiction for: “up/down” vs a prior month when the **stated MTD/week amount matches** the primary row; parent “down” vs an anomalous prior month when **May MTD matches** the What; subs that **sum to** the parent in the same window.
+**5 — No material impact.** All claims have trustworthy figures (right family, window, amounts); labels taxonomy-correct; Drivers supply txn/sub-slug detail where direction matters; no unnecessary figure rows or off-topic families.
 
-**Grain:** **Week** ask → week-labeled primaries required; same-leaf **month** row = unnecessary. **Month/MTD** ask → MTD/partial month + prior full months for **named** lines are **necessary** (never “unnecessary”).
+**4 — Minor impact.** Core claims are supported and a reader can trust the totals; leftover problems are **peripheral noise** that does not change how they read any named claim (e.g. a single off-topic driver sentence about another category while Entertainment figures are complete).
 
-**Window:** **Primary** period per row only—not comparison legs. **Hard 1:** **≥2** What lines and **every** primary ends **after** the What’s **end** (e.g. May 3–9 vs What ending May 5)—**window mismatch only** (figures exist but wrong window—**not** a figure data gap). Single leaf, one bucket slightly past end → **3**. Week leaf + unnecessary month row + window slip on primary → **3**.
+**3 — Moderate impact.** At least one named claim is **partly unreliable**: taxonomy labels blur parent/child so Income vs Salary vs Interest are hard to trust; **full-month figure rows on a week-only What** add misleading trend context (week totals alone cannot support a monthly trend read—flag as moderate, not minor); or Drivers lack data to support a stated up/down for one claim while figures only restate the total—but on-topic **amounts** for the What window are still mostly present.
 
-**Parent–child math:** For the **same primary window**, named subs should **approximately sum** to the parent (rounding OK). Do **not** score math fails from comparing May MTD to a different April total.
+**2 — Major impact.** Multiple claims lack usable figure support, or on-topic data is too thin to trust most of the What.
 
-**Taxonomy:** Meals → Dining Out, Delivered Food, Groceries; Leisure → Entertainment, Travel; Shopping → Pets, Clothing, Gadgets, Kids; Bills → Connectivity, Insurance, Tax, Service Fees; Shelter → Home, Utilities, Upkeep; Education → Kids Activities, Tuition; Transportation → Car, Public; Health → Medical and Pharmacy, Gym and Wellness, Personal Care; Income → Salary, Sidegig, Business, Interest; Donations and Gifts, Miscellaneous, Transfers. Omitting **unmentioned** children is **not** a gap.
+**1 — Critical impact.** Wrong category family, amount clash with stated total for the same window, or primaries systematically outside the What window—would materially mislead on **what** or **how much**.
 
-**Hard outputs (mandatory):** (1) Wrong family / zero on-topic figure rows → **1**. (2) **≥2** What claims, all **primaries** end after What end → **1**. (3) Week ask, no week labels → **1**. (4) **One** category, week primary past What end + unnecessary month/parent row → **3**. (5) **Transaction gap** (rule 3) for any named claim → **≤3**. (6) **Leaf-only** What + **any** unnecessary sibling/parent **figure** row → **4** max (**never 5**). (7) Month/MTD parent + named subs + MoM, no gaps, no (6) → **5**.
+**Process:** (1) Enumerate issues in `notes`. (2) For each claim, ask: could a reader wrongly trust or distrust this claim? (3) `score` = highest impact tier that applies. Do **not** map issue type → fixed score (e.g. label error is not automatically 3; judge how misleading it is).
 
-**Scores (1–5):** **5** all named claims have connected figure data; no unnecessary rows; window OK. **4** leaf primary matches; only unnecessary extra **figure** rows (no window slip). **3** **figure data gap** for ≥1 named claim; **or** **single** leaf What with unnecessary month row **and** primary window slip. **2** thin on-topic. **1** wrong family; **≥2** What lines with all primaries past What end; week ask without week labels; amount clash.
+## `notes`
+Plain English; semicolon-separated; state issues and why they matter for trust. Examples: mislabeled Income rows; unnecessary monthly service-fee data on a week ask; unnecessary travel in drivers; lacks salary decline support; figures complete with sub-category txn detail.
 
-**`notes`:** Semicolon-separated **data-only**: `figure data gap for X: no [grain] amounts pulled`; `no transactions pulled to support the $X [claim]` when Figures show the total but Drivers lack txn/merchant lines peers have; `unnecessary: …`; `window`; `contradiction`. **Banned:** “did not explain,” “no week amounts” when Figures match the stated total, “driver pivot,” “narrative.”
-
-**Before JSON (order):** **STEP 1** multi-line window → **1**. **STEP 2** single leaf week past end → **3**. **STEP 3:** **≥2** claims, peers have dated merchant charges in Drivers, but one claim (e.g. **Groceries $90**) only restates the figure → **≤3**, note *no transactions pulled to support the $X [claim]*. **STEP 4:** What names **only one** category (e.g. `bills_service_fees` alone) and Figures include **other** sibling slugs (insurance, tax, connectivity, delivered_food, groceries) → **`score` = 4**. Else if all clean → **5**. Never “did not explain” or “no week amounts” when Figures show the total.
-
-Return only JSON `{score, notes}`. STEP 1 → **1**; STEP 4 → **4** (never 5).
+Return only JSON `{score, notes}`.
 """
 
 
 TEST_CASES: list[dict[str, Any]] = [
   {
-    "name": "groceries_spike_off_topic_travel_data_ideal_one",
+    "name": "income_salary_interest_labeling_ideal_three",
     "batch": 1,
     "review_outcome": "",
-    "output": "{\"score\": 1, \"notes\": \"Wrong category family (leisure_travel) vs meals_groceries What; no on-topic grocery figures or drivers; off-topic data only.\"}",
+    "output": (
+      '{"score": 3, "notes": "\\"Income and Salary\\" nor \\"Income and Interest\\" do not make sense '
+      'since salary and interest make up income. Likely an error in labelling."}'
+    ),
     "input": """# Rationalize What
 
-Explain: **`meals_groceries`** is **much higher this April** than usual—what drove it? (2026-04-01 to 2026-04-30)
+Explain: Salary is significantly down this month at $854.  Interest is significantly down this month at $0.  Income is thus down this month to $854. (2026-05-01 to 2026-05-12)
 
 # Rationalize Response
 
 ## Figures
 
-*   **`leisure_travel` monthly:** $2,400.00 (Apr 1–30, 2026); $1,900.00 (Mar 1–31, 2026); $2,100.00 (Feb 1–28, 2026).
+*   **Total Income and Salary:** $854.30 (May 1–12, 2026) vs. $1,730.82 (Apr 1–30) and $1,878.76 (Mar 1–31).
+*   **Income and Salary:** $854.08 (May 1–12) vs. $1,702.82 (Apr 1–30) and $1,490.43 (Mar 1–31).
+*   **Income and Interest:** $0.22 (May 1–12) vs. $28.20 (Apr 1–30) and $388.33 (Mar 1–31).
 
 ## Drivers
 
-April **travel** is elevated versus prior months on **airfare and lodging** booked for the month; that is the main swing shown in these **leisure_travel** totals.
+The decline in total income is primarily due to the timing of your payroll and interest payments. Your salary appears consistent with your typical bi-weekly pay cycle, but you have only received one paycheck so far this month (May 7), compared to two paychecks in both April and March. The drop in interest income is even more pronounced; in March and April, your interest income category included several large "Transfer from Credit Builder" transactions that have not occurred in May. Your actual banking interest remains small and consistent at $0.22.
 
 ## Next steps
 
-1. Review upcoming trips if you want to smooth travel spend into May.
+1.  **Monitor Payroll:** Since you are on a bi-weekly schedule, check your calendar for the next expected pay date to confirm you are on track for your typical monthly total.
+2.  **Review Transfers:** Determine if the "Transfer from Credit Builder" entries from March and April were one-time events or if you expect further transfers that could impact your interest income category.
 """,
   },
   {
-    "name": "groceries_weekly_what_monthly_and_parent_meals_noise_ideal_three",
+    "name": "service_fees_refunds_weekly_monthly_noise_ideal_three",
     "batch": 2,
     "review_outcome": "",
-    "output": "{\"score\": 3, \"notes\": \"April monthly groceries row is unnecessary coarser grain for a weekly-only leaf What; Total Meals parent roll-up is unnecessary parent zoom vs groceries-only ask; ISO week label spans May 3–May 9 vs What May 3–May 5 window mismatch on the weekly bucket.\"}",
+    "output": (
+      '{"score": 3, "notes": "Provides unecessary monthly data on service fees. '
+      'Weekly data is insufficient to identify a trend."}'
+    ),
     "input": """# Rationalize What
 
-Explain: **`meals_groceries`** is **down this week** at **$79**—what explains it? **(2026-05-03 to 2026-05-05)**
+Explain: Service Fees received refunds this week, totaling $1259. (2026-05-03 to 2026-05-08)
 
 # Rationalize Response
 
 ## Figures
 
-*   **`meals_groceries` (ISO week of May 3, 2026):** $78.56 (May 3–May 9, 2026) vs. $112.01 (Apr 26–May 2) vs. $98.20 (Apr 19–Apr 25)
-*   **`meals_groceries` (April 2026 month):** $610.00 (Apr 1–30, 2026); $540.00 (Mar 1–31, 2026) (monthly context for grocery trend)
-*   **Total Meals (May 3–May 9, 2026):** $130.59 vs. $175.55 (Apr 26–May 2) (parent roll-up for context)
+***Total Service Fees (May 3–8, 2026):** -$1,258.92
+*      **Total Service Fees (May 1–8, 2026):** -$1,258.92
+*   **Total Service Fees (Apr 1–30, 2026):** $193.92
+*   **Total Service Fees (Mar 1–31, 2026):** -$85.75
 
 ## Drivers
 
-Groceries is softer this week versus the prior ISO week; the April monthly grocery line also shows you were elevated last month, and total Meals moved similarly week-over-week.
+The significant negative balance in `bills_service_fees` this week is primarily driven by three large credits from the merchant **Albert**, totaling **$1,312.05** in refunds or reversals. These transactions occurred between May 4 and May 7. While there were minor positive charges (debits) to this category from merchants such as *Fiscal.AI* and *Corporate Key2Purchase*, the large Albert refunds moved the total into a net negative position.
 
 ## Next steps
 
-1. Meal-plan for the short week.
+1.  **Review Transactions:** Ensure these Albert transactions are correctly identified as refunds and not accidental adjustments. If any are actually miscategorized charges, run a recategorization.
+2.  **Budgeting:** Given the volatility caused by these large reversals, I recommend setting a "Service Fees" budget cap based on your typical non-refunded monthly average rather than the current net-negative balance.
+3.  **Categorization Rule:** If *Albert* is a recurring source of refunds, you may want to ensure all future transactions from them are consistently mapped; however, since they currently alternate between debits and credits, keep an eye on them for potential categorization errors.
 """,
   },
   {
-    "name": "dining_out_leaf_with_sibling_noise_ideal_three",
+    "name": "entertainment_spike_off_topic_travel_ideal_four",
     "batch": 3,
     "review_outcome": "",
-    "output": "{\"score\": 4, \"notes\": \"Unnecessary figure rows: meals_delivered_food and meals_groceries not named in What; on-topic meals_dining_out figures pulled for the April claim.\"}",
+    "output": (
+      '{"score": 4, "notes": "Includes unnecessary data on travel and vacations, '
+      'which does not help in explaining the high entertainment spending."}'
+    ),
     "input": """# Rationalize What
 
-Explain: **`meals_dining_out`** is **much higher this April** than usual—what drove it? (2026-04-01 to 2026-04-30)
+Explain: Entertainment is significantly up this week at $30. (2026-05-03 to 2026-05-06)
 
 # Rationalize Response
 
 ## Figures
 
-*   **`meals_dining_out`:** $640.00 (Apr 1–30, 2026); $310.00 (Mar 1–31, 2026); $290.00 (Feb 1–28, 2026).
-*   **`meals_delivered_food`:** $420.00 (Apr); $260.00 (Mar); $240.00 (Feb) (for context on overall food spend).
-*   **`meals_groceries`:** $510.00 (Apr); $440.00 (Mar); $400.00 (Feb) (for context on overall food spend).
+* **Current Week (May 3–May 6, 2026):** $30.00
+* **Prior Week (Apr 26–May 2, 2026):** $15.00
+* **Week Prior (Apr 19–Apr 25, 2026):** $35.00
 
 ## Drivers
 
-Dining out is up in April; delivered and groceries also rose, so **overall Meals** is higher month-over-month.
+The $30 spent on entertainment this week was entirely driven by two separate charges from **Google Play** on May 4, totaling $30.00. While the current week shows an increase compared to the previous week ($15.00), your overall entertainment spending remains consistent with, or lower than, your activity in late April ($35.00). Similarly, travel and vacations is also up this week because of a big transaction with Delta Airlines.
 
 ## Next steps
 
-1. Set a monthly cap for dining out.
+1. **Review Subscriptions:** Since both charges were from Google Play, verify if these are recurring subscriptions you intended to keep or individual app/content purchases.
+2. **Budgeting:** Consider setting a weekly entertainment budget of $25 to help manage incidental digital purchases.
 """,
   },
   {
-    "name": "meals_subs_week_window_mismatch_ideal_one",
+    "name": "health_spike_subcategories_ideal_five",
     "batch": 4,
     "review_outcome": "",
-    "output": "{\"score\": 1, \"notes\": \"Focal buckets run through May 9 while the What ends May 5—window mismatch; Total Meals parent line bundles siblings vs per-sub claims in the What (unnecessary parent aggregation for the stated sub-lines).\"}",
+    "output": (
+      '{"score": 5, "notes": "Figures are complete, and include data on sub-categories '
+      'that contribute to the Home parent category."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Groceries is significantly down this week at $79. Delivered Food is significantly up this week at $46. Dining Out is significantly down this week at $6. Food is thus significantly down this week to $131. (2026-05-03 to 2026-05-05)
+Explain: Health is significantly up this week at $212. (2026-05-03 to 2026-05-08)
 
 # Rationalize Response
 
 ## Figures
 
-*   **Total Meals Spend:** $130.59 (May 3–May 9) vs. $175.55 (Apr 26–May 2) vs. $133.55 (Apr 19–Apr 25)
-*   **Groceries:** $78.56 (May 3–May 9) vs. $112.01 (Apr 26–May 2)
-*   **Delivered Food:** $45.61 (May 3–May 9) vs. $29.77 (Apr 26–May 2)
-*   **Dining Out:** $6.42 (May 3–May 9) vs. $33.77 (Apr 26–May 2)
+* **Current Week (May 3–9, 2026):** $212.48
+* **Prior Week (Apr 26–May 2, 2026):** $106.41
+* **Two Weeks Prior (Apr 19–25, 2026):** $243.00
 
 ## Drivers
 
-The decrease in overall food spending is driven primarily by a $33.45 drop in **Groceries** and a $27.35 drop in **Dining Out** compared to the previous week.
-While **Delivered Food** increased by $15.84, it was not enough to offset the reductions in the other categories, leading to a net decline in total weekly food spending.
-The current spend of $130.59 is lower than last week's $175.55 and remains slightly below the levels seen in late April.
+The increase in health spending this week is primarily driven by a $150.00 visit to **Excel Urgent Care** on May 4. Additionally, a $62.48 transaction at **My True Ocean** (classified under *health_personal_care*) contributed to the total. In contrast, health spending during the prior week consisted solely of smaller pharmacy expenses ($11.06 and $95.35 at **CVS Pharmacy**).
 
 ## Next steps
 
-1. **Budget Adjustment:** Consider setting a weekly food budget of $145 based on your average spending over the last three weeks to help manage these shifts between delivery and groceries.
-2. **Dining Out Goal:** If you would like to keep dining out spend low consistently, we can set a monthly goal of $120 for the `meals_dining_out` category.
-3. **Recategorization:** Review recent transactions to ensure all grocery store visits are accurately tagged as `meals_groceries` and not mislabeled, as this helps maintain the accuracy of these category breakdowns.
+1. Create a health-specific budget of $200 per week to account for irregular medical expenses, based on your average monthly volatility.
+2. If the charge at "My True Ocean" was for a non-health related item (e.g., a gift or retail purchase), please let me know so we can recategorize it appropriately.
 """,
   },
   {
-    "name": "shelter_parent_subs_mtd_zero_timing_ideal_five",
+    "name": "side_gig_salary_business_salary_gap_ideal_three",
     "batch": 5,
     "review_outcome": "",
-    "output": "{\"score\": 5, \"notes\": \"Parent Shelter figures match May 1–13; per-sub Utilities and Home supported with prior-month context and dated txn drivers explaining $0 MTD as timing.\"}",
+    "output": '{"score": 3, "notes": "Lacks data to explain cause of decline in salary."}',
     "input": """# Rationalize What
 
-Explain: Utilities is significantly down this month at $0.
- Home is significantly down this month at $0.
- Shelter is thus significantly down this month to $0.
-(2026-05-01 to 2026-05-13)
+Explain: Side-Gig is significantly up this month at $1312.  Salary is significantly down this month at $3971.  Business is slightly up this month at $38. (2026-05-01 to 2026-05-13)
 
 # Rationalize Response
 
 ## Figures
 
-* **Shelter (Total):** $0 (May 1–13, 2026) vs $268.11 (April 2026) vs $4,248.49 (March 2026)
-* **Shelter Utilities:** $0 (May 1–13, 2026) vs $240.36 (April 15, 2026)
-* **Shelter Home:** $0 (May 1–13, 2026) vs $0 (April 2026) vs $3,895.57 (March 2026)
+*   **Income - Side-Gig:** $1,312.05 (May 2026, MTD) vs. -$196.62 (April 2026) vs. -$305.00 (March 2026).
+*   **Income - Salary:** $3,970.90 (May 2026, MTD) vs. $7,941.80 (April 2026) vs. $24,346.00 (March 2026).
+*   **Income - Business:** -$38.01 (May 2026, MTD) vs. -$38.01 (April 2026) vs. -$38.01 (March 2026).
 
 ## Drivers
 
-Your spending in **Shelter** is $0 for May, which is significantly down compared to April ($268.11) and March ($4,248.49).
-This is driven primarily by the lack of any transactions posted so far this month for both **Shelter Utilities** and **Shelter Home**.
-In April, your only shelter-related expense was a single **Utilities** payment, while March included both your rent/home payments and utility bills:
-
-* **NGRID:** $240.36 (2026-04-15)
-* **AVA Commons:** $2,887.62 (2026-03-09)
-* **AVA Commons:** $1,007.95 (2026-03-05)
-
-The significant drop to $0 in May is likely due to timing—your regular recurring housing and utility payments have simply not posted for this month yet.
+*   **Side-Gig:** The income is positive this month due to three deposits from "Albert" totaling $1,312.05 between May 4th and May 7th, whereas previous months primarily showed negative adjustments or fees.
+    *   *Recent transactions:* Albert ($762.05, 2026-05-05), Albert ($300.00, 2026-05-04), Albert ($250.00, 2026-05-07).
+*   **Salary:** Income is lower MTD compared to previous full months at 3971.
+*   **Business:** The business income remains effectively flat, with a consistent monthly recurring charge of -$38.01 from "Morningstar" on the 11th/13th of each month.
 
 ## Next steps
 
-1. **Verify billing cycles:** Check your next scheduled payment dates for your rent (AVA Commons) and utility provider (National Grid) to confirm they are expected later this month.
-2. **Budget check:** Ensure you have enough funds allocated for your upcoming rent and utilities, as the total for the month will increase once these transactions post.
-""",
-  },
-  {
-    "name": "bills_parent_subs_april_anomaly_ideal_five",
-    "batch": 6,
-    "review_outcome": "",
-    "output": "{\"score\": 5, \"notes\": \"Parent Bills figures match May 1–11; per-sub Connectivity and Service Fees supported with MoM context and drivers explaining parent drop vs April anomaly.\"}",
-    "input": """# Rationalize What
-
-Explain: Connectivity is significantly up this month at $249.
- Service Fees is significantly up this month at $131.
- Bills is thus significantly down this month to $380.
-(2026-05-01 to 2026-05-11)
-
-# Rationalize Response
-
-## Figures
-
-* **Total Bills (Category 'bills' + children):** $380 in May 1–11, 2026 vs. $9,434 in Apr 2026 vs. $375 in Mar 2026.
-* **Connectivity (bills_connectivity):** $249 in May 1–11, 2026 vs. $227 in Apr 2026 vs. $162 in Mar 2026.
-* **Service Fees (bills_service_fees):** $131 in May 1–11, 2026 vs. $315 in Apr 2026 vs. $213 in Mar 2026.
-
-## Drivers
-
-The "significant down" trend in Bills is due to a comparison against an anomalous April total ($9,434), which was skewed by a large $8,900+ spike that is not present in May.
-Your current May spending of $380 is actually in line with typical monthly patterns seen in March ($375).
-Connectivity is slightly higher this month primarily due to recurring AT&T and T-Mobile charges totaling $229.98 by May 7th.
-Service Fees are driven by a $111 charge from "Smart Payment Solutions" on May 10th.
-
-## Next steps
-
-1. **Categorization Rule:** Create a rule to consistently track "Smart Payment Solutions" as `bills_service_fees`.
-2. **Budgeting:** Set a monthly target of $400 for total `bills` to reflect your recent consistent spending levels.
-3. **Review:** Examine the "Namecheap.com" ($229.96) charge from April if you believe it was miscategorized, as it was a significant driver of that month's elevated Service Fees.
-""",
-  },
-  {
-    "name": "service_fees_leaf_sibling_bills_noise_ideal_four",
-    "batch": 7,
-    "review_outcome": "",
-    "output": "{\"score\": 4, \"notes\": \"On-topic Service Fees figures match the What; unnecessary sibling rows for Insurance, Taxes, and Connectivity do not help explain Service Fees.\"}",
-    "input": """# Rationalize What
-
-Explain: **`bills_service_fees`** is **significantly up this month** at **$186**. (2026-05-01 to 2026-05-15)
-
-# Rationalize Response
-
-## Figures
-
-* **`bills_service_fees`:** $186.40 (May 1–15, 2026) vs. $94.20 (Apr 1–30, 2026) vs. $112.05 (Mar 1–31, 2026)
-* **`bills_insurance`:** $420.00 (May 1–15, 2026) vs. $420.00 (Apr 1–30, 2026) vs. $415.00 (Mar 1–31, 2026)
-* **`bills_tax`:** $0.00 (May 1–15, 2026) vs. $0.00 (Apr 1–30, 2026) vs. $1,240.00 (Mar 1–31, 2026)
-* **`bills_connectivity`:** $249.18 (May 1–15, 2026) vs. $227.04 (Apr 1–30, 2026) vs. $162.33 (Mar 1–31, 2026)
-
-## Drivers
-
-Service Fees are elevated in May primarily due to two **Smart Payment Solutions** charges ($111.00 on May 10 and $75.40 on May 14), versus a quieter April with $94.20 total in the category.
-
-## Next steps
-
-1. Create a categorization rule for Smart Payment Solutions under `bills_service_fees`.
-""",
-  },
-  {
-    "name": "home_and_shelter_mom_context_ideal_five",
-    "batch": 8,
-    "review_outcome": "",
-    "output": "{\"score\": 5, \"notes\": \"Home figures support the Home increase claim; Shelter parent totals with prior-month context support the Shelter increase claim; labels and MTD window match.\"}",
-    "input": """# Rationalize What
-
-Explain: **Home** is **significantly up this month** at **$3,200**.
- **Shelter** is thus **significantly up this month** to **$3,450**.
-(2026-05-01 to 2026-05-15)
-
-# Rationalize Response
-
-## Figures
-
-* **`shelter` (total):** $3,450.00 (May 1–15, 2026) vs. $2,680.00 (Apr 1–30, 2026) vs. $4,248.49 (Mar 1–31, 2026)
-* **`shelter_home`:** $3,200.00 (May 1–15, 2026) vs. $2,450.00 (Apr 1–30, 2026) vs. $3,895.57 (Mar 1–31, 2026)
-* **`shelter_utilities`:** $250.00 (May 1–15, 2026) vs. $230.00 (Apr 1–30, 2026) vs. $352.92 (Mar 1–31, 2026)
-
-## Drivers
-
-**Home** is up in May because your **AVA Commons** rent payment on May 5 was **$3,200.00**, higher than April’s **$2,450.00** single payment.
-That increase in **Home** is the main driver of the rise in total **Shelter** to **$3,450** for the period, with **Utilities** roughly flat week-over-week in May.
-
-## Next steps
-
-1. Confirm whether the May rent amount reflects a lease change or a one-time adjustment.
-""",
-  },
-  {
-    "name": "meals_subs_week_groceries_figure_gap_ideal_three",
-    "batch": 9,
-    "review_outcome": "",
-    "output": "{\"score\": 3, \"notes\": \"Figure data gap for Groceries: no transactions pulled to support the $90 claim; Dining Out and Delivered Food have on-topic weekly figures.\"}",
-    "input": """# Rationalize What
-
-Explain: **Dining Out** is **significantly up this week** at **$234**.
- **Delivered Food** is **significantly up this week** at **$100**.
- **Groceries** is **significantly up this week** at **$90**.
-(2026-05-10 to 2026-05-16)
-
-# Rationalize Response
-
-## Figures
-
-* **`meals_dining_out` (week of May 10, 2026):** $234.18 (May 10–16, 2026) vs. $98.40 (May 3–9, 2026) vs. $112.05 (Apr 26–May 2, 2026)
-* **`meals_delivered_food` (week of May 10, 2026):** $100.12 (May 10–16, 2026) vs. $52.30 (May 3–9, 2026) vs. $61.88 (Apr 26–May 2, 2026)
-* **`meals_groceries` (week of May 10, 2026):** $90.00 (May 10–16, 2026) vs. $50.00 (May 3–9, 2026) vs. $62.88 (Apr 26–May 2, 2026)
-
-## Drivers
-
-**Dining Out** increased this week largely because of a **$142.50** dinner at **Capital Grille** on May 12. **Delivered Food** rose with more frequent **DoorDash** and **Uber Eats** orders across the week (six deliveries vs. three last week). **Groceries** is higher than the previous week at **$90**.
-
-## Next steps
-
-1. Set a weekly cap for `meals_dining_out` if you want to smooth restaurant spikes.
+1.  **Budget:** If your side-gig income is now consistently positive, update your monthly income projections to include this new revenue stream.
+2.  **Categorization:** Review the negative transactions currently categorized as "Side-Gig" and "Business" to confirm if these are necessary operational expenses or if they should be recategorized.
 """,
   },
 ]
