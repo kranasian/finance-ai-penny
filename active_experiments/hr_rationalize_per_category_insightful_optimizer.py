@@ -7,18 +7,18 @@ for the checker template `Chk:RationalizePerCategoryInsightful`.
 Run from `finance-ai-penny` repo root:
 
   python3 active_experiments/hr_rationalize_per_category_insightful_optimizer.py --test all
-  python3 active_experiments/hr_rationalize_per_category_insightful_optimizer.py --test direction_mismatch_corrected_with_figure_chain
+  python3 active_experiments/hr_rationalize_per_category_insightful_optimizer.py --batch 1 --check
   python3 active_experiments/hr_rationalize_per_category_insightful_optimizer.py --test all --model gemini-flash-lite-latest
 
 **Recommended minimal generation settings** (re-validate `--test all`; scores match `ideal_response` **5 / 1**):
 
 - **model:** `gemini-flash-lite-latest`
 - **temperature:** `0` · **top_p:** `0.95`
-- **thinking_budget:** `0`
-- **max_output_tokens:** `128` (`256` if truncation)
+- **thinking_budget:** `256` (internal reasoning; `include_thoughts=False` so JSON output stays reliable)
+- **max_output_tokens:** `384`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Rubric:** **`# Rationalize What` is ground truth**; grade **only** **`# Rationalize Response`** for insightful **period-over-period movement** (vs prior week/month or a **$0** baseline)—not composition-only totals. **$0 in Figures = real tracked zero.** **Do not** reward disputing the What. **Ignore** **`## Next steps`**.
+**Rubric:** Grade **only** **`## Drivers`** vs **`# Rationalize What`** (movement insight, clarity, coverage). **`## Figures`** and **`## Next steps`** are **out of scope**—never score figure tables, labels, or next steps. **What** is ground truth; **What vs Response number mismatches are out of scope**. **18 fixtures** in batches **1–5**; **`--batch N --check`** (batches **1–4** for iteration).
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
 """
@@ -48,6 +48,15 @@ def _print_section_banner(title: str) -> None:
   print(f"\n{_SECTION_RULE}\n{title}\n{_SECTION_RULE}\n")
 
 
+def _parse_expected_output(raw: str | None) -> dict[str, Any] | None:
+  if not raw:
+    return None
+  try:
+    return json.loads(raw)
+  except Exception:
+    return None
+
+
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
   required=["score", "notes"],
@@ -58,56 +67,73 @@ OUTPUT_SCHEMA = types.Schema(
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
-      description="One short sentence on cause coverage, data-to-cause fit, or clarity of links to the What.",
+      description=(
+        "One sentence on **## Drivers only**: period-over-period why for each What move, clarity, and coverage. Do not cite Figures-table quality or What-vs-Response amount mismatches."
+      ),
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Grade **only** **`# Rationalize Response`** for **insightfulness** against **`# Rationalize What`**.
+SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness** vs **`# Rationalize What`**.
 
-**Ground truth:** **`# Rationalize What` is authoritative.** Every amount, direction (“up,” “down,” “flat,” “$0”), period, and labeled move in the What is **correct as stated**. Grade whether the Response **explains those moves**—not whether the What “should” differ. **Never reward** disputing the What. **Figure/What tension:** score from **`## Drivers` only** for contradiction. A **Figures** table that differs from the What’s headline is **not** a contradiction—**only** Driver sentences that **deny** the What’s stated direction/amount count.
-**Focal-period rule:** each What move pins a **focal period** (e.g. “this month,” “this week”). Drivers must explain **that focal period’s** move. **Prior-period** detail **alone** (last month’s trip, last week’s total) **without** explaining the **focal** move → **≤2** for that What line.
+## Out of scope (never affects score)
+- **`## Figures`** — do not grade figure tables, labels, grain, or whether figures match the What.
+- **`## Next steps`**
+- **What vs Response data discrepancies** — different amounts, windows, or totals between What and Figures/Drivers are **not** rubric issues. Do not mention or penalize them in `notes`.
+- Whether the What “should” differ from underlying data
 
-**Scope:** Evaluate **only** **`## Figures`** and **`## Drivers`**. Ignore **`## Next steps`**. Assume Response data is **sufficient**; judge **use** and **explanation**, not missing pulls.
+## In scope
+**`# Rationalize What`** = ground truth for each move (category, direction, amount, dates). Judge whether **`## Drivers`** explains **why each move happened** vs a relevant prior period.
 
-**Core bar — movement, not composition:** The What names **increases/decreases** vs a prior week or month. Insightful Responses must explain **that period-over-period movement** (why focal spend/income **rose or fell** vs the immediately relevant prior bucket in Figures—prior week, prior month, or a **real $0** baseline). **Insufficient:** only describing **how the focal total was built** (gross vs net mix, line items, refunds netting) **without** tying causes to **change vs the prior period**. **Composition ≠ movement cause:** naming **which charges** sum to this week’s total and noting “higher than last week” is **not enough**—insight requires **why this week’s pattern differs from prior weeks** (e.g. new/unusual subscriptions, first-time fees, absence of similar lines in prior buckets). **Wise use** means prior-period figures drive **why the move happened**, not wallpaper.
+## Period windows (What dates vs comparisons)
+- Dates on the What line may be a **subset** of the period described (e.g. “this month” with data through May 19). That is valid.
+- Drivers may compare to **full prior months** (Apr 1–30) **or** **matching subsets** (Apr 1–19) when that supports the movement story. Do not penalize use of full-month priors when the What uses a partial month.
+- Score from the **weakest** What move when several are listed.
 
-**Insightful (two pillars):**
-1. **Wise use of Response data** — figures/drivers deployed **on purpose** for **What** moves (not wallpaper). Tight **prior period → mechanism → focal movement** chains.
-2. **Clear causal linkage** — reader sees **how** each cause produces the **specific** What line’s **direction of change** (which line, up/down, focal period).
+## Insight = movement in Drivers (not composition alone)
+Insightful **Drivers** explain **period-over-period change**: why spend/income **rose, fell, restarted, or stayed $0** vs prior week/month—not only how the focal total was built.
 
-**Interpretation rules (apply when scoring):**
-- **Any $0 in Figures (prior or focal):** **real tracked $0** spending/income for that period—**not** missing tracking, not “data gap.” Use $0 history to explain **movement** (restart from zero, drop to zero, stayed at zero vs prior spend).
-- **“Refunds” in the What:** a **net negative aggregate** (credits/returns/reversals summed), **not** necessarily one refund transaction. Insightful Responses explain **that net refund line** and its role in net/gross moves the What names.
-- **$0 total with no transactions implied:** if the What’s move is **$0** and Response figures show **$0** with **no new charges**, stating **no transactions / no activity in period** is a **complete** cause—do **not** demand extra mechanisms. **Cap at 2** if Drivers **only** describe **prior-period trips/spend** and **never** state why the **focal $0 period** has no new charges/activity.
-- **Restatement vs partial:** **1** = Drivers only **repeat** What amounts/directions and/or **recite** figure lines (including “Mar/Feb were $0”) with **no why/mechanism**. **3** = names a **why** but thin (generic refunds, generic “more activity”) without txn/merchant/pause detail.
-- **Tautology vs movement:** circular “up because you spent more” **without** citing **change vs prior week/month** (when Figures include a prior bucket) → **2**, not **3**. **3** requires at least a **stated** prior-period contrast (even thin), not just affirming the What.
+**Each What line:** Drivers must explain **that line’s stated direction** (up/down/flat/$0) **vs a relevant prior period**—not only what merchants/charges make up the focal total.
 
-**Scores (integer 1–5)**
-- **5** — **Every** What move gets a **specific, traceable** cause for **movement vs prior week/month** (or vs a **$0** baseline), using Response figures/drivers **in service of the What** (including “no new charges” explaining a **drop to / stay at $0** vs prior spend).
-- **4** — Strong; **one** move slightly thin on data use or link clarity.
-- **3** — **Accepts the What** and cites **vs prior week/month** plus **focal charge names**, but **only composition** (which txns built the total) **without** why those charges/pattern **did not appear** in prior periods; **or** thin/generic movement why; **or** partial multi-line coverage.
-- **2** — **Contradicts** the What in Drivers; **ignores** focal movement while narrating **other periods** or **composition only**; **or** restates direction with **no prior-period comparison**.
-- **1** — Bare restatement of What/figures with **no** causal story, or causes **wholly disconnected** from What moves.
+- **Naming focal merchants without a vs-prior movement story → partial (~3), not 5.** Listing this week’s charges (or May MTD composition) **without** why the pattern **changed** from the prior week/month is **not** fully insightful. Contrast: explaining a cleared hold vs prior-week posted **is** movement insight (can be 5).
+- **$0 focal period:** If the What move is **$0** and prior periods had activity, stating **no transactions / no new charges / no activity** in the focal window is a **complete** explanation—do not demand extra mechanisms.
+- **Refunds in the What:** treat as net credit aggregates; name mechanisms in Drivers when stated.
+- **Prior-period narrative alone** in Drivers (e.g. last month’s trip/gym charges) **without** why the **focal** window is $0/up/down → **weak (~2)** for that move; cannot score **5**.
+- **Denying the What in Drivers** (e.g. “not really down”) → **weak insight (~2)**; reserve **1** for no causal story at all.
+- **Hollow tautology** in Drivers (“up because you spent more”) with no vs-prior contrast → **~2**; **1** only when Drivers **only** restate What/amounts with **no** “because” attempt.
+- **Several What lines:** score from the **weakest**; a strong explanation for one category (e.g. Taxes) does **not** excuse another (e.g. Service Fees “**down** at $117”) where Drivers **only** name May interest charges with **no why lower than** the prior month → that line is **partial (~3)**; overall **≤3**.
 
-**Hard caps (apply before returning):** (1) Drivers **deny** a What direction/amount in prose → **≤2**. (2) What says **$0 this period** and Drivers lack **why focal $0 vs prior spend** (no activity / no new charges) → **≤2**. (3) Drivers **only** restate What + figure lines → **1**. (4) Drivers give **composition only** (txn list, gross/net mix) **with no vs-prior-period contrast at all** → **≤2**. **Composition + vs-prior contrast but no why pattern differs from prior weeks** → **3** (do not score **4/5**). **Exception:** if Drivers **only recite** What + figure lines (e.g. “up to $118; Mar/Feb were $0”) with **zero mechanism** → **1**, not **3**. **Do not** cap for Drivers **repeating** the What headline while a **Figures** row differs—that is **3** if a thin movement why is present, else **2**.
+## Scoring process
+1. Parse each What move and its date window.
+2. Read **only** Drivers: does each move get a **why vs prior period** story?
+3. One integer **1–5** from holistic impact (weakest move + severity). No fixed mapping from issue labels to scores.
 
-**Calibration examples:** What “up at **$180**” + Figures prior week **$139.55** + Drivers “up because you ate out more” **with no vs-prior-week movement** → **2**. What “net **$430**” + Figures **$430 vs $395** March + Drivers “more activity and some refunds” **without vs-March movement** → **2**. Service Fees **$626** vs **$53** prior week + Drivers name **Dave Subscription** charges **without why those did not occur prior weeks** → **3** (composition + comparison, not spike cause). What “up at **$180**” + Drivers “posted dining is **actually down**” → **≤2** (denies What). What “**$0** April travel” + Drivers “**no April bookings** vs **$890** March” → **5** (movement to zero explained).
+## Scores (integer 1–5)
+- **5** — Every What move: clear **why-it-changed** in Drivers (merchants/dates, pause/restart, absence of activity for $0, etc.).
+- **4** — Strong; one move slightly thin or vague in Drivers.
+- **3** — **Partial:** Drivers **name focal-period merchants/charges** (or vs-prior totals) for a move but **not why that move’s direction changed** vs the prior period—**not** a 5. *Naming merchants without a vs-prior movement story → ~3.*
+- **2** — **Weak:** **focal move skipped** (only prior-period merchants, never why focal $0/up/down); **denies What**; **circular “because”** with no vs-prior story; **generic timing/vague** when Drivers could cite specific charges; reciting prior totals with a hollow “because.”
+- **1** — Drivers **only** echo What headlines and **recite dollar amounts** across periods—**no** merchants, timing, pause, absence, or real mechanism (e.g. “down to $12; May was $48, April was $52” only).
 
-**`notes`:** One auditable sentence on **What-move coverage**, **movement vs composition**, **data-to-cause fit**, or **link clarity** (note **contradiction**, **focal skip**, **composition-only**, or **restatement**).
+**Weakest-move cap:** Score from the weakest move. If **any** move is **partial** (focal merchants/charges named, no vs-prior **direction** story) → overall **≤3** (e.g. Connectivity up: Verizon overage + Xfinity listed, no why overage missing before). **Focal skip** (prior-period merchants only) is **weak (~2)**, not partial.
 
-**Before JSON:** Re-read **`## Drivers`** and re-apply **all hard caps**; confirm score matches the **movement-not-composition** bar.
+## `notes`
+One sentence on **Drivers-only** insight: movement explanation, clarity, coverage. Never critique Figures or What/Response mismatches.
 
-Return **only** JSON `{score, notes}` per schema.
+Return **only** JSON `{score, notes}`.
 """
 
 
 TEST_CASES: list[dict[str, Any]] = [
+  # --- Batch 1: week grain, contradictions, tautology, partial spike ---
   {
-    "name": "direction_mismatch_corrected_with_figure_chain",
+    "name": "dining_hold_reconciles_headline_up_move",
     "batch": 1,
-    "output": '{"score": 2, "notes": "Contradicts the What’s up-at-$180 move instead of explaining it; figures are used to dispute truth, not reconcile causes."}',
+    "output": (
+      '{"score": 5, "notes": "Reconciles the What’s up-at-$180 headline with posted vs-prior-week '
+      'figures and the cleared hold so the reader sees why the move looks up."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Dining Out is significantly up this week at $180. (2026-05-03 to 2026-05-09)
@@ -116,135 +142,233 @@ Explain: Dining Out is significantly up this week at $180. (2026-05-03 to 2026-0
 
 ## Figures
 
-* **Dining Out (May 3–9, 2026):** $94.80 posted vs $139.55 (Apr 26–May 2, 2026) vs $128.40 (Apr 19–25, 2026).
-* **Pending hold cleared this week (same category):** $85.20 authorization from May 2 that posted May 6 and is no longer open.
+* **Dining Out posted (May 3–9, 2026):** $94.80 vs $139.55 (Apr 26–May 2, 2026).
+* **Pending hold cleared this week (same category):** $85.20 authorization from May 2 that posted May 6.
+* **Insight-style total (posted + cleared hold):** $180.00 vs $139.55 prior week → **up ~29%**.
 
 ## Drivers
 
-Your summary says dining is “significantly up,” but posted **Dining Out** is actually **down** week-over-week ($94.80 vs $139.55). The $180 headline likely mixed in the **$85.20** hold that cleared—without that artifact, spend is softer, not higher.
+Posted dining alone is **down** week-over-week, but the insight total treats the **$85.20** hold that cleared May 6 as part of this week’s dining story—**$94.80 + $85.20 ≈ $180**, which is higher than last week’s **$139.55**. The “up” move is driven by that timing artifact, not a broad restaurant surge.
 
 ## Next steps
 
-1. Set a weekly cap on `meals_dining_out` if you want posted dining to stay under $120.
+1. Set a weekly cap on `meals_dining_out` if you want posted dining to stay under $120 regardless of holds.
 """,
   },
   {
-    "name": "direction_mismatch_unaddressed_low_insight",
+    "name": "groceries_up_circular_no_prior_week_story",
     "batch": 1,
-    "output": '{"score": 2, "notes": "Affirms the What’s up direction but gives no movement vs prior week—only a tautology, not period-over-period insight."}',
+    "output": (
+      '{"score": 2, "notes": "Affirms the What’s up direction with a hollow because-clause and never '
+      'explains why grocery spend rose vs the prior week shown in Figures."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Dining Out is significantly up this week at $180. (2026-05-03 to 2026-05-09)
+Explain: Groceries is significantly up this week at $412. (2026-05-10 to 2026-05-16)
 
 # Rationalize Response
 
 ## Figures
 
-* **Dining Out (May 3–9, 2026):** $94.80 vs $139.55 (Apr 26–May 2, 2026).
+* **Groceries (May 10–16, 2026):** $412.30 vs $286.15 (May 3–9, 2026).
 
 ## Drivers
 
-Dining out is up this week at about $180 because you ate out more.
+Groceries are up this week at about $412 because you bought more groceries.
 
 ## Next steps
 
-1. Watch restaurant spend.
+1. Review grocery receipts.
 """,
   },
   {
-    "name": "prior_weeks_zero_totals_explains_restart",
+    "name": "entertainment_denies_what_down_move",
+    "batch": 1,
+    "output": (
+      '{"score": 2, "notes": "Drivers deny the What’s down move instead of explaining why '
+      'entertainment fell vs last week using the provided figures."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Entertainment is significantly down this week at $45. (2026-05-10 to 2026-05-16)
+
+# Rationalize Response
+
+## Figures
+
+* **Entertainment (May 10–16, 2026):** $45.00 vs $198.40 (May 3–9, 2026).
+* **Top May 3–9 charges:** AMC **$62.00**; Spotify **$11.99**; Steam **$124.41**.
+
+## Drivers
+
+Entertainment is **not really down**—you still had steady subscriptions, and the AMC ticket was just posted late. The category is effectively flat if you ignore window boundaries.
+
+## Next steps
+
+1. Tag AMC → `leisure_entertainment` consistently.
+""",
+  },
+  {
+    "name": "connectivity_spike_lists_charges_missing_prior_pattern",
+    "batch": 1,
+    "output": (
+      '{"score": 3, "notes": "Compares weeks and itemizes focal charges but leaves unexplained '
+      'why the overage pattern was absent in earlier weeks—partial movement insight."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Connectivity is significantly up this week at $189. (2026-05-10 to 2026-05-16)
+
+# Rationalize Response
+
+## Figures
+
+* **Connectivity (May 10–16, 2026):** $189.40 vs $78.20 (May 3–9, 2026) vs $81.05 (Apr 26–May 2, 2026).
+
+## Drivers
+
+Connectivity is higher this week at **$189.40** versus **$78.20** last week. The jump is from a **Verizon wireless overage** (**$95.00** on May 12) plus your usual **Xfinity internet** (**$74.99** on May 14).
+
+## Next steps
+
+1. Set an alert on `bills_connectivity` if weekly spend exceeds $100.
+""",
+  },
+  # --- Batch 2: $0 restart, pure restatement, thin timing ---
+  {
+    "name": "delivered_food_restart_after_subscription_pause",
     "batch": 2,
-    "output": '{"score": 5, "notes": "Uses $0 prior weeks on-purpose to explain why April delivered-food spend looks like a restart after a pause."}',
+    "output": (
+      '{"score": 5, "notes": "Uses $0 prior months and mid-month ISO buckets to explain why '
+      'delivered-food spend restarted and why the move looks sharply up."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Delivered Food is significantly up this month at $118. (2026-04-01 to 2026-04-30)
+Explain: Delivered Food is significantly up this month at $214. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Delivered Food (Apr 1–30, 2026):** $118.40.
-* **Delivered Food (Mar 1–31, 2026):** $0.00.
-* **Delivered Food (Feb 1–28, 2026):** $0.00.
-* **ISO week buckets (Apr):** $0.00 (Apr 1–7); $0.00 (Apr 8–14); $41.20 (Apr 15–21); $77.20 (Apr 22–28).
+* **Delivered Food (Jun 1–30, 2026):** $214.60.
+* **Delivered Food (May 1–31, 2026):** $0.00.
+* **Delivered Food (Apr 1–30, 2026):** $0.00.
+* **ISO week buckets (Jun):** $0.00 (Jun 1–7); $18.40 (Jun 8–14); $96.20 (Jun 15–21); $100.00 (Jun 22–28).
 
 ## Drivers
 
-The “up” story is really a **restart**: March and February show **$0** because delivery subscriptions were paused—there is no prior-week baseline to compare against until mid-April, when DoorDash and Uber Eats charges resume and concentrate in the last two ISO weeks.
+This is a **restart**, not a steady climb: May and April are **$0** because Instacart+ and DoorDash DashPass were **paused** after a budget reset. Charges resume mid-June—**Instacart** (**$96.20** week of Jun 15) and **DoorDash** (**$100.00** week of Jun 22)—which is why June totals jump from a true **$0** baseline.
 
 ## Next steps
 
-1. Tag DoorDash and Uber Eats → `meals_delivered_food` so the restart stays visible next month.
+1. Tag Instacart and DoorDash → `meals_delivered_food` so pauses stay visible.
 """,
   },
   {
-    "name": "prior_months_zero_restated_without_cause",
+    "name": "interest_income_restate_figures_only",
     "batch": 2,
-    "output": '{"score": 1, "notes": "Lists $0 prior months but only restates the What move without explaining why spend restarted."}',
+    "output": (
+      '{"score": 1, "notes": "Recites What and figure rows with no mechanism for why interest '
+      'income fell vs prior months."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Delivered Food is significantly up this month at $118. (2026-04-01 to 2026-04-30)
+Explain: Interest is significantly down this month at $12. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Delivered Food (Apr 1–30, 2026):** $118.40.
-* **Delivered Food (Mar 1–31, 2026):** $0.00.
-* **Delivered Food (Feb 1–28, 2026):** $0.00.
+* **Interest (Jun 1–30, 2026):** $12.18.
+* **Interest (May 1–31, 2026):** $48.90.
+* **Interest (Apr 1–30, 2026):** $52.10.
 
 ## Drivers
 
-Delivered food is up to $118. March and February were $0.
+Interest is down to $12. May was $48.90 and April was $52.10.
 
 ## Next steps
 
-1. Keep monitoring delivery spend.
+1. Monitor interest income.
 """,
   },
   {
-    "name": "dining_out_refunds_cause_clear",
-    "batch": 3,
-    "output": '{"score": 5, "notes": "Ties the What’s $250 refund line to gross vs net figures and named return/chargeback mechanisms."}',
+    "name": "transportation_car_up_generic_timing",
+    "batch": 2,
+    "output": (
+      '{"score": 2, "notes": "Cites vs-prior-month totals but only offers generic timing language '
+      'without tying specific charges to why June rose vs May."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Dining Out net spend is elevated this month at $430, including **$250 in refunds** for Dining Out that offset gross restaurant charges. (2026-04-01 to 2026-04-30)
+Explain: Car and Transportation is significantly up this month at $680. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Dining Out gross (Apr 1–30, 2026):** $680.00 posted charges.
-* **Dining Out refunds/credits (Apr 1–30, 2026):** −$250.00 across 4 lines.
-* **Dining Out net (Apr 1–30, 2026):** $430.00 vs $395.00 net (Mar 1–31, 2026).
+* **Car and Transportation (Jun 1–30, 2026):** $680.40 vs $412.00 (May 1–31, 2026).
+* **Largest Jun lines:** Shell **$186.00**; Jiffy Lube **$214.00**; City Parking **$88.00**.
 
 ## Drivers
 
-The **$250 in refunds** is not generic noise—it clusters on two mechanisms: **Chipotle** duplicate-tap reversals (**−$142.00** total across Apr 9 and Apr 21) and an **OpenTable** deposit chargeback (**−$108.00** on Apr 14). Gross dining looks high, but refunds explain why net is only modestly above March despite several large tickets.
+Transportation is higher in June mostly because of **timing**—some car expenses hit this month. It is up compared to May.
 
 ## Next steps
 
-1. Review OpenTable holds so future deposits do not post as full dining spend before they clear.
+1. Set a monthly cap on `transportation_car`.
 """,
   },
+  # --- Batch 3: refunds, multi-line What, payroll, partial shopping ---
   {
-    "name": "dining_out_refunds_vague_partial",
+    "name": "shopping_gadgets_refunds_mechanism_clear",
     "batch": 3,
-    "output": '{"score": 2, "notes": "Names refunds and activity but does not explain movement vs March—composition-only, not period-over-period causes."}',
+    "output": (
+      '{"score": 5, "notes": "Links the What’s refund line to named merchants and explains how '
+      'returns shape net gadget spend vs the prior month."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Dining Out net spend is elevated this month at $430, including **$250 in refunds** for Dining Out that offset gross restaurant charges. (2026-04-01 to 2026-04-30)
+Explain: Gadgets net spend is elevated this month at $920, including **$310 in refunds** for Gadgets that offset gross electronics charges. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Dining Out net (Apr 1–30, 2026):** $430.00 vs $395.00 (Mar 1–31, 2026).
-* **Refunds (Apr):** −$250.00 total.
+* **Gadgets gross (Jun 1–30, 2026):** $1,230.00.
+* **Gadgets refunds/credits (Jun 1–30, 2026):** −$310.00 across 3 lines.
+* **Gadgets net (Jun 1–30, 2026):** $920.00 vs $740.00 net (May 1–31, 2026).
 
 ## Drivers
 
-You had more dining activity in April and some refunds came back, which is why net is $430.
+The **$310 refunds** are concentrated: **Best Buy** return for an unopened monitor (**−$220.00** on Jun 8) and an **Amazon** duplicate-charge reversal (**−$90.00** on Jun 19). Gross looks like a spending spike, but returns explain why net is only **$180** above May despite the **$1,230** in posted buys.
+
+## Next steps
+
+1. Watch Amazon duplicate charges on `shopping_gadgets`.
+""",
+  },
+  {
+    "name": "dining_net_refunds_vague_no_march_story",
+    "batch": 3,
+    "output": (
+      '{"score": 2, "notes": "Mentions refunds and activity but does not explain why net dining '
+      'moved vs the prior month using the figures provided."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining Out net spend is elevated this month at $510, including **$180 in refunds** for Dining Out that offset gross restaurant charges. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Dining Out net (Jun 1–30, 2026):** $510.00 vs $455.00 (May 1–31, 2026).
+* **Refunds (Jun):** −$180.00 total.
+
+## Drivers
+
+You dined out more in June and got some money back from refunds, so net landed at $510.
 
 ## Next steps
 
@@ -252,109 +376,251 @@ You had more dining activity in April and some refunds came back, which is why n
 """,
   },
   {
-    "name": "travel_zero_explained_by_absence",
-    "batch": 4,
-    "output": '{"score": 5, "notes": "Explains the What’s $0 Travel move with purposeful use of prior-month totals and no new April bookings."}',
+    "name": "salary_down_biweekly_paycheck_count_explained",
+    "batch": 3,
+    "output": (
+      '{"score": 5, "notes": "Explains the salary down move with paycheck timing and counts vs '
+      'full prior months—clear period-over-period insight."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Travel and Vacations is **$0** this month. (2026-04-01 to 2026-04-30)
+Explain: Salary is significantly down this month at $2,140. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Travel and Vacations (Apr 1–30, 2026):** $0.00.
-* **Travel and Vacations (Mar 1–31, 2026):** $890.00 (airfare + hotel for spring break).
-* **Travel and Vacations (Feb 1–28, 2026):** $1,205.00 (ski trip deposits and lift tickets).
+* **Salary (Jun 1–30, 2026):** $2,140.00 vs $4,280.00 (May 1–31, 2026) vs $4,280.00 (Apr 1–30, 2026).
+* **Paychecks posted:** Jun **1** deposit **$2,140.00** (May 30 pay date); May **2** deposits **$2,140.00** each (May 2 and May 16).
 
 ## Drivers
 
-April is **$0** because the March trip already captured airfare and lodging, and there are **no new flight or hotel charges** posted in April—unlike February/March, which show concentrated booking clusters. The category is flat by absence of new trips, not a data gap.
+June salary is **half** of May/April because only **one bi-weekly paycheck** posted in June so far (**$2,140** on May 30), while May had **two** (**$4,280** total). The drop is **pay-cycle timing** at month-end, not a pay-rate cut.
 
 ## Next steps
 
-1. If you expect May travel, add a placeholder budget line for `leisure_travel` so $0 months are easier to spot.
+1. Track expected pay dates against `income_salary` so mid-month dips are expected.
 """,
   },
   {
-    "name": "travel_zero_ignored_in_drivers",
-    "batch": 4,
-    "output": '{"score": 2, "notes": "Shows $0 April travel in figures but drivers pivot to March trip detail without explaining why April stayed at zero."}',
+    "name": "utilities_down_shelter_thin_multi_line_what",
+    "batch": 3,
+    "output": (
+      '{"score": 3, "notes": "Utilities vs May is well explained but the shelter move is only '
+      'named—overall insight is pulled down by the weakest What line."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Travel and Vacations is **$0** this month. (2026-04-01 to 2026-04-30)
+Explain: Utilities is significantly down this month at $210. Shelter is thus slightly down this month to $3,050. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Travel and Vacations (Apr 1–30, 2026):** $0.00.
-* **Travel and Vacations (Mar 1–31, 2026):** $890.00.
+* **Utilities (Jun 1–30, 2026):** $210.40 vs $338.90 (May 1–31, 2026).
+* **Shelter total (Jun 1–30, 2026):** $3,050.00 vs $3,088.90 (May 1–31, 2026).
+* **Dominion Energy (utilities):** $118.00 Jun vs $226.40 May.
 
 ## Drivers
 
-March travel was driven by spring-break airfare and a hotel stay in Orlando; that is the main travel story in your recent history.
+Utilities fell **$128.50** because **Dominion** summer billing posted lower usage (**$118** vs **$226** in May) after an estimated-read correction in May inflated that month. **Shelter** is slightly down this month.
 
 ## Next steps
 
-1. Review March trip receipts.
+1. Create a `shelter_utilities` budget at $230/month based on the last three months.
+""",
+  },
+  # --- Batch 4: focal $0, focal skip, health partial ---
+  {
+    "name": "travel_zero_no_june_bookings_explained",
+    "batch": 4,
+    "output": (
+      '{"score": 5, "notes": "Explains focal-month $0 travel by absence of new bookings against '
+      'prior-month spend—full insight on the What move."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Travel and Vacations is **$0** this month. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Travel and Vacations (Jun 1–30, 2026):** $0.00.
+* **Travel and Vacations (May 1–31, 2026):** $1,120.00 (Denver flights + hotel).
+* **Travel and Vacations (Apr 1–30, 2026):** $640.00 (weekend rail + Airbnb).
+
+## Drivers
+
+June is **$0** because May already captured Denver airfare and lodging, and **no new flight, hotel, or Airbnb charges** posted in June—unlike April/May, which show booking clusters. The category is quiet by **absence of new trips**, not missing data.
+
+## Next steps
+
+1. Add a placeholder `leisure_travel` budget line if July travel is likely.
 """,
   },
   {
-    "name": "low_insight_restates_without_interpretation",
+    "name": "gym_wellness_zero_drivers_rehash_may_only",
+    "batch": 4,
+    "output": (
+      '{"score": 2, "notes": "Narrates prior-month gym spend while leaving the focal $0 month '
+      'unexplained despite June showing $0 in Figures."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Gym and Wellness is **$0** this month. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Gym and Wellness (Jun 1–30, 2026):** $0.00.
+* **Gym and Wellness (May 1–31, 2026):** $156.00 (Equinox + yoga studio).
+
+## Drivers
+
+May gym spend was **Equinox $120.00** and **CorePower $36.00**—that is the recent wellness pattern in your account.
+
+## Next steps
+
+1. Review May gym receipts.
+""",
+  },
+  {
+    "name": "medical_pharmacy_up_lists_rx_without_prior_change",
+    "batch": 4,
+    "output": (
+      '{"score": 3, "notes": "Itemizes June pharmacy charges and vs-May comparison but does not '
+      'explain why the prescription pattern differed from May—partial movement insight."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Medical and Pharmacy is significantly up this month at $385. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Medical and Pharmacy (Jun 1–30, 2026):** $385.60 vs $92.40 (May 1–31, 2026).
+
+## Drivers
+
+Pharmacy is up this month at **$385.60** compared with **$92.40** in May. June includes **CVS** (**$142.00**), **Walgreens** (**$118.60**), and a **Mail Order Rx** (**$125.00**) on Jun 4.
+
+## Next steps
+
+1. Set a monthly cap on `health_medical_pharmacy`.
+""",
+  },
+  {
+    "name": "pets_up_new_vendor_no_prior_absence_story",
+    "batch": 4,
+    "output": (
+      '{"score": 3, "notes": "Shows vs-prior-month increase and names focal pet charges but not '
+      'why similar spend was missing in May—reader gets composition more than movement cause."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Pets is significantly up this month at $240. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Pets (Jun 1–30, 2026):** $240.80 vs $38.00 (May 1–31, 2026).
+
+## Drivers
+
+June pet spend totals **$240.80**, mainly **Banfield vet visit $165.00** (Jun 12), **Chewy $58.80** (Jun 18), and **Petco food $17.00**.
+
+## Next steps
+
+1. Budget `shopping_pets` at $120/month unless vet visits are planned.
+""",
+  },
+  # --- Batch 5: multi-claim restatement, mixed complexity ---
+  {
+    "name": "income_interest_sidegig_multi_restate_only",
     "batch": 5,
-    "output": '{"score": 1, "notes": "Restates What and headline figures without real causes linking each named move to drivers."}',
+    "output": (
+      '{"score": 1, "notes": "Repeats all three What headlines and figure totals with no '
+      'causal story for any move vs prior months."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Utilities is significantly down this month at $324. Shelter is thus slightly down this month to $3174. (2026-04-01 to 2026-04-30)
+Explain: Salary is significantly down this month at $2,140. Interest is significantly down this month at $12. Side-Gig income is significantly up this month at $890. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* Utilities is $324.
-* Shelter is $3,174.
+* **Salary (Jun):** $2,140.00 vs $4,280.00 (May).
+* **Interest (Jun):** $12.18 vs $48.90 (May).
+* **Side-Gig (Jun):** $890.00 vs $310.00 (May).
 
 ## Drivers
 
-Utilities is down and shelter changed.
+Salary is $2,140, interest is $12, and side-gig is $890 this month.
 
 ## Next steps
 
-1. Keep an eye on it.
+1. Review income categories.
 """,
   },
   {
-    "name": "service_fees_spike_composition_without_prior_week_why",
-    "batch": 1,
-    "review_outcome": "",
-    "output": '{"score": 3, "notes": "States vs-prior-week movement and names focal charges, but does not explain why similar fees were absent in prior weeks—composition of the total, not the spike cause."}',
+    "name": "groceries_up_warehouse_restart_clear",
+    "batch": 5,
+    "output": (
+      '{"score": 5, "notes": "Explains the weekly up move with Costco vs prior week, Kroger '
+      'contrast, and ISO timing—full movement insight."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Service Fees is significantly up this week at $626. (2026-05-10 to 2026-05-13)
+Explain: Groceries is significantly up this week at $512. (2026-05-17 to 2026-05-23)
 
 # Rationalize Response
 
 ## Figures
 
-* **$626.50**: Service Fees, current week (May 10–13)
-* **$53.13**: Service Fees, prior week (May 3–9)
-* **$193.92**: Service Fees, two weeks ago (April 26–May 2)
+* **Groceries (May 17–23, 2026):** $512.40 vs $298.10 (May 10–16, 2026).
+* **ISO split:** $180.00 (May 17–19); $332.40 (May 20–23).
+* **Largest lines:** Costco **$214.00** (May 20); Kroger **$118.40** (May 18); Trader Joe’s **$96.00** (May 22).
 
 ## Drivers
 
-Service Fees are significantly higher this week, totaling $626.50 compared to $53.13 in the previous week. This spike is primarily driven by two large payments labeled "Dave Subscription" on May 11th.
-
-**Concrete charges for the current period:**
-* **Dave Subscription**: $405.00 (2026-05-11)
-* **Dave Subscription**: $219.00 (2026-05-11)
-* **7-Eleven FCTI Withdrawal Fee**: $2.50 (2026-05-11)
+The week jumped to **$512.40** from **$298.10** because of a **Costco** restock (**$214**) in a week with **no warehouse trip last week**, plus a larger **Kroger** run (**$118** vs **$62** prior week). **Other stores** account for the remaining increase.
 
 ## Next steps
 
-1. **Review Subscriptions**: Audit the two "Dave Subscription" charges ($405.00 and $219.00) to confirm if these are authorized and expected, as they represent the vast majority of this week's service fees.
-2. **Budgeting**: Set a weekly limit for `bills_service_fees` to avoid future spikes.
-3. **Categorization Rule**: If these subscriptions are recurring, ensure they are categorized correctly in your budget plan to prevent them from inflating your "Service Fees" category unexpectedly.
+1. Set a weekly `meals_groceries` cap at $400 if you want to limit stock-up weeks.
+""",
+  },
+  {
+    "name": "entertainment_down_one_time_purchases_absent",
+    "batch": 5,
+    "output": (
+      '{"score": 5, "notes": "Ties the down move to absent AMC/Steam one-timers vs last week while '
+      'noting steady streaming—clear period-over-period insight."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Entertainment is significantly down this week at $45. (2026-05-10 to 2026-05-16)
+
+# Rationalize Response
+
+## Figures
+
+* **Entertainment (May 10–16, 2026):** $45.00 vs $198.40 (May 3–9, 2026).
+* **May 3–9:** AMC **$62.00**; Steam **$124.41**; Spotify **$11.99**.
+* **May 10–16:** Spotify **$11.99** only (no AMC/Steam).
+
+## Drivers
+
+Entertainment fell **$153.40** because last week included a **Steam** purchase (**$124.41**) and an **AMC** ticket (**$62**), while this week has **no similar one-time purchases**—only recurring streaming. Subscriptions were **about the same** as usual.
+
+## Next steps
+
+1. Tag AMC and Steam → `leisure_entertainment` for cleaner week-over-week reads.
 """,
   },
 ]
@@ -365,8 +631,8 @@ class CheckerOptimizer:
     self,
     model_name: str = "gemini-flash-lite-latest",
     *,
-    max_output_tokens: int = 128,
-    thinking_budget: int = 0,
+    max_output_tokens: int = 384,
+    thinking_budget: int = 256,
   ):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -385,59 +651,62 @@ class CheckerOptimizer:
       types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
     ]
 
-  def grade(self, agent_outcome: str) -> Dict[str, Any]:
-    user_msg = (agent_outcome or "").strip()
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
-    cfg = types.GenerateContentConfig(
+  def _build_config(self, *, thinking_budget: int | None = None) -> types.GenerateContentConfig:
+    budget = self.thinking_budget if thinking_budget is None else thinking_budget
+    return types.GenerateContentConfig(
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
       thinking_config=types.ThinkingConfig(
-        thinking_budget=self.thinking_budget,
-        include_thoughts=True,
+        thinking_budget=budget,
+        include_thoughts=False,
       ),
       response_mime_type="application/json",
       response_schema=OUTPUT_SCHEMA,
     )
+
+  def _parse_json_response(self, text: str) -> Dict[str, Any]:
+    raw = (text or "").strip()
+    if not raw:
+      raise ValueError("Empty response from model. Check API key and model availability.")
+    try:
+      parsed = json.loads(raw)
+    except Exception:
+      start, end = raw.find("{"), raw.rfind("}")
+      if start < 0 or end <= start:
+        raise ValueError(f"No JSON object in model response: {raw[:300]!r}")
+      parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict) or "score" not in parsed:
+      raise ValueError(f"Missing score in model response: {parsed!r}")
+    return parsed
+
+  def grade(self, agent_outcome: str) -> Dict[str, Any]:
+    user_msg = (agent_outcome or "").strip()
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
     output_text = ""
-    thought_summary = ""
 
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
-      config=cfg,
+      config=self._build_config(),
     ):
       if chunk.text is not None:
         output_text += chunk.text
 
-      if hasattr(chunk, "candidates") and chunk.candidates:
-        for candidate in chunk.candidates:
-          if hasattr(candidate, "content") and candidate.content:
-            if hasattr(candidate.content, "parts") and candidate.content.parts:
-              for part in candidate.content.parts:
-                if hasattr(part, "thought") and part.thought:
-                  if hasattr(part, "text") and part.text:
-                    if thought_summary:
-                      thought_summary += part.text
-                    else:
-                      thought_summary = part.text
-
-    if thought_summary:
-      print(f"{'='*80}")
-      print("THOUGHT SUMMARY:")
-      print(thought_summary.strip())
-      print("=" * 80)
-
     text = output_text.strip()
-    if not text:
-      raise ValueError("Empty response from model. Check API key and model availability.")
     try:
-      return json.loads(text)
-    except Exception:
-      s = text[text.find("{"): text.rfind("}") + 1] if ("{" in text and "}" in text) else "{}"
-      return json.loads(s)
+      if text:
+        return self._parse_json_response(text)
+    except ValueError:
+      pass
+    resp = self.client.models.generate_content(
+      model=self.model_name,
+      contents=contents,
+      config=self._build_config(thinking_budget=0),
+    )
+    return self._parse_json_response((resp.text or "").strip())
 
 
 def main() -> None:
@@ -445,8 +714,13 @@ def main() -> None:
   parser.add_argument("--test", type=str, default=None, help="Test name, index, or 'all'.")
   parser.add_argument("--batch", type=int, default=None, help="Run all tests in batch N.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
-  parser.add_argument("--max-output-tokens", type=int, default=128)
-  parser.add_argument("--thinking-budget", type=int, default=0)
+  parser.add_argument("--max-output-tokens", type=int, default=384)
+  parser.add_argument("--thinking-budget", type=int, default=256)
+  parser.add_argument(
+    "--check",
+    action="store_true",
+    help="Require integer score to match expected JSON per test; exit non-zero on mismatch.",
+  )
   args = parser.parse_args()
 
   if args.test is None and args.batch is None:
@@ -480,6 +754,8 @@ def main() -> None:
         raise SystemExit(f"Unknown test: {args.test!r}")
       cases = [idx_tc]
 
+  failures: list[str] = []
+
   for run_i, (case_index, tc) in enumerate(cases):
     if run_i:
       print(f"\n{_TEST_SEPARATOR}\n")
@@ -494,9 +770,29 @@ def main() -> None:
     if tc.get("output") is not None:
       _print_section_banner("# Expected Output")
       print(tc["output"])
+    if args.check:
+      exp = _parse_expected_output(tc.get("output"))
+      if not isinstance(exp, dict) or "score" not in exp:
+        failures.append(f"{tc.get('name')}: invalid expected output JSON")
+      else:
+        try:
+          got = int(result.get("score"))
+          want = int(exp["score"])
+        except Exception:
+          failures.append(f"{tc.get('name')}: non-integer score")
+        else:
+          if got != want:
+            failures.append(f"{tc.get('name')}: score {got} != expected {want}")
 
   print(f"\n{_TEST_SEPARATOR}\n")
   print(f"# Total tests: {len(cases)}\n")
+  if args.check and failures:
+    print("# CHECK FAILURES\n")
+    for line in failures:
+      print(line)
+    raise SystemExit(1)
+  if args.check and not failures and cases:
+    print("# CHECK: all scores matched expected.\n")
 
 
 if __name__ == "__main__":
