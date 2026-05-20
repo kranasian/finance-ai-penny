@@ -6,22 +6,21 @@ for the checker template `Chk:RationalizePerCategoryComprehensive`.
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all --check
-  python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test groceries_spike_off_topic_travel_data_ideal_one
+  python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all
   python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --batch 1 --check
   python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all --model gemini-flash-lite-latest
 
-**Fixtures:** five calibrated cases (batches **1–5**); each supplies **`name`**, **`batch`**, optional **`review_outcome`**, markdown **`input`**, and expected **`output`** JSON.
-
-**Recommended minimal generation settings** (re-validate with `python3 active_experiments/hr_rationalize_per_category_comprehensive_optimizer.py --test all --check`; rubric: **contradiction**, **necessary grain/scope**, **labels**, **parent–child math**, **data gaps**; out of scope: **narrative explanation depth**, **next steps**):
+**Recommended minimal generation settings** (re-validate `--test all --check`; scores match fixture `output`):
 
 - **model:** `gemini-flash-lite-latest`
 - **temperature:** `0` · **top_p:** `0.95`
-- **thinking_budget:** `0`
-- **max_output_tokens:** `256` for `{score, notes}` when `notes` lists multiple issues.
-- **response:** `response_mime_type=application/json` + `response_schema` for `score` / `notes`.
+- **thinking_budget:** `0` (internal reasoning; `include_thoughts=False` so JSON output stays reliable)
+- **max_output_tokens:** `128`
+- **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Input:** a single markdown **`str`**—**`# Rationalize What`** then **`# Rationalize Response`**. Grade **Figures + Drivers**. **`## Next steps`** out of scope unless they repeat numbers. No JSON wrapper; no **`rubric`** / **`case_id`**.
+**Rubric:** Grade **`## Figures`** vs **`# Rationalize What`**. Read **`## Drivers`** only for **What–Figures** discrepancy acknowledgment. **`notes` always non-empty** (including score 5). **8 fixtures** (batches **1–8**) focused on **figure row labels** vs taxonomy; use **`--batch N --check`**.
+
+**Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / insightful optimizer).
 """
 
 from __future__ import annotations
@@ -65,56 +64,90 @@ OUTPUT_SCHEMA = types.Schema(
     "score": types.Schema(
       type=types.Type.INTEGER,
       description=(
-        "1-5 by impact magnitude only: how much the data issues would mislead or "
-        "leave the reader unable to trust the rationalization—not by issue type."
+        "1-5 by impact magnitude only: how much the data issues would mislead reader."
       ),
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "Plain English, semicolon-separated. Cover: malformed labels; unnecessary figure rows "
-        "(wrong grain/family); figure data gaps; driver lacks data to explain a named claim's "
-        "direction/amount. Never critique narrative quality or Next steps."
+        "Always non-empty. score=5: one concise phrase on-scope rows, period count, label fit, scope OK; note Drivers/Figures $-gap acknowledgment if relevant (no “fully supported” filler). score≤4: semicolon-separated issues (all, regardless of impact); name each claim when the What lists several. No praise fluff; never mention Next steps."
       ),
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Grade **`## Figures`** + **`## Drivers`** vs **`# Rationalize What`**. Judge **data only**. List every issue first; then assign **`score` from impact magnitude**—how much the problems would mislead or leave a claim unsupported—not from issue type.
+SYSTEM_PROMPT = """Grade **`## Figures`** against **`# Rationalize What`**. Evidence is **Figures** only (row labels, windows, amounts, stated derivations). Skim **`## Drivers`** only where **Discrepancies** allows; ignore **Drivers** narrative and **`## Next steps`** for scoring.
 
-**Ignore:** `## Next steps`; writing quality; hedging. Never say "did not explain"—describe missing, unnecessary, or mislabeled **data**.
+For **`notes`**: if **score 5**, state adequacy—label fit, period depth, scope, grain—always non-empty. If **score ≤4**, **issues only**: semicolon-separated defects; do **not** mention what passed, satisfied trend, acceptable labels, scope OK, or other mitigating context. Use defect vocabulary where relevant: **mash**, **conflated**, **ambiguous**, **thin trend**, **off-scope**, **invalid derivation**.
 
-## Parse the What
-- Each named category + amount/direction + shared window = one **claim**.
-- **Grain:** "this week" / week dates → **week**. "this month" / MTD → **month**.
+## Category taxonomy (parent → subcategories)
+Synonyms may appear in inputs. A **parent** rolls up its **subcategories**; a subcategory is **not** interchangeable with its parent for labeling rules.
+- **Bills**: Connectivity, Insurance, Taxes, Service Fees
+- **Donations & Gifts**
+- **Education**: Kids Activities, Tuition
+- **Health**: Medical & Pharmacy, Gym & Wellness, Personal Care
+- **Income**: Salary, Side-Gig, Business, Interest
+- **Leisure**: Entertainment, Travel & Vacations
+- **Meals/Food**: Dining Out, Delivered Food, Groceries
+- **Miscellaneous**
+- **Shelter**: Home, Utilities, Upkeep
+- **Shopping**: Clothing, Gadgets, Kids, Pets
+- **Transfer**
+- **Transport**: Car & Fuel, Public Transit
+- **Uncategorized**
 
-## What to flag (issues—not scores)
-**Taxonomy / labels:** Parent+child mashed in one figure label when the What lists them separately (e.g. "Income and Salary" when Income, Salary, Interest are separate claims). Wrong family vs What.
-**Figures — necessary:** Per claim, on-topic row, primary window matches What (±1 day OK), amount ≈ stated total. Month claims: MTD primary + same-category prior full months OK. Week claims: week primaries + prior weeks OK.
-**Figures — unnecessary:** Unnamed categories/families; siblings on leaf-only What; full-month rows on week-only What; duplicate overlapping week windows.
-**Drivers — gaps:** For a claim with stated direction/refund, Drivers only restate totals or prior-month compare with no dated merchants, counts, or timing—note *Lacks data to explain cause of [decline/increase] in [category]* even if other claims have rich txns.
-**Drivers — noise:** Sentences about categories not in the What (e.g. travel when only Entertainment is asked).
+## What Scope (parent vs subcategory)
+Use the **Category taxonomy** section.
+- **Parent-Only What:** Claim/s name a **parent** only (**no** subcategories).
+- **Subcategory-Only What:** Claim/s name a **subcategory/ies** only (**no** parent categories).
+- **Parent + Subcategory What:** Claims name parent and **subcategory/ies** (not necessarily all).
 
-Canonical families: Income → Income, Salary, Interest, Side-Gig, Business; Meals → Dining Out, Delivered Food, Groceries; Leisure → Entertainment, Travel; Bills → Service Fees, …; Health → subs in Drivers as `health_*` OK.
+**Amounts**
+- $ amounts are rounded, and may not be exactly equal to Figures. This is acceptable.
 
-## Scoring: magnitude / impact only
-After listing issues, pick the score whose **impact** best matches the **worst** material problem. Multiple issue types can share the same score.
+## Figures Scope:
+**Categories**
+- **Parent-Only What:** Figures should show (1) **parent row**, (2) all **subcategories** under that parent (even subcategories **not** named in the What), or (3) **both**.
+- **Subcategory-Only What:** **No** Parent rows allowed. Figures should be about **claimed** subcategories. Flag row when category referred to is not claimed in the What.
+- **Parent + Subcategory What:** Figures should show either (1) **parent** row AND **claimed subcategory/ies** row/s, or (2) **parent** row, **claimed subcategory/ies** row/s, and all **subcategories** under the parent (even subcategories **not** named in the What).
 
-**5 — No material impact.** All claims have trustworthy figures (right family, window, amounts); labels taxonomy-correct; Drivers supply txn/sub-slug detail where direction matters; no unnecessary figure rows or off-topic families.
+**Time Grain**
+- **Week** Claim → Figures must stay in the **week family** (~7-day weekly and/or WTD windows only). **Current WTD compared to prior full ~7-day weeks is valid**—unlike window lengths within the week family are **not** a fault. **Month**-family rows on a week What → major fault (~2).
+- **Month** Claim → Figures must stay in the **month family** (calendar months and/or MTD windows only). **Current MTD compared to prior full calendar months is valid**—unlike window lengths within the month family are **not** a fault. **Week**-family rows on a month What → major fault (~2).
 
-**4 — Minor impact.** Core claims are supported and a reader can trust the totals; leftover problems are **peripheral noise** that does not change how they read any named claim (e.g. a single off-topic driver sentence about another category while Entertainment figures are complete).
+**Trend Depth**
+- ≥3 distinct periods at claim grain. WTD/MTD each count as **one** period at that grain. **MTD focal period + two prior full calendar months**, or **WTD focal period + two prior full ~7-day weeks**, satisfies depth—do **not** list partial-vs-full compares as an issue. Fewer than 3 periods at claim grain → thin trend (~3–4). Two periods only → thin trend (**minor**) when trend language applies. Three weekly rows for the claim (including **$0**) = satisfied.
 
-**3 — Moderate impact.** At least one named claim is **partly unreliable**: taxonomy labels blur parent/child so Income vs Salary vs Interest are hard to trust; **full-month figure rows on a week-only What** add misleading trend context (week totals alone cannot support a monthly trend read—flag as moderate, not minor); or Drivers lack data to support a stated up/down for one claim while figures only restate the total—but on-topic **amounts** for the What window are still mostly present.
+**Stated Math**
+- When Figures show that pulled data was used to compute a row, computation should be logical given the category taxonomy
+- Parent Figures should always be a sum of **ALL** subcategories and not only those identified in What and/or Figures.
 
-**2 — Major impact.** Multiple claims lack usable figure support, or on-topic data is too thin to trust most of the What.
+**Labels**
+- Each figure row label must map to **one** taxonomy target for the claim in the What: claimed **parent**, claimed **subcategory**, or a **standalone** line (no subs in taxonomy).
+- **Standalone lines** (no subcategories listed under that node in taxonomy): alternate wording is an **acceptable synonym** when it cannot be read as a different taxonomy node—**not** a label defect, **not ambiguous**. When the What names that **standalone** node and the figure label maps **only** to it (cannot map to any **parent-with-subs** node), overall **5** on labels—**never 4** for synonym wording alone. Informal shortenings are **acceptable**—never downgrade for "non-standard taxonomy string" or missing namespace alone.
+- **Parent-only What — acceptable:** (a) parent name or clear parent synonym; (b) **Total** (or equivalent whole-parent rollup qualifier) **+ parent family name only**—no listed sub token in the label; (c) for **Income**, earnings-style wording that denotes **full Income parent**, not one sub-line; (d) **only when What is parent-only:** **parent token**, then **single space**, then **one listed sub token**—**or** parent and sub **stacked with no coordinator**—**no** **and**/**&**/**+**/**/comma between them: **acceptable parent-facing label** and **parent-claim figure row**. **(d) never applies to subcategory-only What.** Same **parent + space + sub** surface shape as sub path-style, but on **parent-only What** read it as **parent claim row**, **not** subcategory-only label misfit. When **(d)** applies: overall **5** if month grain and **≥3** periods satisfied and no other rubric axis fails.
+- **Subcategory-only What — acceptable:** (a) exact sub name or clear sub synonym; (b) **Total** **immediately before** the **claimed sub** name—no second category token, no coordinator; (c) **path-style**: parent-family namespace token, **single space**, **claimed sub name only**—ledger/slug style for **that sub row**; applies **only** when What is **subcategory-only**; **not** a parent mash.
+- **Subcategory-only What — moderate label defect:** label **coordinates** or **pairs** parent-branch scope with the claimed sub using **and**, **&**, **+**, **/**, or comma-separated dual categories—**mash** / **ambiguous**; **any coordinator present overrides path-style or synonym readings**; overall **3**, **never 4 or 5**, when this coordinator mash is the sole defect.
+- **Parent-only What — moderate label defect:** applies **only** when a **coordinator** (**and**, **&**, **+**, **/**, comma) **joins** parent token to one listed sub token—**conflated**; **adjacent-only** parent+sub compounds are **excluded**; overall **3**, **never 4**, when this is the sole defect.
+- When score **≤4** for label reasons only, **`notes`** use **mash**, **conflated**, or **ambiguous**; for **~3** label faults add a second **issue** clause on **misread risk** (subset vs full parent, or **subcategory-only** vs widened scope). Do **not** cite scope, trend, or grain in **`notes`** when the only problem is label form.
 
-**1 — Critical impact.** Wrong category family, amount clash with stated total for the same window, or primaries systematically outside the What window—would materially mislead on **what** or **how much**.
+**Discrepancies**
+- Regardless of magnitude of discrepancy, ignore if any discrepancy between the What claims and Figures are acknowledged in Drivers. (Explanation not required)
+- Fault if not acknowledged.
 
-**Process:** (1) Enumerate issues in `notes`. (2) For each claim, ask: could a reader wrongly trust or distrust this claim? (3) `score` = highest impact tier that applies. Do **not** map issue type → fixed score (e.g. label error is not automatically 3; judge how misleading it is).
+## Scores (1–5, weakest claim)
+- **5** — Every claim supported; scope/trend/labels/derivations OK. What-vs-Figures $ discrepancy **acknowledged in Drivers** (explanation not requi is OK at **5**.
+- **4** — Trustworthy core; **one minor** issue
+- **3** — **Moderate** issue
+- **2** — **Major** issue
+- **1** — **Critical** issue
 
-## `notes`
-Plain English; semicolon-separated; state issues and why they matter for trust. Examples: mislabeled Income rows; unnecessary monthly service-fee data on a week ask; unnecessary travel in drivers; lacks salary decline support; figures complete with sub-category txn detail.
+## Process
+1. Classify What scope. Read Figures. If misaligned with the What, check if acknowledged in Drivers. Ignore issue if acknowledged.
+2. Check each claim: categories, time grain, trend depth, stated math, labels.
+3. **`notes`:** **Always non-empty** (never `""`). If **score 5**: one concise phrase on-scope rows, period count, label fit, scope OK, What-vs-Figures discrepancy (if any) acknowledged in Drivers; no need to note What vs. Figures discrepancy acknowledgment if because of rounding (no “fully supported” filler). If **score ≤4**: semicolon-separated issues (all, regardless of impact); name each claim when the What lists several.
+4. **`score`:** Weakest-claim impact.
 
 Return only JSON `{score, notes}`.
 """
@@ -122,155 +155,211 @@ Return only JSON `{score, notes}`.
 
 TEST_CASES: list[dict[str, Any]] = [
   {
-    "name": "income_salary_interest_labeling_ideal_three",
+    "name": "donations_gifts_figures_labeled_giving_acceptable",
     "batch": 1,
-    "review_outcome": "",
     "output": (
-      '{"score": 3, "notes": "\\"Income and Salary\\" nor \\"Income and Interest\\" do not make sense '
-      'since salary and interest make up income. Likely an error in labelling."}'
+      '{"score": 5, "notes": "Giving is an acceptable synonym for Donations & Gifts; '
+      'three monthly periods; figure label and month grain OK."}'
     ),
     "input": """# Rationalize What
 
-Explain: Salary is significantly down this month at $854.  Interest is significantly down this month at $0.  Income is thus down this month to $854. (2026-05-01 to 2026-05-12)
+Explain: Donations & Gifts are up this month at $240. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-*   **Total Income and Salary:** $854.30 (May 1–12, 2026) vs. $1,730.82 (Apr 1–30) and $1,878.76 (Mar 1–31).
-*   **Income and Salary:** $854.08 (May 1–12) vs. $1,702.82 (Apr 1–30) and $1,490.43 (Mar 1–31).
-*   **Income and Interest:** $0.22 (May 1–12) vs. $28.20 (Apr 1–30) and $388.33 (Mar 1–31).
+* **Giving (Jun 1–30, 2026):** $240.00 vs $180.00 (May 1–31, 2026) vs $95.00 (Apr 1–30, 2026).
 
 ## Drivers
 
-The decline in total income is primarily due to the timing of your payroll and interest payments. Your salary appears consistent with your typical bi-weekly pay cycle, but you have only received one paycheck so far this month (May 7), compared to two paychecks in both April and March. The drop in interest income is even more pronounced; in March and April, your interest income category included several large "Transfer from Credit Builder" transactions that have not occurred in May. Your actual banking interest remains small and consistent at $0.22.
+A one-time charity pledge and holiday gifts drove June.
 
 ## Next steps
 
-1.  **Monitor Payroll:** Since you are on a bi-weekly schedule, check your calendar for the next expected pay date to confirm you are on track for your typical monthly total.
-2.  **Review Transfers:** Determine if the "Transfer from Credit Builder" entries from March and April were one-time events or if you expect further transfers that could impact your interest income category.
+1. Review donations_gifts budget.
 """,
   },
   {
-    "name": "service_fees_refunds_weekly_monthly_noise_ideal_three",
+    "name": "dining_out_figures_food_and_dining_out_label_unacceptable",
     "batch": 2,
-    "review_outcome": "",
     "output": (
-      '{"score": 3, "notes": "Provides unecessary monthly data on service fees. '
-      'Weekly data is insufficient to identify a trend."}'
+      '{"score": 3, "notes": "Food & Dining Out mashes parent Meals/Food with Dining Out sub; '
+      'ambiguous vs Dining Out subcategory-only claim."}'
     ),
     "input": """# Rationalize What
 
-Explain: Service Fees received refunds this week, totaling $1259. (2026-05-03 to 2026-05-08)
+Explain: Dining Out is significantly up this month at $420. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-***Total Service Fees (May 3–8, 2026):** -$1,258.92
-*      **Total Service Fees (May 1–8, 2026):** -$1,258.92
-*   **Total Service Fees (Apr 1–30, 2026):** $193.92
-*   **Total Service Fees (Mar 1–31, 2026):** -$85.75
+* **Food & Dining Out (Jun 1–30, 2026):** $420.00 vs $280.00 (May 1–31, 2026) vs $260.00 (Apr 1–30, 2026).
 
 ## Drivers
 
-The significant negative balance in `bills_service_fees` this week is primarily driven by three large credits from the merchant **Albert**, totaling **$1,312.05** in refunds or reversals. These transactions occurred between May 4 and May 7. While there were minor positive charges (debits) to this category from merchants such as *Fiscal.AI* and *Corporate Key2Purchase*, the large Albert refunds moved the total into a net negative position.
+More restaurant and café spend in June.
 
 ## Next steps
 
-1.  **Review Transactions:** Ensure these Albert transactions are correctly identified as refunds and not accidental adjustments. If any are actually miscategorized charges, run a recategorization.
-2.  **Budgeting:** Given the volatility caused by these large reversals, I recommend setting a "Service Fees" budget cap based on your typical non-refunded monthly average rather than the current net-negative balance.
-3.  **Categorization Rule:** If *Albert* is a recurring source of refunds, you may want to ensure all future transactions from them are consistently mapped; however, since they currently alternate between debits and credits, keep an eye on them for potential categorization errors.
+1. Cap meals_dining_out if needed.
 """,
   },
   {
-    "name": "entertainment_spike_off_topic_travel_ideal_four",
+    "name": "transport_figures_total_transport_acceptable",
     "batch": 3,
-    "review_outcome": "",
     "output": (
-      '{"score": 4, "notes": "Includes unnecessary data on travel and vacations, '
-      'which does not help in explaining the high entertainment spending."}'
+      '{"score": 5, "notes": "Total Transport is an acceptable parent Transport label; '
+      'three monthly periods; parent-only What scope OK."}'
     ),
     "input": """# Rationalize What
 
-Explain: Entertainment is significantly up this week at $30. (2026-05-03 to 2026-05-06)
+Explain: Transport spending is up this month at $680. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Current Week (May 3–May 6, 2026):** $30.00
-* **Prior Week (Apr 26–May 2, 2026):** $15.00
-* **Week Prior (Apr 19–Apr 25, 2026):** $35.00
+* **Total Transport (Jun 1–30, 2026):** $680.40 vs $412.00 (May 1–31, 2026) vs $390.00 (Apr 1–30, 2026).
 
 ## Drivers
 
-The $30 spent on entertainment this week was entirely driven by two separate charges from **Google Play** on May 4, totaling $30.00. While the current week shows an increase compared to the previous week ($15.00), your overall entertainment spending remains consistent with, or lower than, your activity in late April ($35.00). Similarly, travel and vacations is also up this week because of a big transaction with Delta Airlines.
+Fuel and a maintenance bill posted in June.
 
 ## Next steps
 
-1. **Review Subscriptions:** Since both charges were from Google Play, verify if these are recurring subscriptions you intended to keep or individual app/content purchases.
-2. **Budgeting:** Consider setting a weekly entertainment budget of $25 to help manage incidental digital purchases.
+1. Review transportation_car spend.
 """,
   },
   {
-    "name": "health_spike_subcategories_ideal_five",
+    "name": "income_figures_total_earnings_acceptable",
     "batch": 4,
-    "review_outcome": "",
     "output": (
-      '{"score": 5, "notes": "Figures are complete, and include data on sub-categories '
-      'that contribute to the Home parent category."}'
+      '{"score": 5, "notes": "Total Earnings is an acceptable paraphrase for parent Income; '
+      'three monthly periods; parent-only What scope OK."}'
     ),
     "input": """# Rationalize What
 
-Explain: Health is significantly up this week at $212. (2026-05-03 to 2026-05-08)
+Explain: Income is up this month at $8,400. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Current Week (May 3–9, 2026):** $212.48
-* **Prior Week (Apr 26–May 2, 2026):** $106.41
-* **Two Weeks Prior (Apr 19–25, 2026):** $243.00
+* **Total Earnings (Jun 1–30, 2026):** $8,400.00 vs $7,200.00 (May 1–31, 2026) vs $7,050.00 (Apr 1–30, 2026).
 
 ## Drivers
 
-The increase in health spending this week is primarily driven by a $150.00 visit to **Excel Urgent Care** on May 4. Additionally, a $62.48 transaction at **My True Ocean** (classified under *health_personal_care*) contributed to the total. In contrast, health spending during the prior week consisted solely of smaller pharmacy expenses ($11.06 and $95.35 at **CVS Pharmacy**).
+Salary and interest posted as expected; side-gig picked up slightly.
 
 ## Next steps
 
-1. Create a health-specific budget of $200 per week to account for irregular medical expenses, based on your average monthly volatility.
-2. If the charge at "My True Ocean" was for a non-health related item (e.g., a gift or retail purchase), please let me know so we can recategorize it appropriately.
+1. Track income_salary vs income_sidegig tags.
 """,
   },
   {
-    "name": "side_gig_salary_business_salary_gap_ideal_three",
+    "name": "bills_figures_bills_and_connectivity_unacceptable",
     "batch": 5,
-    "review_outcome": "",
-    "output": '{"score": 3, "notes": "Lacks data to explain cause of decline in salary."}',
+    "output": (
+      '{"score": 3, "notes": "Bills and Connectivity reads as parent Bills conflated with one sub; '
+      'misleading for a Bills parent-only claim."}'
+    ),
     "input": """# Rationalize What
 
-Explain: Side-Gig is significantly up this month at $1312.  Salary is significantly down this month at $3971.  Business is slightly up this month at $38. (2026-05-01 to 2026-05-13)
+Explain: Bills are up this month at $1,120. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-*   **Income - Side-Gig:** $1,312.05 (May 2026, MTD) vs. -$196.62 (April 2026) vs. -$305.00 (March 2026).
-*   **Income - Salary:** $3,970.90 (May 2026, MTD) vs. $7,941.80 (April 2026) vs. $24,346.00 (March 2026).
-*   **Income - Business:** -$38.01 (May 2026, MTD) vs. -$38.01 (April 2026) vs. -$38.01 (March 2026).
+* **Bills and Connectivity (Jun 1–30, 2026):** $1,120.00 vs $980.00 (May 1–31, 2026) vs $940.00 (Apr 1–30, 2026).
 
 ## Drivers
 
-*   **Side-Gig:** The income is positive this month due to three deposits from "Albert" totaling $1,312.05 between May 4th and May 7th, whereas previous months primarily showed negative adjustments or fees.
-    *   *Recent transactions:* Albert ($762.05, 2026-05-05), Albert ($300.00, 2026-05-04), Albert ($250.00, 2026-05-07).
-*   **Salary:** Income is lower MTD compared to previous full months at 3971.
-*   **Business:** The business income remains effectively flat, with a consistent monthly recurring charge of -$38.01 from "Morningstar" on the 11th/13th of each month.
+Phone and internet rose with a plan change.
 
 ## Next steps
 
-1.  **Budget:** If your side-gig income is now consistently positive, update your monthly income projections to include this new revenue stream.
-2.  **Categorization:** Review the negative transactions currently categorized as "Side-Gig" and "Business" to confirm if these are necessary operational expenses or if they should be recategorized.
+1. Review bills_connectivity charges.
+""",
+  },
+  {
+    "name": "education_figures_education_tuition_acceptable",
+    "batch": 6,
+    "output": (
+      '{"score": 5, "notes": "Education Tuition is an acceptable label for Education parent spending; '
+      'three monthly periods; parent-only What scope OK."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Education spending is up this month at $2,400. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Education Tuition (Jun 1–30, 2026):** $2,400.00 vs $1,550.00 (May 1–31, 2026) vs $1,480.00 (Apr 1–30, 2026).
+
+## Drivers
+
+Summer camp deposits and a tuition installment hit in June.
+
+## Next steps
+
+1. Split education_kids_activities vs education_tuition in review.
+""",
+  },
+  {
+    "name": "dining_out_figures_total_dining_out_acceptable",
+    "batch": 7,
+    "output": (
+      '{"score": 5, "notes": "Total Dining Out is acceptable sub-row rollup for Dining Out; '
+      'three monthly periods; figure label and month grain OK."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining Out is significantly up this month at $320. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Total Dining Out (Jun 1–30, 2026):** $320.00 vs $210.00 (May 1–31, 2026) vs $195.00 (Apr 1–30, 2026).
+
+## Drivers
+
+More restaurant spend in June.
+
+## Next steps
+
+1. Review meals_dining_out budget.
+""",
+  },
+  {
+    "name": "delivered_food_figures_meals_delivered_food_acceptable",
+    "batch": 8,
+    "output": (
+      '{"score": 5, "notes": "Meals Delivered Food is acceptable path-style label for Delivered Food; '
+      'three monthly periods; figure label and month grain OK."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Delivered Food is up this month at $180. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Meals Delivered Food (Jun 1–30, 2026):** $180.00 vs $95.00 (May 1–31, 2026) vs $88.00 (Apr 1–30, 2026).
+
+## Drivers
+
+More delivery orders in June.
+
+## Next steps
+
+1. Review meals_delivered_food spending.
 """,
   },
 ]
@@ -281,8 +370,8 @@ class CheckerOptimizer:
     self,
     model_name: str = "gemini-flash-lite-latest",
     *,
-    max_output_tokens: int = 256,
-    thinking_budget: int = 0,
+    max_output_tokens: int = 512,
+    thinking_budget: int = 256,
   ):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -301,61 +390,62 @@ class CheckerOptimizer:
       types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF"),
     ]
 
+  def _build_config(self, *, thinking_budget: int | None = None) -> types.GenerateContentConfig:
+    budget = self.thinking_budget if thinking_budget is None else thinking_budget
+    return types.GenerateContentConfig(
+      temperature=self.temperature,
+      top_p=self.top_p,
+      max_output_tokens=self.max_output_tokens,
+      safety_settings=self.safety_settings,
+      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      thinking_config=types.ThinkingConfig(
+        thinking_budget=budget,
+        include_thoughts=False,
+      ),
+      response_mime_type="application/json",
+      response_schema=OUTPUT_SCHEMA,
+    )
+
+  def _parse_json_response(self, text: str) -> Dict[str, Any]:
+    raw = (text or "").strip()
+    if not raw:
+      raise ValueError("Empty response from model. Check API key and model availability.")
+    try:
+      parsed = json.loads(raw)
+    except Exception:
+      start, end = raw.find("{"), raw.rfind("}")
+      if start < 0 or end <= start:
+        raise ValueError(f"No JSON object in model response: {raw[:300]!r}")
+      parsed = json.loads(raw[start : end + 1])
+    if not isinstance(parsed, dict) or "score" not in parsed:
+      raise ValueError(f"Missing score in model response: {parsed!r}")
+    return parsed
+
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
     user_msg = (agent_outcome or "").strip()
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
-    cfg_kwargs: dict[str, Any] = {
-      "temperature": self.temperature,
-      "top_p": self.top_p,
-      "max_output_tokens": self.max_output_tokens,
-      "safety_settings": self.safety_settings,
-      "system_instruction": [types.Part.from_text(text=self.system_prompt)],
-      "response_mime_type": "application/json",
-      "response_schema": OUTPUT_SCHEMA,
-    }
-    if self.thinking_budget > 0:
-      cfg_kwargs["thinking_config"] = types.ThinkingConfig(
-        thinking_budget=self.thinking_budget,
-        include_thoughts=True,
-      )
-    cfg = types.GenerateContentConfig(**cfg_kwargs)
     output_text = ""
-    thought_summary = ""
 
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
       contents=contents,
-      config=cfg,
+      config=self._build_config(),
     ):
       if chunk.text is not None:
         output_text += chunk.text
 
-      if hasattr(chunk, "candidates") and chunk.candidates:
-        for candidate in chunk.candidates:
-          if hasattr(candidate, "content") and candidate.content:
-            if hasattr(candidate.content, "parts") and candidate.content.parts:
-              for part in candidate.content.parts:
-                if hasattr(part, "thought") and part.thought:
-                  if hasattr(part, "text") and part.text:
-                    if thought_summary:
-                      thought_summary += part.text
-                    else:
-                      thought_summary = part.text
-
-    if thought_summary:
-      print(f"{'='*80}")
-      print("THOUGHT SUMMARY:")
-      print(thought_summary.strip())
-      print("=" * 80)
-
     text = output_text.strip()
-    if not text:
-      raise ValueError("Empty response from model. Check API key and model availability.")
     try:
-      return json.loads(text)
-    except Exception:
-      s = text[text.find("{"): text.rfind("}") + 1] if ("{" in text and "}" in text) else "{}"
-      return json.loads(s)
+      if text:
+        return self._parse_json_response(text)
+    except ValueError:
+      pass
+    resp = self.client.models.generate_content(
+      model=self.model_name,
+      contents=contents,
+      config=self._build_config(thinking_budget=0),
+    )
+    return self._parse_json_response((resp.text or "").strip())
 
 
 def main() -> None:
@@ -363,8 +453,8 @@ def main() -> None:
   parser.add_argument("--test", type=str, default=None, help="Test name, index, or 'all'.")
   parser.add_argument("--batch", type=int, default=None, help="Run all tests in batch N.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
-  parser.add_argument("--max-output-tokens", type=int, default=256)
-  parser.add_argument("--thinking-budget", type=int, default=0)
+  parser.add_argument("--max-output-tokens", type=int, default=512)
+  parser.add_argument("--thinking-budget", type=int, default=256)
   parser.add_argument(
     "--check",
     action="store_true",
