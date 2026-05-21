@@ -18,7 +18,7 @@ Run from `finance-ai-penny` repo root:
 - **max_output_tokens:** `128`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Rubric:** Grade **`## Figures`** vs **`# Rationalize What`**. Read **`## Drivers`** only for **What–Figures** discrepancy acknowledgment. **`notes` always non-empty** (including score 5). **8 fixtures** (batches **1–8**) focused on **figure row labels** vs taxonomy; use **`--batch N --check`**.
+**Rubric:** Grade **`## Figures`** vs **`# Rationalize What`**. Read **`## Drivers`** only for **What–Figures** discrepancy acknowledgment. **`notes` always non-empty** (including score 5). **11 fixtures** (batches **1–11**); use **`--batch N --check`**.
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / insightful optimizer).
 """
@@ -133,11 +133,11 @@ Use the **Category taxonomy** section.
 - When score **≤4** for label reasons only, **`notes`** use **mash**, **conflated**, or **ambiguous**; for **~3** label faults add a second **issue** clause on **misread risk** (subset vs full parent, or **subcategory-only** vs widened scope). Do **not** cite scope, trend, or grain in **`notes`** when the only problem is label form.
 
 **Discrepancies**
-- Regardless of magnitude of discrepancy, ignore if any discrepancy between the What claims and Figures are acknowledged in Drivers. (Explanation not required)
-- Fault if not acknowledged.
+- If **Drivers** acknowledge any mismatch between **What** claims and **Figures** (amounts, direction/trend language, or date window), **do not fault**—overall **5** when Figures otherwise satisfy scope, grain, trend depth, labels, and stated math. **Do not** score for "factually incorrect claim," "invalid derivation," or unstated trend direction when **Drivers** disclose the gap.
+- **Fault** only when the mismatch is **not** acknowledged in **Drivers** or **Figures**.
 
 ## Scores (1–5, weakest claim)
-- **5** — Every claim supported; scope/trend/labels/derivations OK. What-vs-Figures $ discrepancy **acknowledged in Drivers** (explanation not requi is OK at **5**.
+- **5** — Every claim supported; scope/trend/labels/derivations OK. What-vs-Figures discrepancy **acknowledged in Drivers** is OK at **5**.
 - **4** — Trustworthy core; **one minor** issue
 - **3** — **Moderate** issue
 - **2** — **Major** issue
@@ -360,6 +360,108 @@ More delivery orders in June.
 ## Next steps
 
 1. Review meals_delivered_food spending.
+""",
+  },
+  {
+    "name": "groceries_food_parent_sub_week_drivers_ack_direction",
+    "batch": 9,
+    "output": (
+      '{"score": 5, "notes": "Groceries and Food (Total) cover parent+sub claims; three weekly '
+      'periods; partial-week vs full-week grain OK; What direction vs Figures acknowledged in Drivers."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Groceries is significantly up this week at $52.  Food is thus significantly up this week to $52. (2026-05-17 to 2026-05-18)
+
+Category Taxonomy: parent Food (meals: 1), with leaf categories Dining Out (meals_dining_out: 2), Delivered Food (meals_delivered_food: 3), Groceries (meals_groceries: 4)
+
+# Rationalize Response
+
+## Figures
+
+* **Groceries:** $52.20 this week (May 17–18) vs. $86.79 last week (May 10–16) and $0.00 two weeks ago (May 3–9).
+* **Food (Total):** $52.20 this week (May 17–18) vs. $125.04 last week (May 10–16) and $0.00 two weeks ago (May 3–9).
+
+## Drivers
+
+Groceries and total Food spending are not "significantly up" this week; rather, they have decreased significantly compared to the $86.79 spent on groceries and $125.04 total food spending from last week. The sole transaction for this period is:
+* **Trader Joe's:** $52.20 (2026-05-17)
+
+## Next steps
+
+1. **Monitor weekly trends:** Since spending fluctuates (from $0 to $125), track if your weekly grocery visits are becoming more consistent or if this is just a single trip.
+2. **Set a weekly grocery budget:** Given your recent activity, consider setting a budget target of $70/week to manage these variations.
+""",
+  },
+  {
+    "name": "income_sidegig_salary_parent_sub_mtd_thin_trend",
+    "batch": 10,
+    "output": (
+      '{"score": 4, "notes": "thin trend for Side-Gig, Salary, and Total Income—only MTD '
+      'periods, no prior months for trend comparison."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Side-Gig is significantly up this month at $2158.  Salary is slightly down this month at $2532.  Income is thus up this month to $4690. (2026-05-01 to 2026-05-18)
+
+Category Taxonomy: parent Income (income: 47), with leaf categories Salary (income_salary: 36), Side-Gig (income_sidegig: 37), Business (income_business: 38), Interest (income_interest: 39)
+
+# Rationalize Response
+
+## Figures
+
+* **Side-Gig ($2,158.95):** May 1–18, 2026.
+* **Salary ($2,531.87):** May 1–18, 2026.
+* **Total Income ($4,690.82):** May 1–18, 2026.
+
+## Drivers
+
+The primary driver for your increased total income this month is a significant surge in **Side-Gig** earnings, which reached $2,158.95 so far. This category is exceptionally active with frequent deposits:
+* **Kiosk Deposit:** $475.00 (2026-05-17)
+* **Kiosk Deposit:** $300.00 (2026-05-18)
+* **Kiosk Deposit:** $250.00 (2026-05-09)
+
+**Salary** remains consistent at $2,531.87 for the month to date, reflecting two standard payroll deposits (each $1,265.93 or $1,265.94) on May 1st and May 15th, which is slightly lower than previous cycles where three payroll deposits occasionally occurred within a calendar month.
+
+## Next steps
+
+1. **Budget:** Consider setting aside 20-30% of your Side-Gig income for taxes, as this revenue is significantly higher than usual and typically lacks automatic withholding.
+2. **Goal:** Use the extra Side-Gig income to accelerate your primary savings or debt reduction goal.
+""",
+  },
+  {
+    "name": "bills_service_fees_taxes_parent_sub_mtd_thin_trend",
+    "batch": 11,
+    "output": (
+      '{"score": 4, "notes": "thin trend for Service Fees and Taxes (single May MTD row each); '
+      'Bills (Total) has three monthly periods; Drivers acknowledge partial-month vs full-month comparison."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Service Fees is significantly down this month at $170.  Taxes is significantly down this month at $100.  Bills is thus significantly down this month to $471. (2026-05-01 to 2026-05-18)
+
+Category Taxonomy: parent Bills (bills: 9), with leaf categories Connectivity (bills_connectivity: 10), Insurance (bills_insurance: 11), Taxes (bills_tax: 12), Service Fees (bills_service_fees: 13)
+
+# Rationalize Response
+
+## Figures
+
+* **Service Fees:** $170.00 (May 2026)
+* **Taxes:** $100.00 (May 2026)
+* **Bills (Total):** $470.66 (May 2026) vs. $1,239.21 (April 2026) vs. $1,322.99 (March 2026)
+
+## Drivers
+
+Service Fees and Taxes are lower for the first 18 days of May compared to full prior months, contributing to a significantly lower total in the Bills parent category ($470.66). The spending in Service Fees this month primarily consists of recurring overdraft coverage fees and small charges.
+
+**May 2026 Service Fees and Taxes Transactions:**
+* **ACH Withdrawal: IRS:** $100.00 (2026-05-15)
+* **Overdraft Coverage Fee:** $20.00 (2026-05-11, 2026-05-08, 2026-05-06, 2026-05-05, 2026-05-04)
+
+## Next steps
+
+1. Review account activity to address the frequency of **Overdraft Coverage Fees**, which are driving the Service Fees total.
+2. Set a monthly budget for **Bills** at $500 based on this month's current trend, or establish a goal to reduce overdraft charges by 50% next month.
 """,
   },
 ]
