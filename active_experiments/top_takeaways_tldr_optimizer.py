@@ -1,13 +1,13 @@
 """
 Second-stage optimizer: turns **Top Takeaways** markdown (the artifact produced by
-``top_takeaways_verbose_optimizer.py`` — ``# Top Takeaways``, ``## Highlights``, ``## Lowlights``)
+``active_experiments/top_takeaways_verbose_optimizer.py`` — ``# Top Takeaways``, ``## Highlights``, ``## Lowlights``)
 into **TLDR only**: ``# TLDR`` (H1), then ``## Highlights`` and ``## Lowlights`` with ``- `` bullets.
 The model reply must not add any headings or sections after ``## Lowlights``.
 
 Run from ``finance-ai-penny`` repo root:
 
-  python3 top_takeaways_tldr_optimizer.py --test 0
-  python3 top_takeaways_tldr_optimizer.py --test all
+  python3 active_experiments/top_takeaways_tldr_optimizer.py --test 0
+  python3 active_experiments/top_takeaways_tldr_optimizer.py --test all
 
 Requires ``GEMINI_API_KEY`` and ``google-genai``. Thinking stays on (budget 256).
 """
@@ -36,14 +36,6 @@ if load_dotenv is not None:
 
 GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
 TLDR_THINKING_BUDGET = 256
-
-
-def format_tldr_user_message(top_takeaways_markdown: str) -> str:
-    """Wrap verbose-optimizer output so the model sees a labeled Top Takeaways document."""
-    body = (top_takeaways_markdown or "").strip()
-    if not body:
-        raise ValueError("top_takeaways_markdown must be non-empty.")
-    return body + "\n"
 
 
 SYSTEM_PROMPT = """You are **Penny**.
@@ -90,6 +82,14 @@ Rules:
 - Under each ``##`` subsection use **only** ``- `` bullets (no numbered lists).
 - Preserve bold labels (``**Label:**``) when helpful; match the tone of the source (direct, friendly).
 """
+
+
+def format_tldr_user_message(top_takeaways_markdown: str) -> str:
+    """Wrap verbose-optimizer output so the model sees a labeled Top Takeaways document."""
+    body = (top_takeaways_markdown or "").strip()
+    if not body:
+        raise ValueError("top_takeaways_markdown must be non-empty.")
+    return body + "\n"
 
 
 def _extract_stream_chunk_text(chunk: Any) -> str:
@@ -339,7 +339,7 @@ def run_test(name_or_index: str | int, optimizer: TopTakeawaysTldrOptimizer | No
 
 def main(*, test: str | None) -> None:
     if test is None:
-        print("Usage: python3 top_takeaways_tldr_optimizer.py --test <index|name|all>")
+        print("Usage: python3 active_experiments/top_takeaways_tldr_optimizer.py --test <index|name|all>")
         print("Tests:")
         for i, tc in enumerate(TEST_CASES):
             print(f"  {i}: {tc['name']}")
