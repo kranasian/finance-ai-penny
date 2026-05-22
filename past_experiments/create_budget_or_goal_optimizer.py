@@ -20,234 +20,83 @@ if parent_dir not in sys.path:
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial planner that creates spending limits, income goals, and savings goals. You may only call `create_category_spending_limit`, `create_income_goal`, and `create_savings_goal`. Output a single Python function `process_input() -> tuple[bool, str]` that returns the tuple from the create function (or (False, clarification_message)). Do not modify or append to the result string.
+SYSTEM_PROMPT = """You create spending limits, income goals, and savings goals. Only call `create_category_spending_limit`, `create_income_goal`, or `create_savings_goal`. Output a single Python function `process_input() -> tuple[bool, str]` that returns the tuple from the create function (or (False, clarification_message)). Do not modify or append to the result string.
 
-## Directives
+**Inputs**: **Creation Request** = focus of what to create. **Input Info** = strategy, prior conversation, balances (not available at runtime—use now to resolve ambiguity).
 
-1.  **Inputs**: **Creation Request** = what to create. **Input Info from previous skill** = optional context. Use it to resolve ambiguity; it is not available at runtime. When Input Info contains **depository accounts and balances** (e.g. lines with "account_id: N" or "(account_id: 8957)"), extract the numeric **account_id** values in the order they appear and pass them as `account_ids=[...]` to `create_savings_goal`.
-2.  **Intent**: Spending limit → `create_category_spending_limit`. Income goal (earn/target in income category) → `create_income_goal`; same (granularity, start_date, end_date, amount, title) as spending limit. Saving money → `create_savings_goal`. If critical details (amount, timeline) are missing or intent is ambiguous, return (False, clarification_message) without calling a create function.
-    - **Implicit Intent**: A request may not explicitly say "goal" or "budget", but if it implies a spending limit (e.g., "I should stop spending so much on coffee") or savings (e.g., "I want to put aside money for a house"), infer the correct tool.
-3.  **goal_type**: 
-    - **save_X_amount**: save a **total amount by a date** (e.g. $10000 by end of year). **Always use granularity="monthly"** for save_X_amount. **end_date cannot be blank** for save_X_amount.
-    - **save_0**: save **X per period** (e.g. $200/month). **Always provide end_date=""** for save_0.
-    - **Prioritization**: If both a total savings goal (e.g., "save $5000") and a periodic target (e.g., "save $200/month") are mentioned, set the goal towards the **total savings goal** (`save_X_amount`) only.
-4.  **start_date defaults** (use IMPLEMENTED_DATE_FUNCTIONS; define `today = datetime.datetime.today()` INSIDE `process_input` when using date helpers):
-    - **Category spending limit and income goal**: If user does not specify a bounded period ("for next month", "for March"), use start of current period: monthly → `get_date_string(get_start_of_month(today))`, weekly → `get_date_string(get_start_of_week(today))`. If user specifies a bounded period, set both start_date and end_date to that period (first and last day).
-    - **Savings save_X_amount** (total by date): `start_date=get_date_string(datetime.datetime.today())`.
-    - **Savings save_0** (per period): monthly → `get_date_string(get_start_of_month(today))`, weekly → `get_date_string(get_start_of_week(today))`.
-5.  **Date and Duration Logic**:
-    - **Rounding**: If a duration is not a whole number (e.g., "1.3 weeks", "2.5 months"), always **round up** (e.g., to 2 weeks, 3 months).
-    - **Year Inference**: If a year is not mentioned, assume the **current year** if the date hasn't passed yet. If the date has already passed, assume the **following year**.
-    - **Actual Dates**: Ensure all function calls point to actual YYYY-MM-DD strings.
-6.  **Amount and Category**:
-    - **Computation**: Amounts must be computed from the input (e.g., "save $60,000 by 3 months from now" = 60000.0 total, or "10% of my $5000 salary" = 500.0).
-    - **Category Matching**: Parent and child slugs from OFFICIAL_CATEGORIES are valid. **When the user names a parent category**, create with that parent slug—do not ask for a subcategory. Map when clear: "food" → category="meals"; coffee → `meals_dining_out`; specific items that map to one category (e.g. NBA tickets → `leisure_entertainment`) → create, do not ask. When the request **could map to multiple categories** (e.g. a merchant like Walmart, or a term like "subscriptions", "craft supplies", "vintage stamp collecting"), return (False, clarification) with category options—do not infer one. Clarification format: "Which category? Options: slug1, slug2, slug3." Use AVAILABLE_FUNCTIONS for income vs spending scope.
-7.  **Granularity**:
-    - For `save_0` goals, if granularity is missing, ask for confirmation. For `save_X_amount` goals, assume "monthly". Granularity can also be inferred from the conversation context.
-8.  **Account IDs**:
-    - Use `account_ids` only if a specific storage account is mentioned in `Input Info`. If not mentioned, keep `account_ids` blank/None. It is not a requirement to set a goal/budget.
-9.  **Multiple Goals**: If multiple goals/budgets are requested, you **must call the create functions for each one** sequentially. Return a combined result string: `(True, f"Successfully created {count} goals: {msg1}. {msg2}")`.
-10. **Clarification**: One short sentence plus options. Format: "Which category? Options: slug1, slug2, slug3." No filler.
-11. **Output**: One function `process_input`. Return exactly (success, result) from the create function—do not rephrase or append. **Generated code must not include any comments.** **Do NOT define or mock any functions.** Use only the available functions below. **Do NOT include any code outside of `process_input`.** **Do NOT include markdown or text outside the code block.**
+## 1. Choose tool
+
+| Signal | Tool |
+| Spending cap / limit / budget | `create_category_spending_limit` |
+| Earn / income target | `create_income_goal` |
+| Save / savings goal / pay / debt repayment | `create_savings_goal` |
+
+If amount, timeline, or intent is unclear → `return (False, one_short_clarification)` without calling create. Clarify when: missing amount or period; ambiguous save vs budget; `save_0` without granularity; total savings without end date; cannot map to a category. Format: "Which category? Options: slug1, slug2, slug3."
+
+Implicit intent counts ("limit coffee", "put aside money for a house").
+
+## 2. Savings goal_type
+
+- **save_X_amount**: total by date. `granularity="monthly"` always, unless duration between `end_date` and `start_date` is less than a month. `end_date` required. `start_date=get_date_string(today)` unless phased (§6).
+- **save_0**: amount per period. `end_date=""` if not specified. Granularity required—infer from "per week/month" or ask.
+- Both total and periodic mentioned → **save_X_amount only**.
+
+## 3. Dates (define `today = datetime.datetime.today()` inside `process_input`; use IMPLEMENTED_DATE_FUNCTIONS only)
+
+- **Non-whole durations** → round **up** (1.3 weeks → 2; 2.7 weeks → 3).
+- **Month name without year** → current year if not yet passed; else next year (today May 2026 + "for March" → March 2027).
+- **Recurring budget/income** (no bounded period): monthly → start `get_start_of_month(today)`, `end_date=""`; weekly → start `get_start_of_week(today)`, `end_date=""`.
+- **Bounded period** ("this month", "for March"): `start_date` = first day, `end_date` = last day of that period.
+- **save_X_amount end_date**: `get_date_string(get_after_periods(today, "monthly"|"yearly", count))` or explicit YYYY-MM-DD.
+- **Strategy duration**: set `end_date` to last day of stated span. Budget covering sequential phases → sum phase months for `end_date` (10-month phase + 3-year phase → 46 months for the supporting budget), set `start_date` as `end_date` of previous phase.
+
+## 4. Categories
+
+- **Subcategory** when user names subcategory or synonym
+- **Parent slug** when request is not for a specific subcategory of the parent
+- **Merchant/store name or type**: pick best subcategory if unambiguous; else clarify. Budgets are category-only, never merchant-specific.
+- **Income category**: general earn → `"income"`; specific → `income_salary`, `income_sidegig`, `income_business`, `income_interest`. Never `income_salary` for general earning.
+
+Compute amounts from text ("10% of $5000" → 500.0; "3 months from now" → `get_after_periods`).
+
+## 5. account_ids (create_income_goal or create_savings_goal only)
+- "Savings" do not have to be in a savings account
+
+| Input Info says | account_ids |
+| "move/save to account_id: N", "high yield account (account_id: N)" | `[N]` only |
+| "Reference balances", account listings for planning only | omit parameter (do not pass every id in the text) |
+
+## 6. Multiple items / phased strategies
+
+Call create for **each** budget/goal, even if only mentioned in Input Information and not Creation Request. Sequential phases: later savings `start_date=get_date_string(get_after_periods(today, "monthly", phase1_months))`; house goal `end_date` from that staggered start + duration.
+
+Each phase can have several goals (ex: set budget to save up for something)
+
+When all succeed: `return (True, f"Successfully created {n} goals: {r1}. {r2}. …")`. Partial failure: return combined error text.
+
+## 7. Return message
+
+- Default: return tool tuple unchanged.
+- **Merchant-named or -type budget** (brand/store name or type in Creation Request): on success append ` Note: this budget is for the {slug} category, not {merchant name or type} specifically.`
+- **Partial multi-create** (e.g. budget ok, savings missing end date): create what you can; return False with note on what failed.
 
 <AVAILABLE_FUNCTIONS>
 
-**Category scope**: `create_income_goal` — **category** must be exactly: **"income"** when no type is specified (e.g. "earn $5000 this month"); otherwise the matching slug: income_salary, income_sidegig, income_business, income_interest. Never use income_salary for general earning. `create_category_spending_limit` = spending only (OFFICIAL_CATEGORIES). Pick by intent.
+`create_category_spending_limit(category, granularity, start_date, end_date, amount, title) -> tuple[bool, str]` — spending slugs; granularity weekly|monthly|yearly; `end_date=""` recurring.
 
-- `create_category_spending_limit(category, granularity, start_date, end_date, amount, title) -> tuple[bool, str]`
-  - Spending cap. category = spending slug. granularity = "weekly"|"monthly"|"yearly". start_date/end_date = YYYY-MM-DD; end_date="" for recurring.
-- `create_income_goal(category, granularity, start_date, end_date, amount, title) -> tuple[bool, str]`
-  - Income target. category = income slug only (see above). Same parameters; end_date="" for recurring.
-- `create_savings_goal(amount, end_date, title, goal_type, granularity, start_date, account_ids=None) -> tuple[bool, str]`
-  - goal_type **save_X_amount**: total to save by a date (amount = total, end_date = target). **Always use granularity="monthly"**. start_date = today. **save_0**: amount per period (amount = per period, granularity required). **Always provide end_date="" for save_0**.
+`create_income_goal(category, granularity, start_date, end_date, amount, title) -> tuple[bool, str]` — income slugs only; bounded month → both start/end; recurring → `end_date=""`.
+
+`create_savings_goal(amount, end_date, title, goal_type, granularity, start_date, account_ids=None) -> tuple[bool, str]` — save_X_amount: total + end_date + monthly granularity; save_0: per-period amount + `end_date=""`.
 
 </AVAILABLE_FUNCTIONS>
 
 <IMPLEMENTED_DATE_FUNCTIONS>
-
-These are **already available** in the execution context. Use only the functions below.
-
-- `get_date(y, m, d)`, `get_start_of_month(date)`, `get_end_of_month(date)`
-- `get_start_of_year(date)`, `get_end_of_year(date)`
-- `get_start_of_week(date)`, `get_end_of_week(date)`
-- `get_after_periods(date, granularity, count)`, `get_date_string(date)`
-
+`get_date(y,m,d)`, `get_start_of_month`, `get_end_of_month`, `get_start_of_year`, `get_end_of_year`, `get_start_of_week`, `get_end_of_week`, `get_after_periods(date, granularity, count)`, `get_date_string(date)` — preloaded; use only these.
 </IMPLEMENTED_DATE_FUNCTIONS>
 
 <OFFICIAL_CATEGORIES>
-
-- `income`: `income_salary`, `income_sidegig`, `income_business`, `income_interest`
-- `meals`: `meals_groceries`, `meals_dining_out`, `meals_delivered_food`
-- `leisure`: `leisure_entertainment`, `leisure_travel`
-- `bills`: `bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`
-- `shelter`: `shelter_home`, `shelter_utilities`, `shelter_upkeep`
-- `education`: `education_kids_activities`, `education_tuition`
-- `shopping`: `shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `shopping_pets`
-- `transportation`: `transportation_public`, `transportation_car`
-- `health`: `health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`
-- `donations_gifts`, `uncategorized`, `transfers`, `miscellaneous`
-
+income, income_salary, income_sidegig, income_business, income_interest, meals, meals_groceries, meals_dining_out, meals_delivered_food, leisure, leisure_entertainment, leisure_travel, bills, bills_connectivity, bills_insurance, bills_tax, bills_service_fees, shelter, shelter_home, shelter_utilities, shelter_upkeep, education, education_kids_activities, education_tuition, shopping, shopping_clothing, shopping_gadgets, shopping_kids, shopping_pets, transportation, transportation_public, transportation_car, health, health_medical_pharmacy, health_gym_wellness, health_personal_care, donations_gifts, uncategorized, transfers, miscellaneous
 </OFFICIAL_CATEGORIES>
-
-<EXAMPLES>
-
-input: **Creation Request**: Set a $150 weekly grocery budget and save $5000 for a house deposit by 2028.
-**Input Info from previous skill**:
-Savings account (account_id: 5555).
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    import datetime
-    today = datetime.datetime.today()
-    s1, r1 = create_category_spending_limit(
-        category="meals_groceries",
-        granularity="weekly",
-        start_date=get_date_string(get_start_of_week(today)),
-        end_date="",
-        amount=150.0,
-        title="Weekly Groceries 🛒"
-    )
-    s2, r2 = create_savings_goal(
-        amount=5000.0,
-        end_date="2028-01-01",
-        title="House Deposit 🏠",
-        goal_type="save_X_amount",
-        granularity="monthly",
-        start_date=get_date_string(today),
-        account_ids=[5555]
-    )
-    if s1 and s2:
-        return True, f"Successfully created 2 goals: {r1}. {r2}"
-    return s1 or s2, f"{r1 if not s1 else ''} {r2 if not s2 else ''}".strip()
-```
-
-input: **Creation Request**: Set that savings goal for the house we talked about.
-**Input Info from previous skill**:
-User: I want to buy a house in 2 years. It will cost $50,000.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    import datetime
-    today = datetime.datetime.today()
-    success, result = create_savings_goal(
-        amount=50000.0,
-        end_date=get_date_string(get_after_periods(today, "yearly", 2)),
-        title="House Savings 🏠",
-        goal_type="save_X_amount",
-        granularity="monthly",
-        start_date=get_date_string(today),
-    )
-    return success, result
-```
-
-input: **Creation Request**: Set a food budget for me.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    return False, "I can set a budget for food. How much would you like the limit to be, and is it weekly or monthly?"
-```
-
-input: **Creation Request**: Set this month's food budget to $100.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    import datetime
-    today = datetime.datetime.today()
-    return create_category_spending_limit(
-        category="meals",
-        granularity="monthly",
-        start_date=get_date_string(get_start_of_month(today)),
-        end_date=get_date_string(get_end_of_month(today)),
-        amount=100.0,
-        title="Monthly Meals 🍽️"
-    )
-```
-
-input: **Creation Request**: Set an annual budget for my insurance.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    return False, "I can set an annual budget for your insurance (bills_insurance). How much is the annual limit?"
-```
-
-input: **Creation Request**: Set a $500 monthly limit for shopping and save for a new car.
-**Input Info from previous skill**:
-User: I want to save $20,000 for a car eventually.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    import datetime
-    today = datetime.datetime.today()
-    s1, r1 = create_category_spending_limit(
-        category="shopping_clothing",
-        granularity="monthly",
-        start_date=get_date_string(get_start_of_month(today)),
-        end_date="",
-        amount=500.0,
-        title="Monthly Shopping 🛍️"
-    )
-    return False, f"I've noted your $500 shopping budget. For your $20,000 car goal, when would you like to reach this target by? I need an end date to set it up."
-```
-
-input: **Creation Request**: I want to save $60,000 by 3 months from now.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    import datetime
-    today = datetime.datetime.today()
-    success, result = create_savings_goal(
-        amount=60000.0,
-        end_date=get_date_string(get_after_periods(today, "monthly", 3)),
-        title="Savings Goal 💰",
-        goal_type="save_X_amount",
-        granularity="monthly",
-        start_date=get_date_string(today),
-    )
-    return success, result
-```
-
-input: **Creation Request**: Save 10% of my $5000 monthly income.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    import datetime
-    today = datetime.datetime.today()
-    success, result = create_savings_goal(
-        amount=500.0,
-        end_date="",
-        title="Monthly Savings 💰",
-        goal_type="save_0",
-        granularity="monthly",
-        start_date=get_date_string(get_start_of_month(today)),
-    )
-    return success, result
-```
-
-input: **Creation Request**: Set a $100 budget for my new hobby, underwater basket weaving.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    return False, "Which category? Options: leisure_entertainment, shopping_kids, miscellaneous."
-```
-
-input: **Creation Request**: Limit my Walmart spending to $300 this month.
-
-output:
-```python
-def process_input() -> tuple[bool, str]:
-    return False, "Which category? Options: meals_groceries, shopping_clothing, shopping_gadgets, shopping_kids, shopping_pets."
-```
-
-</EXAMPLES>
 
 Today's date is |TODAY_DATE|.
 """
@@ -256,7 +105,7 @@ Today's date is |TODAY_DATE|.
 class CreateBudgetOrGoalOptimizerV2:
   """Create budget/goal optimizer v2: uses create_category_spending_limit, create_income_goal, and create_savings_goal."""
 
-  def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=4096):
+  def __init__(self, model_name="gemini-flash-lite-latest", thinking_budget=1024):
     """Initialize the Gemini agent with API configuration for financial goal creation."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -269,7 +118,7 @@ class CreateBudgetOrGoalOptimizerV2:
     self.temperature = 0.6
     self.top_p = 0.95
     self.top_k = 40
-    self.max_output_tokens = 4096
+    self.max_output_tokens = 1536
 
     self.safety_settings = [
       types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
@@ -437,10 +286,13 @@ output:"""
 
 TEST_CASES = [
   {
-    "name": "total_vs_periodic_savings",
-    "last_user_request": "I want to save $10,000 for a car by next year, maybe $500 a month.",
-    "previous_conversation": "User: I have $20,000 in my savings account (account_id: 1234).",
-    "ideal_response": "Expected: create_savings_goal(amount=10000.0, end_date=<end of next year YYYY-MM-DD>, title='Car savings' or similar, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=[1234]). Should prioritize the total amount.",
+    "name": "vacation_savings_balances_no_account_ids",
+    "last_user_request": "Set a savings goal for a vacation.",
+    "previous_conversation": """Strategy: Save $5,000 for a vacation over the next 12 months. Reference balances when explaining the plan:
+Account 'Checking' (account_id: 101) | Balance: $2,400
+Account 'Savings' (account_id: 202) | Balance: $6,200
+Account 'High Yield' (account_id: 303) | Balance: $800""",
+    "ideal_response": "Expected: create_savings_goal(amount=5000.0, end_date=<12 months from today YYYY-MM-DD>, title='Vacation' or similar, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None). Balances are context only — do not pass account_ids.",
     "expected_success": True,
   },
   {
@@ -493,10 +345,10 @@ TEST_CASES = [
     "expected_success": False,
   },
   {
-    "name": "category_clear_mapping",
-    "last_user_request": "limit my nba tickets spending to $300 this month.",
-    "previous_conversation": "",
-    "ideal_response": "Expected: Return (True, create_category_spending_limit(category='leisure_entertainment', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=300.0, title='NBA tickets' or similar)).",
+    "name": "merchant_budget_maps_to_category",
+    "last_user_request": "Set a budget for Zara purchases.",
+    "previous_conversation": "User: I'd like to cap my Zara spending at $150 per month.",
+    "ideal_response": "Expected: create_category_spending_limit(category='shopping_clothing', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=150.0, title='Zara' or similar). Maps merchant to shopping_clothing; execution message should note the budget is for the clothing subcategory, not Zara specifically.",
     "expected_success": True,
   },
   {
@@ -528,17 +380,18 @@ TEST_CASES = [
     "expected_success": True,
   },
   {
-    "name": "account_id_storage_inference",
-    "last_user_request": "Save $1000 in my rainy day fund.",
-    "previous_conversation": "User: My rainy day fund is account_id 9999.",
-    "ideal_response": "Expected: create_savings_goal(amount=1000.0, end_date='', title='Rainy day fund' or similar, goal_type='save_X_amount' or 'save_0', granularity='monthly', start_date=<today or start of month YYYY-MM-DD>, account_ids=[9999]).",
+    "name": "emergency_fund_high_yield_account",
+    "last_user_request": "Create an emergency fund.",
+    "previous_conversation": "Strategy: Save $10,000 for an emergency fund over 12 months. Move all savings for the emergency fund to the linked high yield account (account_id: 1234).",
+    "ideal_response": "Expected: create_savings_goal(amount=10000.0, end_date=<12 months from today YYYY-MM-DD>, title='Emergency fund' or similar, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=[1234]). Strategy explicitly names the storage account.",
     "expected_success": True,
   },
   {
-    "name": "multiple_goals_execution_output",
-    "last_user_request": "Set a $200 monthly limit for groceries and save $1000 for a trip by December.",
-    "previous_conversation": "",
-    "ideal_response": "Expected: create_category_spending_limit(category='meals_groceries', granularity='monthly', start_date=<start of current month YYYY-MM-DD>, end_date='', amount=200.0, title='Monthly Groceries' or similar) and create_savings_goal(amount=1000.0, end_date=<December current year YYYY-12-31>, title='Trip' or similar, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None). Return success message mentioning both.",
+    "name": "phased_house_strategy_multiple_goals",
+    "last_user_request": "Set up the budgets and goals from my plan to save for a house.",
+    "previous_conversation": """Strategy: Cut dining out to $200/month while you build an emergency fund for 10 months, then save for a house over 3 years.
+Emergency fund target: $6,000. House savings target: $80,000.""",
+    "ideal_response": "Expected: (1) create_category_spending_limit(category='meals_dining_out', granularity='monthly', start_date=<today YYYY-MM-DD>, end_date=<46 months from today YYYY-MM-DD>, amount=200.0, title=...). (2) create_savings_goal for emergency fund (amount=6000.0, end_date=<10 months from today YYYY-MM-DD>, goal_type='save_X_amount', granularity='monthly', start_date=<today YYYY-MM-DD>, account_ids=None). (3) create_savings_goal for house (amount=80000.0, end_date=<3 years after 10-month start YYYY-MM-DD>, goal_type='save_X_amount', granularity='monthly', start_date=<10 months from today YYYY-MM-DD>, account_ids=None). Return combined success message for all three.",
     "expected_success": True,
   },
   {
@@ -584,10 +437,10 @@ TEST_CASES = [
     "expected_success": True,
   },
   {
-    "name": "save_0_weekly",
-    "last_user_request": "I want to save $100 per week.",
+    "name": "transportation_parent_weekly_budget",
+    "last_user_request": "Set a budget for $100 for transportation weekly.",
     "previous_conversation": "",
-    "ideal_response": "Expected: create_savings_goal(amount=100.0, end_date='', title=..., goal_type='save_0', granularity='weekly', start_date=<start of current week YYYY-MM-DD>, account_ids=None).",
+    "ideal_response": "Expected: create_category_spending_limit(category='transportation', granularity='weekly', start_date=<start of current week YYYY-MM-DD>, end_date='', amount=100.0, title='Weekly Transportation' or similar). Use transportation parent category, not transportation_public or transportation_car.",
     "expected_success": True,
   },
   {
@@ -612,6 +465,14 @@ TEST_CASES = [
     "expected_success": False,
   },
 ]
+
+# Batches aligned to prompt optimization axes (indices into TEST_CASES).
+TEST_BATCHES = {
+  1: [0, 13],  # account_ids: vacation balances vs emergency-fund storage account
+  2: [14],  # multi-step strategy: phased house plan
+  3: [6, 8, 21, 22],  # parent category + merchant→subcategory disclaimer
+  4: [2, 9, 11, 16, 20],  # regression: intent, walmart ambiguity, save_0 clarify, income, bounded period
+}
 
 
 def get_test_case(test_name_or_index):
@@ -678,10 +539,36 @@ def _check_pass_fail(name: str, expected_success: bool, execution_success, run_e
   return True, None
 
 
-def main(test: str = None, no_thinking: bool = False):
-  """Run single test (--test <index|name>) or all tests (--test all). --no-thinking sets thinking_budget=0.
+def run_batch(batch_num: int, optimizer: CreateBudgetOrGoalOptimizerV2 = None):
+  """Run all tests in a batch. Returns list of outcome dicts."""
+  if batch_num not in TEST_BATCHES:
+    print(f"Batch {batch_num} not found. Available: {sorted(TEST_BATCHES.keys())}")
+    return []
+  indices = TEST_BATCHES[batch_num]
+  print(f"\n{'='*80}\nRunning BATCH {batch_num} ({len(indices)} tests)\n{'='*80}\n")
+  results = []
+  for i, idx in enumerate(indices):
+    outcome = run_test(idx, optimizer)
+    results.append(outcome)
+    if i < len(indices) - 1:
+      print("\n" + "-" * 80 + "\n")
+  passed = sum(1 for r in results if r["passed"])
+  print(f"\nBatch {batch_num} summary: Passed {passed}/{len(results)}")
+  for r in results:
+    if not r["passed"]:
+      print(f"  FAIL: {r['name']}: {r.get('reason')}")
+  return results
+
+
+def main(test: str = None, batch: int = None, no_thinking: bool = False):
+  """Run single test (--test), batch (--batch 1-4), or all. --no-thinking sets thinking_budget=0.
   Exit code 1 if any test fails (when expected_success != execution success)."""
   optimizer = CreateBudgetOrGoalOptimizerV2(thinking_budget=0 if no_thinking else 4096)
+
+  if batch is not None:
+    results = run_batch(batch, optimizer)
+    failed = [r for r in results if not r["passed"]]
+    return 0 if not failed else 1
 
   if test is not None:
     if test.strip().lower() == "all":
@@ -731,6 +618,7 @@ if __name__ == "__main__":
   import sys
   parser = argparse.ArgumentParser(description="Create budget or goal optimizer v2 (create_category_spending_limit, create_income_goal, create_savings_goal)")
   parser.add_argument("--test", type=str, help='Test name or index (e.g. "0" or "food_budget_next_month" or "all")')
+  parser.add_argument("--batch", type=int, choices=[1, 2, 3, 4], help="Run test batch 1-4 (optimization axis groups)")
   parser.add_argument("--no-thinking", action="store_true", help="Set thinking_budget=0 (Thinking OFF) for comparison")
   args = parser.parse_args()
-  sys.exit(main(test=args.test, no_thinking=args.no_thinking))
+  sys.exit(main(test=args.test, batch=args.batch, no_thinking=args.no_thinking))
