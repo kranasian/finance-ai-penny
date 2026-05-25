@@ -7,6 +7,27 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+SCHEMA = types.Schema(
+  type=types.Type.ARRAY,
+  items=types.Schema(
+    type=types.Type.OBJECT,
+    properties={
+      "id": types.Schema(type=types.Type.NUMBER),
+      "primary": types.Schema(
+        type=types.Type.ARRAY,
+        items=types.Schema(type=types.Type.STRING),
+        description='List containing at least one of: "Fast food", "Restaurant", "Beverage", "Grocery", "Dessert".',
+      ),
+      "secondary": types.Schema(
+        type=types.Type.ARRAY,
+        items=types.Schema(type=types.Type.STRING),
+        description="List of 3-7 specific, high-value category tags based only on name and description.",
+      ),
+    },
+    required=["id", "primary", "secondary"],
+  ),
+)
+
 SYSTEM_PROMPT = """Task: Transform Food Establishment JSON to Attribute JSON utilizing standard business taxonomy.
 
 Mapping Rules:
@@ -63,6 +84,9 @@ class FoodSpendAddAttributesOptimizer:
     
     # System Prompt
     self.system_prompt = SYSTEM_PROMPT
+
+    # Output Schema — array of result objects
+    self.output_schema = SCHEMA
   
   def generate(self, establishments: list) -> list:
     """
@@ -100,6 +124,7 @@ output: """
         thinking_budget=self.thinking_budget,
         include_thoughts=True
       ),
+      response_schema=self.output_schema,
     )
 
     # Generate response
@@ -347,15 +372,9 @@ def main(batch: int = 1):
   Main function to test the FoodSpendAddAttributesOptimizer
   
   Args:
-<<<<<<< HEAD
     batch: Batch number (1-4) to determine which tests to run
-=======
-    batch: Batch number to run
->>>>>>> 868b18209c1e7b8725a147144a0138406ac8a3eb
   """
   print(f"Testing FoodSpendAddAttributesOptimizer - Batch {batch}\n")
-  
-  optimizer = FoodSpendAddAttributesOptimizer()
   
   optimizer = FoodSpendAddAttributesOptimizer()
   
