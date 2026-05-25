@@ -24,9 +24,16 @@ Return strict JSON only:
 `EVAL_INPUT` has `# Categorize Request` (filters) and `# Transactions` (a proposed member list). Grade whether `rules_satisfied` and `rationale`/`notes` correctly apply those filters—not category taste or whether recategorization should run.
 
 **Output style (membership verify)**
-- `rules_satisfied` true = every bullet passes every mapped filter; false = at least one bullet fails.
-- When false, rationale may cite only failing line(s); it need not recap passing bullets.
-- When true, a short all-clear rationale is sufficient.
+`rationale` (or `notes`) must be a single string with this exact two-part structure:
+
+`Exact Criteria Matches: <All|Some|None>. Other Similar Transactions for User Confirmation: <list>`
+
+- **All** = every bullet passes every mapped filter → `rules_satisfied` must be true.
+- **Some** = at least one passes and at least one fails → `rules_satisfied` must be false.
+- **None** = no bullet passes → `rules_satisfied` must be false.
+- When **All**, leave the confirmation list empty after the colon.
+- When **Some** or **None**, list only failing bullets copied verbatim from `# Transactions` (comma-separated), each with `(reason)` in parentheses.
+- `rules_satisfied` must agree with All vs Some/None.
 - Do not fail info_correct because the rationale omits passing lines or does not restate the target category.
 
 **Payee/name matching**
@@ -40,8 +47,9 @@ Flag info_correct false when REVIEW_NEEDED uses the wrong mode (exact on a fuzzy
 - good_copy: true only when REVIEW_NEEDED follows required output format and style:
   - Has key: rules_satisfied (boolean)
   - Has exactly one explanation key: notes OR rationale (single-line string)
-  - Explanation length is 8-140 chars
-  - Explanation is factual and consistent with rules_satisfied
+  - Explanation uses the two-part structure: starts with `Exact Criteria Matches:`, then `All`, `Some`, or `None`, then `. Other Similar Transactions for User Confirmation:`
+  - `rules_satisfied` matches the match level (true only for All; false for Some or None)
+  - Explanation is factual and consistent with rules_satisfied and the confirmation list
 - info_correct: true only when rules_satisfied and rationale/notes match the correct membership verdict for EVAL_INPUT.
 - eval_text: empty string when both booleans are true; otherwise bullet lines—concise, actionable, starting with a fix action.
 
@@ -63,13 +71,13 @@ Identify any transaction approximately $20 and mark it as Income Business rather
 - $120.00 Annual Membership on 2026-05-15.
 - $20.10 Cloud Storage Bill on 2026-05-18.""",
       "review_needed": {
-        "rationale": "The request requires identifying transactions approximately $20; however, the provided transactions are all Bills or Service Fees, not Income Business.",
+        "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $120.00 Annual Membership on 2026-05-15 (outside approximately $20 band)",
         "rules_satisfied": False,
       },
       "ideal_output": {
         "good_copy": True,
         "info_correct": False,
-        "eval_text": "$120.00 Annual Membership is too far from the approximately $20 request.",
+        "eval_text": "rules_satisfied should be false; $120.00 Annual Membership fails the approximately $20 filter.",
       },
     }
   ]
@@ -118,7 +126,27 @@ Identify any transaction approximately $20 and mark it as Income Business rather
         "ideal_output": {
           "good_copy": False,
           "info_correct": False,
-          "eval_text": "Missing required keys rules_satisfied and notes or rationale.",
+          "eval_text": "Missing required keys rules_satisfied and rationale (Exact Criteria Matches structure).",
+        },
+      }
+    )
+
+    legacy_rationale_review = dict(first_source["output"])
+    legacy_rationale_review["rationale"] = (
+      "2026-01-12 Delta $45 below $55 minimum for airfare group."
+    )
+    test_cases.append(
+      {
+        "name": "synthetic_legacy_rationale_format",
+        "eval_input": first_source["input"],
+        "review_needed": legacy_rationale_review,
+        "ideal_output": {
+          "good_copy": False,
+          "info_correct": False,
+          "eval_text": (
+            "rationale must use Exact Criteria Matches: All|Some|None and "
+            "Other Similar Transactions for User Confirmation."
+          ),
         },
       }
     )
@@ -143,7 +171,7 @@ Identify any transaction approximately $20 and mark it as Income Business rather
         "name": "wrong_exact_on_fuzzy_chipotle_request",
         "eval_input": chipotle_fuzzy["input"],
         "review_needed": {
-          "rationale": "Mar 9 and Mar 14 payees are not exactly Chipotle.",
+          "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $14 Chipotle #1842 on 2026-03-09 (not exactly Chipotle), $9 CHIPOTLE MEXICAN GRILL on 2026-03-14 (not exactly Chipotle)",
           "rules_satisfied": False,
         },
         "ideal_output": {
@@ -156,7 +184,7 @@ Identify any transaction approximately $20 and mark it as Income Business rather
         "name": "wrong_fuzzy_on_exact_venmo_request",
         "eval_input": venmo_exact["input"],
         "review_needed": {
-          "rationale": "Every line contains Venmo.",
+          "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
           "rules_satisfied": True,
         },
         "ideal_output": {
@@ -169,7 +197,7 @@ Identify any transaction approximately $20 and mark it as Income Business rather
         "name": "wrong_case_sensitive_on_exact_spotify",
         "eval_input": spotify_exact["input"],
         "review_needed": {
-          "rationale": "Oct 2–3 lines fail case-sensitive Spotify USA match.",
+          "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $11 SPOTIFY USA on 2026-10-02 (case-sensitive mismatch), $11 spotify usa on 2026-10-03 (case-sensitive mismatch)",
           "rules_satisfied": False,
         },
         "ideal_output": {
@@ -182,7 +210,7 @@ Identify any transaction approximately $20 and mark it as Income Business rather
         "name": "wrong_fuzzy_on_labelled_instacart_request",
         "eval_input": instacart_labelled["input"],
         "review_needed": {
-          "rationale": "All lines include Instacart and belong in scope.",
+          "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
           "rules_satisfied": True,
         },
         "ideal_output": {
