@@ -17,7 +17,7 @@ OUTPUT_SCHEMA = types.Schema(
     "rationale": types.Schema(
       type=types.Type.STRING,
       description=(
-        "Fact-only string <= 140 chars. If false, lists failure reasons separated by semicolons."
+        "Two-part structure: 'Exact Criteria Matches: All|Some|None. Other Similar Transactions for User Confirmation: ' then comma-separated failing transaction lines copied verbatim from input with (reason) after each; empty after colon when All."
       ),
     ),
     "rules_satisfied": types.Schema(
@@ -52,10 +52,25 @@ Rules:
 4) Account optional unless the request requires it; missing required account fails.
 5) If any single line breaks any single mapped filter, `rules_satisfied` is false.
 
-Rationale:
-- One line, fact-only, <=140 chars (target <=100), use $ and digits.
-- If false, cite failing line(s) by date and/or amount and the strict rule violated; keep multiple failures compact.
-- Never set true by relaxing a filter; never set false for category taste."""
+Rationale — use this exact two-part string for the `rationale` value:
+
+Exact Criteria Matches: <All|Some|None>. Other Similar Transactions for User Confirmation: <list>
+
+Exact Criteria Matches:
+- **All**: every bullet passes every mapped filter.
+- **Some**: at least one bullet passes and at least one fails.
+- **None**: no bullet passes all mapped filters.
+
+`rules_satisfied` is true only when Exact Criteria Matches is **All**; false for **Some** or **None**.
+
+Other Similar Transactions for User Confirmation:
+- When **All**: leave empty after the colon (nothing after "Confirmation: ").
+- When **Some** or **None**: comma-separated failing bullets copied **verbatim** from `# Transactions` (strip leading "- " only). After each line add a short parenthetical reason, e.g. (below $55 minimum), (excluded account), (wrong name), (not exactly Venmo), (not exactly $14.99), (no Chewy substring). Preserve $amount, payee, date, and (Account …) exactly as in the input.
+
+Example (Alibaba + account filter):
+Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $45 Alibaba on 2026-02-12 (Account 4123) (excluded account), $300 Alibaba Wholesale on 2026-02-18 (Account 4123) (excluded account), $20 AliExpress on 2026-02-20 (Account 2) (wrong name)
+
+Never set All by relaxing a filter; never fail for category taste alone."""
 
 
 TEST_CASES = [
@@ -73,7 +88,7 @@ Re-categorize Chipotle transactions where each charge was $30 or less on or afte
 - $30 Chipotle on 2026-03-19.
 - $14 Chipotle on 2026-03-24.""",
     "output": {
-      "rationale": "Every Chipotle line meets the $30 cap and is on or after 2026-03-01.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -91,7 +106,7 @@ Re-categorize Delta Air Lines transactions as 'travel_airfare' where each charge
 - $80 Delta Air Lines on 2026-01-13.
 - $55 Delta Air Lines on 2026-01-14.""",
     "output": {
-      "rationale": "Jan 12 charge is $45 and below the $55 minimum.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $45 Delta Air Lines on 2026-01-12 (below $55 minimum)",
       "rules_satisfied": False,
     },
   },
@@ -108,7 +123,7 @@ Re-categorize transactions as 'income_freelance' where the name includes 'invoic
 - $900 INVOICE PAID Q1 on 2026-02-17.
 - $305 invoice #7721 on 2026-02-24.""",
     "output": {
-      "rationale": "All lines include invoice wording and are at least $300.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -126,7 +141,7 @@ Categorize these rows as 'transfers_peer_to_peer'; for each row the name must be
 - $15 Venmo on 2026-04-05.
 - $90 Venmo on 2026-04-06.""",
     "output": {
-      "rationale": "Apr 3 line is Venmo Transfer, not exactly Venmo.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $25 Venmo Transfer on 2026-04-03 (not exactly Venmo)",
       "rules_satisfied": False,
     },
   },
@@ -143,7 +158,7 @@ Re-categorize Sweetgreen transactions as 'meals_dining_out' where the transactio
 - $14 Sweetgreen on 2026-01-21.
 - $22 Sweetgreen on 2026-01-28.""",
     "output": {
-      "rationale": "All Sweetgreen charges fall on a Wednesday.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -161,7 +176,7 @@ Categorize the Hulu subscription charges as 'leisure_entertainment' where each a
 - $14.99 Hulu on 2026-08-01.
 - $14.99 Hulu on 2026-09-01.""",
     "output": {
-      "rationale": "Jun 1 charge is $15.49, not $14.99.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $15.49 Hulu on 2026-06-01 (not exactly $14.99)",
       "rules_satisfied": False,
     },
   },
@@ -179,7 +194,7 @@ Re-categorize PayPal transactions as 'income_refunds' when the amount is negativ
 - -$19 PayPal transaction on March 9, 2026.
 - -$31 PAYPAL transaction on March 11, 2026.""",
     "output": {
-      "rationale": "Every PayPal line shows a negative amount.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -197,7 +212,7 @@ Re-categorize transactions labelled as 'Instacart Costco delivery' as 'groceries
 - $62 Instacart Costco on 2026-02-21.
 - $55 Instacart delivery on 2026-02-22.""",
     "output": {
-      "rationale": "Only Feb 18 is exactly Instacart Costco delivery; other payees differ.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $40 Instacart on 2026-02-19 (not exactly Instacart Costco delivery), $88 Costco same-day delivery on 2026-02-20 (not exactly Instacart Costco delivery), $62 Instacart Costco on 2026-02-21 (not exactly Instacart Costco delivery), $55 Instacart delivery on 2026-02-22 (not exactly Instacart Costco delivery)",
       "rules_satisfied": False,
     },
   },
@@ -215,7 +230,7 @@ Re-categorize Duke Energy transactions as 'utilities_electric' when the charge i
 - $88 Duke Energy on 2026-04-15.
 - $102 Duke Energy on 2026-05-15.""",
     "output": {
-      "rationale": "Feb 15 Duke Energy charge is $135 and not under $125.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $135 Duke Energy on 2026-02-15 (not under $125)",
       "rules_satisfied": False,
     },
   },
@@ -233,7 +248,7 @@ Re-categorize Apple Store transactions as 'shopping_electronics' where each char
 - $160 Apple Store on 2026-03-23.
 - $52 Apple Store on 2026-03-30.""",
     "output": {
-      "rationale": "Mar 9 Apple Store charge is $179 and outside the $40–$160 band.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $179 Apple Store on 2026-03-09 (outside $40–$160 band)",
       "rules_satisfied": False,
     },
   },
@@ -251,7 +266,7 @@ Re-categorize all 'DoorDash' charges as 'meals_dining_out' where each amount is 
 - $26 DoorDash on 2026-06-05.
 - $20 DoorDash on 2026-06-06.""",
     "output": {
-      "rationale": "Jun 4 DoorDash charge is $17 and under the $18 floor.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $17 DoorDash on 2026-06-04 (below $18 minimum)",
       "rules_satisfied": False,
     },
   },
@@ -269,7 +284,7 @@ Re-categorize these transit purchases as 'transport_public_transit' where the na
 - $5 Muni Mobile on 2026-04-04.
 - $2.50 SFMUNI on 2026-04-05.""",
     "output": {
-      "rationale": "Every line includes Muni and matches the transit filter.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -287,7 +302,7 @@ Re-categorize Blue Bottle transactions on around August 20, 2026 as 'meals_dinin
 - $6 Blue Bottle on 2026-08-21.
 - $11 Blue Bottle on 2026-08-22.""",
     "output": {
-      "rationale": "All Blue Bottle dates sit within ±2 days of August 20, 2026.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -305,7 +320,7 @@ Re-categorize transactions where the name contains 'ZETA' and each charge is aro
 - $84 ZETA Holdings on 2026-09-04.
 - $79 ZETA API on 2026-09-05.""",
     "output": {
-      "rationale": "Each line has ZETA and each amount is within ±5% of $80.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -323,7 +338,7 @@ Categorize each line as 'subscriptions_music'; for every line the name must be e
 - $11 Spotify USA on 2026-10-04.
 - $11 Spotify USA on 2026-10-05.""",
     "output": {
-      "rationale": "Every payee matches Spotify USA after case folding.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -341,7 +356,7 @@ Re-categorize purchases as 'shopping_pet' where the name includes 'Chewy' and ea
 - $61 Chewy Goody Box on 2026-11-04.
 - $30 Petco on 2026-11-05.""",
     "output": {
-      "rationale": "Nov 5 Petco line has no Chewy substring in the name.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $30 Petco on 2026-11-05 (no Chewy substring)",
       "rules_satisfied": False,
     },
   },
@@ -358,7 +373,7 @@ Re-categorize Chipotle transactions as 'meals_dining_out' where each charge was 
 - $9 CHIPOTLE MEXICAN GRILL on 2026-03-14.
 - $20 Chipotle Mobile Order on 2026-03-19.""",
     "output": {
-      "rationale": "Every line fuzzy-matches Chipotle and is at most $20.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -375,7 +390,7 @@ Re-categorize transactions with Amazon as 'shopping_online' where each charge wa
 - $35 Amazon Fresh on 2026-04-03.
 - $12 Target on 2026-04-04.""",
     "output": {
-      "rationale": "Apr 4 Target line has no Amazon substring in the payee.",
+      "rationale": "Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $12 Target on 2026-04-04 (no Amazon substring)",
       "rules_satisfied": False,
     },
   },
@@ -392,7 +407,7 @@ Re-categorize Instacart transactions as 'groceries'.
 - $62 Instacart Costco on 2026-02-21.
 - $55 Instacart delivery on 2026-02-22.""",
     "output": {
-      "rationale": "Every payee contains Instacart under fuzzy matching.",
+      "rationale": "Exact Criteria Matches: All. Other Similar Transactions for User Confirmation: ",
       "rules_satisfied": True,
     },
   },
@@ -435,7 +450,7 @@ class UpdateTransactionCategoryVerifyOptimizer:
   """Gemini verify client.
 
   Last live check (19 `TEST_CASES`, all batch indices): `gemini-flash-lite-latest`, max_output_tokens 2048 — 0 golden
-  mismatches on `rules_satisfied`; notes stayed ≤100 chars without spelled-out money/years or banned filler words.
+  mismatches on `rules_satisfied`; rationales use Exact Criteria Matches + confirmation list structure.
 
   Defaults: `gemini-flash-lite-latest`, `temperature=0.2`, `top_p=0.95`, `top_k=40`,
   `thinking_budget=512`, `max_output_tokens=2048`. If verdicts drift, try `gemini-2.0-flash`.
