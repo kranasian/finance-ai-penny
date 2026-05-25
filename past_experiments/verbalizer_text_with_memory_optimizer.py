@@ -61,103 +61,22 @@ def _post_process_text(text: str) -> str:
   return text.strip()
 
 
-SYSTEM_PROMPT = """#### 0. Non-negotiable (check before you write)
-- **No greetings or filler openers** in the first sentence: never Hi, Hey, Hello, Good morning, So, Well, Okay, Alright, Sure, Found, Here's, Looking at.
-- **Start with substance:** You / Your / A $amount / Yes / No / I cannot / Sorry (only when `answer` reports an error or limitation).
-- **Plain text only** (no markdown). **Amounts** must match `answer` (keep cents when shown).
+SYSTEM_PROMPT = """You are Penny—warm, concise SMS (2–3 sentences) continuing the thread. Use only `answer` facts (+ light `user_memories` ties). Today: |WEEK_DAY|, |TODAY_DATE|.
 
-#### 1. Role & Goal
-You are `Penny`, a positive, empathetic, and friendly AI financial advisor who communicates like a close friend. Your goal is to write a concise, SMS-style message that continues an ongoing conversation with the `User`.
-
-#### 2. Core Task
-Your task is to compose a new message from `Penny` to the `User`. This message must:
--   Directly respond to the **last entry** in the `past_conversations`.
--   Integrate the core information provided in the `answer` field.
--   Use `user_memories` to personalize the message and build rapport.
-
-#### 3. Input Data
-You will be provided with a JSON object containing three keys:
--   `user_memories`: Key facts about the user. Use these to add personal touches (e.g., reference their goals, family, or past achievements).
--   `past_conversations`: The recent conversation history. Your response **must** be a logical continuation of this thread.
--   `answer`: The factual content that you **MUST incorporate** into your response. This is the primary information to be delivered.
-
-#### 4. Output Requirements & Style Guide
--   **Structure:** Deliver the key information from `answer` first, then add details or encouragement.
--   **Tone:**
-    -   Be positive, supportive, and engaging.
-    -   **Apologetic & Actionable (required when applicable):** If `answer` says you cannot fulfill something, open with a brief apology, state the limit, then offer one concrete alternative from `answer`. If `answer` corrects a mistake, apologize, give corrected numbers, and add one short next step (e.g., flag similar charges, review related transactions).
--   **Style:** Write in a concise, SMS-style format. Avoid repeating information to keep messages brief. Aim for 2-3 short sentences maximum.
--   **Formatting:**
-    -   **No Greetings or Openers (critical):** Never start with greetings (Hi, Hey, Hello, Good morning) or filler openers (So, Well, Okay, Alright, Sure, Of course, Absolutely, Great question, Found, Here's, Looking at). Begin with the fact the user asked for—usually **You**, **Your**, **A**, **Yes**, **No**, **I cannot**, or the lead dollar amount.
-    -   **Name Usage:** Only address the user by name if it is explicitly present in `user_memories` or `past_conversations`. Otherwise, do not use a name.
-    -   **Emojis:** Include 0–2 emoji characters in the message itself (e.g., 💰 📉 ✨). Do not write emoji as names, codes, or escapes (no ":money:", "U+1F4B0", "\\uXXXX").
-    -   **Monetary Values:** Every dollar figure must be traceable to `answer`. Keep cents when `answer` shows them (e.g., $12.99). For whole-dollar amounts only, use commas and no decimals (e.g., `$15,000`).
-    -   **Categories (slug → display name):** Never echo internal slugs verbatim. Apply by tier:
-        -   **Subcategory (leaf) slugs** use a `parent_` prefix (e.g., `meals_dining_out`, `health_medical_pharmacy`). Drop the parent prefix; title-case only the leaf segment with spaces instead of underscores. `meals_dining_out` → Dining Out (not Meals Dining Out).
-        -   **Parent category slugs** have no leaf prefix to strip (e.g., `meals`, `donations_gifts`, `leisure`). Replace underscores with spaces and title-case the whole slug. `meals` → Meals; `donations_gifts` → Donations and Gifts.
-        -   If `answer` already uses a plain English category label, keep that wording.
+**Open:** Start with You / Your / Yes / No / I cannot / Sorry / $amount. Never Hi, Hey, So, Here's, Found, Looking at.
 |MARKDOWN_LINE|
--   **Completeness:** Include all pertinent information from the `answer` while remaining concise.
--   **Accuracy:** Do not hallucinate numbers or facts. If the `answer` asks a question, you must ask that question to the user.
+**Money:** Match `answer` exactly (keep cents). **Emojis:** 0–2 real glyphs only—never \\u escapes.
 
-#### 5. Critical Constraints
--   **Use Input Data Only:** Do not invent information not found in `answer` or `user_memories`.
--   **Avoid Redundancy:** Do not repeat information already in `past_conversations`.
--   **No External/Internal Info:** Do not use outside info or internal IDs (e.g., transaction IDs).
--   **Questions in `answer`:** If `answer` asks the user a question, you must ask that question (rephrased) in your message—usually as the final sentence.
+**Slugs** (`parent_subcategory`): say the **leaf** only—drop parent prefix, underscores→spaces, title-case (meals_dining_out→Dining Out; shelter_home→Home; health_gym_wellness→Gym and Wellness). Never echo snake_case or colon labels. Plain English in `answer`→keep. Merchants: Shell_Gas→Shell Gas.
 
-#### 6. Contextual Information
--   **Date:** Today is `|WEEK_DAY|, |TODAY_DATE|`.
+**Accounts:** Include masked *** tails from `answer`; omit internal account/transaction IDs even if `answer` lists them.
 
-input: {
-  "user_memories": [
-    "User's preferred name is Henry.",
-    "User usually dines out on Mondays or Tuesdays.",
-    "User buys Groceries at Sprouts Farmers Market around every 5 days."
-  ],
-  "past_conversations": [
-    { "speaker": "User",
-      "message": "Compare my grocery and eating out last week and the week before that?" }
-  ],
-  "answer": "Okay, here's a comparison of your grocery and eating out spending for the last two weeks:\n\n**Last Week:**\n\n* Groceries: $8,881\n* Eating Out: $8,888\n\n\n**Two Weeks Ago:**\n\n* Groceries: $881\n* Eating Out: $882\n\n**Observations:**\n\n* Your grocery spending was significantly higher last week ($8,881) compared to two weeks ago ($881).\n* Your eating out spending was also significantly higher last week ($8,888) compared to two weeks ago ($882)."
-}
-output: Last week you spent a bit more on groceries and eating out compared to the week before. $8,881 last week vs $881 on groceries, and $8,888 last week vs $882 on eating out. 💸 In the next trip to Sprouts maybe we can find some wiggle room there? 🤔
+**Thread (`past_conversations`):** Always verbalize `answer`. Correction in `answer`→Sorry/My mistake + corrected numbers. **Repeat:** if Penny already answered the same User question, open with "As I mentioned—" or "To confirm again—" before restating `answer`. **Inability:** if `answer` says you cannot do something, open with **Sorry** (+ name from memories), state the limit, offer one alternative from `answer` (match the Jen example). No extra coaching unless `answer` includes it. If `answer` asks a question, end with it.
 
-input: {
-  "user_memories": [
-    "User's preferred name is Angel.",
-    "User doesn't put too many funds in checking accounts.",
-    "User transfers from investment accounts to pay for credit card balances."
-  ],
-  "past_conversations": [
-    { "speaker": "User",
-      "message": "How is my kids shopping this month?" },
-    { "speaker": "Penny",
-      "message": "You had an unexpected $881 spend on kids shopping this month. 😲" },
-    { "speaker": "Penny",
-      "message": "You've spent $882 unexpectedly on donations and gifts this month, above the $883 forecast." },
-    { "speaker": "User",
-      "message": "What are my account balances and which is do I owe the most?" }
-  ],
-  "answer": "Okay, here's a summary of your account balances:\n\n**Depository accounts:**\n\n* Checking: $8,881.08\n* Checking: $884.08\n* Checking: $883.08\n* Money Market Plus: $8,882.08\n\n**Credit accounts:**\n\n* Cashback: $8,885.08 owed, $88,882.08 available\n* Costco Anywhere: $886 owed, $8,887.08 available\n* Citi Premier: $887 owed, $8,888.08 available\n\nThe account with the largest outstanding balance that you owe is the **Cashback card with $8,885.08**."
-}
-output: You owe the most on the Cashback card with a balance of $8,885! 💸 Largest checking and savings account being your Money Market Plus shining bright at $8,882, and your Checking account has $884. 👍 Perhaps we could explore moving a little from your investments to cover that balance?
-
-input: {
-  "user_memories": ["User's preferred name is Jen."],
-  "past_conversations": [{"speaker": "User", "message": "Predict my stocks for next year."}],
-  "answer": "I cannot predict stock market performance. I can only analyze past performance."
-}
+input: {"user_memories":["User's preferred name is Jen."],"past_conversations":[{"speaker":"User","message":"Predict my stocks for next year."}],"answer":"I cannot predict stock market performance. I can only analyze past performance."}
 output: Sorry Jen, I cannot predict stock market performance, but I can analyze your past performance—want me to pull that history? 📈
 
-input: {
-  "user_memories": ["User is detail-oriented."],
-  "past_conversations": [
-    {"speaker": "User", "message": "You said $200, app says $250."},
-    {"speaker": "Penny", "message": "Let me double check that for you."}
-  ],
-  "answer": "My previous calculation missed a $50 transaction at 'Shell_Gas'. Correct total is $250."
-}
+input: {"user_memories":["User is detail-oriented."],"past_conversations":[{"speaker":"User","message":"You said $200, app says $250."},{"speaker":"Penny","message":"Let me double check that for you."}],"answer":"My previous calculation missed a $50 transaction at 'Shell_Gas'. Correct total is $250."}
 output: Sorry about that—the correct total is $250 after a missed $50 Shell Gas charge. I can scan for other Shell Gas charges this month if you want. 💸
 """
 
@@ -292,7 +211,14 @@ def _format_eval_input(input_json: Dict[str, Any]) -> str:
       break
   memories = input_json.get("user_memories") or []
   answer = input_json.get("answer", "")
+  past_conversations = input_json.get("past_conversations") or []
   info_lines = []
+  if past_conversations:
+    info_lines.append("Past conversations:")
+    for turn in past_conversations:
+      speaker = turn.get("speaker", "Unknown")
+      message = turn.get("message", "")
+      info_lines.append(f"- {speaker}: {message}")
   if memories:
     info_lines.append("User memories:")
     info_lines.extend(f"- {m}" for m in memories)
@@ -304,7 +230,12 @@ def _format_eval_input(input_json: Dict[str, Any]) -> str:
   )
 
 
-def _run_sandbox_check(input_json: Dict[str, Any], review_needed: str, label: str) -> Optional[Dict[str, Any]]:
+def _run_sandbox_check(
+  input_json: Dict[str, Any],
+  review_needed: str,
+  label: str,
+  ideal_output: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
   """Run Chk:VerbalizerTextWithMemoryJson on verbalizer output."""
   if not review_needed:
     return None
@@ -312,16 +243,22 @@ def _run_sandbox_check(input_json: Dict[str, Any], review_needed: str, label: st
     from check_verbalizer_text_with_memory import (
       CheckVerbalizerTextWithMemory,
       run_test_case,
+      _compare_checker_result,
     )
 
     checker = CheckVerbalizerTextWithMemory()
-    return run_test_case(
+    result = run_test_case(
       label,
       _format_eval_input(input_json),
       review_needed,
       [],
       checker,
+      ideal_output=ideal_output,
     )
+    if ideal_output is not None and result is not None:
+      ok, _ = _compare_checker_result(result, ideal_output)
+      return {"checker": result, "matches_ideal": ok}
+    return {"checker": result, "matches_ideal": None}
   except Exception as e:
     print(f"Sandbox check failed: {e}")
     import traceback
@@ -343,7 +280,8 @@ def test_with_inputs(
   verbalizer: VerbalizerTextWithMemory = None,
   *,
   test_name: str = "Test",
-  ideal_output: Optional[str] = None,
+  ideal_review_needed: Optional[str] = None,
+  ideal_output: Optional[Dict[str, Any]] = None,
   run_sandbox: bool = True,
 ) -> str:
   """
@@ -353,30 +291,36 @@ def test_with_inputs(
     input_json: Dictionary containing user_memories, past_conversations, and answer.
     verbalizer: Optional VerbalizerTextWithMemory instance. If None, creates a new one.
     test_name: Label for sandbox checker output.
-    ideal_output: Reference SMS-style message for comparison (printed, not scored automatically).
+    ideal_review_needed: Reference SMS-style message (printed for human comparison).
+    ideal_output: Expected checker JSON (`good_copy`, `info_correct`, `eval_text`).
     run_sandbox: If True, run checker after generation.
 
   Returns:
-    String containing the verbalized response from Penny
+    Tuple of (verbalizer output string, optional sandbox result dict).
   """
   if verbalizer is None:
     verbalizer = VerbalizerTextWithMemory()
 
-  if ideal_output:
+  if ideal_review_needed:
     print(f"\n{'='*80}")
-    print("IDEAL OUTPUT:")
-    print(ideal_output)
+    print("IDEAL REVIEW_NEEDED:")
+    print(ideal_review_needed)
     print("=" * 80)
 
   output = verbalizer.generate_response(json.dumps(input_json, indent=2))
+  sandbox_result = None
   if run_sandbox:
     print(f"\n{'='*80}")
     print("SANDBOX EXECUTION (Checker):")
     print("=" * 80)
-    _run_sandbox_check(input_json, output, test_name)
-  return output
+    sandbox_result = _run_sandbox_check(
+      input_json, output, test_name, ideal_output=ideal_output
+    )
+  return output, sandbox_result
 
 
+# ideal_review_needed: target SMS copy for the verbalizer prompt.
+# ideal_output: expected Chk:VerbalizerTextWithMemoryJson result (good_copy, info_correct, eval_text).
 TEST_CASES = [
   {
     "name": "high_spending_alert_no_name",
@@ -385,10 +329,11 @@ TEST_CASES = [
       {"speaker": "User", "message": "How much did I spend on entertainment?"}
     ],
     "answer": "You spent $800 on Entertainment last month. This is $300 higher than your average.",
-    "ideal_output": (
+    "ideal_review_needed": (
       "You spent $800 on Entertainment last month, which is $300 higher than your average. "
       "Those concert nights might be adding up! 🎸"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "subscription_check_with_name",
@@ -400,10 +345,11 @@ TEST_CASES = [
       {"speaker": "User", "message": "Check for recurring charges."}
     ],
     "answer": "Found a recurring charge of $12.99 for 'Digital_Magazine_Sub' on the 1st.",
-    "ideal_output": (
+    "ideal_review_needed": (
       "You have a $12.99 recurring charge for Digital Magazine Sub on the 1st, Sarah. "
       "Since you hate unused subscriptions, want help canceling it? 📉"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "income_update_no_name",
@@ -412,10 +358,11 @@ TEST_CASES = [
       {"speaker": "User", "message": "Did Client Y pay?"}
     ],
     "answer": "Yes, a deposit of $4,000 from 'Client Y Corp' was received today.",
-    "ideal_output": (
+    "ideal_review_needed": (
       "Yes, a $4,000 deposit from Client Y Corp landed today. "
       "Great news for your consulting work! 💰"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "budget_overflow_with_name",
@@ -427,13 +374,13 @@ TEST_CASES = [
       {"speaker": "User", "message": "How is my dining budget?"}
     ],
     "answer": (
-      "You have spent $600 on Food_and_Dining this month. "
-      "Your budget is $450. You are over by $150."
+      "meals_dining_out this month: $600 spent, budget $450, over by $150."
     ),
-    "ideal_output": (
-      "You have spent $600 on Food and Dining this month, which is $150 over your $450 budget. "
+    "ideal_review_needed": (
+      "You spent $600 on dining out this month, $150 over your $450 budget. "
       "Pulling that back could help your car savings, Mike! 🚗"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "goal_progress_no_name",
@@ -442,10 +389,11 @@ TEST_CASES = [
       {"speaker": "User", "message": "Status of my freedom fund?"}
     ],
     "answer": "Your 'Freedom Fund' is at $15,000. You are 75% of the way to your $20,000 goal.",
-    "ideal_output": (
+    "ideal_review_needed": (
       "Your Freedom Fund is at $15,000, about 75% of the way to your $20,000 goal. "
       "Keep it up! ✨"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "new_budget_question_no_name",
@@ -454,10 +402,11 @@ TEST_CASES = [
       {"speaker": "User", "message": "I need a budget for electronics."}
     ],
     "answer": "I can help set a budget for 'Electronics'. What is your limit?",
-    "ideal_output": (
+    "ideal_review_needed": (
       "I can help set an Electronics budget for your gadget spending. "
       "What limit do you want? 📱"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "merchant_spend_with_name",
@@ -469,21 +418,25 @@ TEST_CASES = [
       {"speaker": "User", "message": "Amazon spend this year?"}
     ],
     "answer": "You have spent $2,500.50 at Amazon year-to-date across 20 transactions.",
-    "ideal_output": (
+    "ideal_review_needed": (
       "You have spent $2,500.50 at Amazon year-to-date across 20 transactions, Leo. "
       "Quite a few packages! 📦"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
-    "name": "transaction_search_no_name",
+    "name": "rent_masked_account_no_name",
     "user_memories": ["User went to Paris."],
     "past_conversations": [
-      {"speaker": "User", "message": "Find the hotel charge from Paris."}
+      {"speaker": "User", "message": "Which account paid my rent?"}
     ],
-    "answer": "Found a transaction for $1,200 at 'Hotel_Paris' on June 10th.",
-    "ideal_output": (
-      "You have a $1,200 charge at Hotel Paris on June 10th. Hope Paris was amazing! ✨"
+    "answer": (
+      "shelter_home rent $1,800 paid from Chase Savings ***1242 (internal Account ID 231)."
     ),
+    "ideal_review_needed": (
+      "Your $1,800 rent was paid from Chase Savings ***1242. 🏠"
+    ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "category_breakdown_no_name",
@@ -492,13 +445,14 @@ TEST_CASES = [
       {"speaker": "User", "message": "Health spend lately?"}
     ],
     "answer": (
-      "In the last 30 days, you spent $400 on Health_and_Fitness. "
+      "health_gym_wellness last 30 days: $400 total. "
       "Top merchants: Gym_Shark ($200) and Whole_Foods ($150)."
     ),
-    "ideal_output": (
-      "You spent $400 on Health and Fitness in the last 30 days, "
+    "ideal_review_needed": (
+      "You spent $400 on gym and wellness in the last 30 days, "
       "including $200 at Gym Shark and $150 at Whole Foods. Keep crushing those goals! 💪"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "unable_to_fulfill_with_name",
@@ -507,10 +461,11 @@ TEST_CASES = [
       {"speaker": "User", "message": "Predict my stocks for next year."}
     ],
     "answer": "I cannot predict stock market performance. I can only analyze past performance.",
-    "ideal_output": (
+    "ideal_review_needed": (
       "Sorry Jen, I cannot predict stock market performance, but I can analyze your past "
       "performance—want me to pull that history? 📈"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
     "name": "data_discrepancy_no_name",
@@ -522,24 +477,25 @@ TEST_CASES = [
     "answer": (
       "My previous calculation missed a $50 transaction at 'Shell_Gas'. Correct total is $250."
     ),
-    "ideal_output": (
+    "ideal_review_needed": (
       "Sorry about that—the correct total is $250 after a missed $50 Shell Gas charge. "
       "I can scan for other Shell Gas charges this month if you want. 💸"
     ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
   {
-    "name": "affordability_no_name",
-    "user_memories": ["User pays rent on the 1st."],
+    "name": "groceries_repeat_ack_no_name",
+    "user_memories": [],
     "past_conversations": [
-      {"speaker": "User", "message": "Can I buy a $500 watch?"}
+      {"speaker": "User", "message": "How much on meals_groceries last month?"},
+      {"speaker": "Penny", "message": "You spent $420 on groceries last month."},
+      {"speaker": "User", "message": "How much on meals_groceries last month?"},
     ],
-    "answer": (
-      "Checking balance: $1,000. Rent due: $800. Remaining: $200. You cannot afford the watch."
+    "answer": "meals_groceries last month: $420.",
+    "ideal_review_needed": (
+      "As I mentioned—you spent $420 on groceries last month. 🛒"
     ),
-    "ideal_output": (
-      "You cannot afford the $500 watch right now. With $1,000 in checking and $800 rent due "
-      "on the 1st, you have $200 left. Let's keep saving for it! ⌚"
-    ),
+    "ideal_output": {"good_copy": True, "info_correct": True, "eval_text": ""},
   },
 ]
 
@@ -582,13 +538,17 @@ def run_test(test_name_or_index_or_dict, verbalizer: VerbalizerTextWithMemory = 
 
   print(f"\n{'='*80}\nRunning test: {name}\n{'='*80}\n")
   payload = _payload_from_test_case(tc)
-  output = test_with_inputs(
+  output, sandbox_result = test_with_inputs(
     payload,
     verbalizer,
     test_name=name,
+    ideal_review_needed=tc.get("ideal_review_needed"),
     ideal_output=tc.get("ideal_output"),
   )
-  return {"name": name, "output": output}
+  matches_ideal = (
+    sandbox_result.get("matches_ideal") if sandbox_result else None
+  )
+  return {"name": name, "output": output, "matches_ideal": matches_ideal}
 
 
 def run_batch(batch_num: int, verbalizer: VerbalizerTextWithMemory = None):
@@ -599,10 +559,15 @@ def run_batch(batch_num: int, verbalizer: VerbalizerTextWithMemory = None):
   indices = TEST_BATCHES[batch_num]
   print(f"\n{'='*80}\nRunning BATCH {batch_num} ({len(indices)} tests)\n{'='*80}\n")
   results = []
+  passed = 0
   for i, idx in enumerate(indices):
-    results.append(run_test(idx, verbalizer))
+    outcome = run_test(idx, verbalizer)
+    results.append(outcome)
+    if outcome.get("matches_ideal") is True:
+      passed += 1
     if i < len(indices) - 1:
       print("\n" + "-" * 80 + "\n")
+  print(f"\nBatch {batch_num}: {passed}/{len(indices)} checker matches ideal_output")
   return results
 
 
