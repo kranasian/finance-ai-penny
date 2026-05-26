@@ -89,31 +89,40 @@ When **one or more** AI-facing lines exist, the score follows the **weakest** AI
 
 **Category List** (exact tokens; categorization/recategorization/rule/budget-by-category targets must match one line):
 
+- `meals`
 - `meals_dining_out`
 - `meals_delivered_food`
 - `meals_groceries`
+- `leisure`
 - `leisure_entertainment`
 - `leisure_travel`
 - `shopping_pets`
+- `bills`
 - `bills_connectivity`
 - `bills_insurance`
 - `bills_tax`
 - `bills_service_fees`
+- `shelter`
 - `shelter_home`
 - `shelter_utilities`
 - `shelter_upkeep`
+- `education`
 - `education_kids_activities`
 - `education_tuition`
+- `shopping`
 - `shopping_clothing`
 - `shopping_gadgets`
 - `shopping_kids`
+- `transportation`
 - `transportation_car`
 - `transportation_public`
+- `health`
 - `health_medical_pharmacy`
 - `health_gym_wellness`
 - `health_personal_care`
 - `donations_gifts`
 - `miscellaneous`
+- `income`
 - `income_salary`
 - `income_sidegig`
 - `income_business`
