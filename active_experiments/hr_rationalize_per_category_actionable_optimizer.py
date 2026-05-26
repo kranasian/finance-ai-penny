@@ -128,6 +128,7 @@ When **one or more** AI-facing lines exist, the score follows the **weakest** AI
 - `income_business`
 - `income_interest`
 - `transfers`
+- `uncategorized`
 
 **Scores (1–5)** — if **no** AI-facing lines → **5** (default). If **≥1** AI-facing line → worst AI line wins:
 - **5** — Every AI line executable; category targets are valid list tokens; no unresolved “pick one of several categories” for a single action.
