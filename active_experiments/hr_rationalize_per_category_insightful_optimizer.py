@@ -18,7 +18,7 @@ Run from `finance-ai-penny` repo root:
 - **max_output_tokens:** `384`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Rubric:** Grade **only** **`## Drivers`** vs **`# Rationalize What`** (movement insight, clarity, coverage). **`## Figures`** and **`## Next steps`** are **out of scope**—never score figure tables, labels, or next steps. **What** is ground truth; **What vs Response number mismatches are out of scope**. **18 fixtures** in batches **1–5**; **`--batch N --check`** (batches **1–4** for iteration).
+**Rubric:** Grade **only** **`## Drivers`** vs **`# Rationalize What`** (movement insight, clarity, coverage). **`## Figures`** and **`## Next steps`** are **out of scope**—never score figure tables, labels, or next steps. **What** is ground truth; **What vs Response number mismatches are out of scope**. **19 fixtures** in batches **1–5**; **`--batch N --check`** (batches **1–4** for iteration).
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
 """
@@ -68,7 +68,7 @@ OUTPUT_SCHEMA = types.Schema(
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "One sentence on **## Drivers only**: period-over-period why for each What move, clarity, and coverage. Do not cite Figures-table quality or What-vs-Response amount mismatches."
+        "One sentence on **## Drivers only**: why each What move changed vs a relevant prior period or trend, clarity, and coverage. Do not cite Figures-table quality or What-vs-Response amount mismatches."
       ),
     ),
   },
@@ -84,19 +84,25 @@ SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness** vs **`
 - Whether the What “should” differ from underlying data
 
 ## In scope
-**`# Rationalize What`** = ground truth for each move (category, direction, amount, dates). Judge whether **`## Drivers`** explains **why each move happened** vs a relevant prior period.
+**`# Rationalize What`** = ground truth for each move (category, direction, amount, dates). Judge whether **`## Drivers`** explains **why each move happened** vs a **relevant comparison**: immediate prior week/month **or** a **multi-period trend / baseline** across past periods.
 
 ## Period windows (What dates vs comparisons)
 - Dates on the What line may be a **subset** of the period described (e.g. “this month” with data through May 19). That is valid.
 - Drivers may compare to **full prior months** (Apr 1–30) **or** **matching subsets** (Apr 1–19) when that supports the movement story. Do not penalize use of full-month priors when the What uses a partial month.
 - Score from the **weakest** What move when several are listed.
 
+## Relevant comparison (prior period **or** trend)
+- **Immediate prior period** (last week, last month, matching partial-month slice) is a common anchor when it best explains the What.
+- **Multi-period trend / baseline** is equally valid when Drivers cite **several past periods** or a clear baseline (e.g. “up vs late 2025,” “elevated over the last 6 months”) **with evidence** (totals, merchants, dates) to explain the What’s up/down/flat direction.
+- Do **not** mark down Drivers for emphasizing a **trend** story when it **does** explain the What’s stated direction. Do **not** require a vs-**immediate-prior-month** explanation if trend + mechanisms already account for the move.
+- Optional contrast to the prior month (e.g. “down vs April 1–25”) **strengthens** insight but is **not required** when trend + merchants explain the What.
+
 ## Insight = movement in Drivers (not composition alone)
-Insightful **Drivers** explain **period-over-period change**: why spend/income **rose, fell, restarted, or stayed $0** vs prior week/month—not only how the focal total was built.
+Insightful **Drivers** explain **why spend/income changed** vs a relevant comparison—prior period **or** trend across past periods—not only how the focal total was built.
 
-**Each What line:** Drivers must explain **that line’s stated direction** (up/down/flat/$0) **vs a relevant prior period**—not only what merchants/charges make up the focal total.
+**Each What line:** Drivers must explain **that line’s stated direction** (up/down/flat/$0) using a **relevant comparison** (prior period **or** cited trend/baseline)—not only what merchants/charges make up the focal total.
 
-- **Naming focal merchants without a vs-prior movement story → partial (~3), not 5.** Listing this week’s charges (or May MTD composition) **without** why the pattern **changed** from the prior week/month is **not** fully insightful. Contrast: explaining a cleared hold vs prior-week posted **is** movement insight (can be 5).
+- **Naming focal merchants without any movement story** (no vs-prior, no trend, no baseline) → partial (~3), not 5. Listing this week’s charges (or May MTD composition) **without** why the pattern **changed** vs prior period **or** trend is **not** fully insightful. Contrast: explaining a cleared hold vs prior-week posted **is** movement insight (can be 5); explaining “slightly up” via recurring rent + higher misc volume vs a **late-2025 baseline** **is** movement insight (can be 5).
 - **$0 focal period:** If the What move is **$0** and prior periods had activity, stating **no transactions / no new charges / no activity** in the focal window is a **complete** explanation—do not demand extra mechanisms.
 - **Refunds in the What:** treat as net credit aggregates; name mechanisms in Drivers when stated.
 - **Prior-period narrative alone** in Drivers (e.g. last month’s trip/gym charges) **without** why the **focal** window is $0/up/down → **weak (~2)** for that move; cannot score **5**.
@@ -106,17 +112,17 @@ Insightful **Drivers** explain **period-over-period change**: why spend/income *
 
 ## Scoring process
 1. Parse each What move and its date window.
-2. Read **only** Drivers: does each move get a **why vs prior period** story?
+2. Read **only** Drivers: does each move get a **why** story vs prior period **or** cited trend/baseline?
 3. One integer **1–5** from holistic impact (weakest move + severity). No fixed mapping from issue labels to scores.
 
 ## Scores (integer 1–5)
 - **5** — Every What move: clear **why-it-changed** in Drivers (merchants/dates, pause/restart, absence of activity for $0, etc.).
 - **4** — Strong; one move slightly thin or vague in Drivers.
-- **3** — **Partial:** Drivers **name focal-period merchants/charges** (or vs-prior totals) for a move but **not why that move’s direction changed** vs the prior period—**not** a 5. *Naming merchants without a vs-prior movement story → ~3.*
+- **3** — **Partial:** Drivers **name focal-period merchants/charges** (or recite totals) for a move but **not why that move’s direction changed** vs prior period **or** trend—**not** a 5. *Naming merchants without any movement story (no vs-prior, no trend) → ~3.*
 - **2** — **Weak:** **focal move skipped** (only prior-period merchants, never why focal $0/up/down); **denies What**; **circular “because”** with no vs-prior story; **generic timing/vague** when Drivers could cite specific charges; reciting prior totals with a hollow “because.”
 - **1** — Drivers **only** echo What headlines and **recite dollar amounts** across periods—**no** merchants, timing, pause, absence, or real mechanism (e.g. “down to $12; May was $48, April was $52” only).
 
-**Weakest-move cap:** Score from the weakest move. If **any** move is **partial** (focal merchants/charges named, no vs-prior **direction** story) → overall **≤3** (e.g. Connectivity up: Verizon overage + Xfinity listed, no why overage missing before). **Focal skip** (prior-period merchants only) is **weak (~2)**, not partial.
+**Weakest-move cap:** Score from the weakest move. If **any** move is **partial** (focal merchants/charges named, no vs-prior **or** trend **direction** story) → overall **≤3** (e.g. Connectivity up: Verizon overage + Xfinity listed, no why overage missing before). **Focal skip** (prior-period merchants only, never why focal $0/up/down) is **weak (~2)**, not partial. Trend + merchants explaining the What’s direction is **not** partial.
 
 ## `notes`
 One sentence on **Drivers-only** insight: movement explanation, clarity, coverage. Never critique Figures or What/Response mismatches.
@@ -621,6 +627,45 @@ Entertainment fell **$153.40** because last week included a **Steam** purchase (
 ## Next steps
 
 1. Tag AMC and Steam → `leisure_entertainment` for cleaner week-over-week reads.
+""",
+  },
+  {
+    "name": "uncategorized_slightly_up_trend_not_only_prior_month",
+    "batch": 5,
+    "output": (
+      '{"score": 5, "notes": "Explains slightly up via recurring merchant, ATM/Amazon mix, '
+      'and upward trend vs late-2025 baseline—valid without requiring vs prior month alone."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Uncategorized is slightly up the first 25 days of this month at $3390. (partial month May 1-31, 2026)
+
+Category Taxonomy: parent Uncategorized (uncategorized)
+
+# Rationalize Response
+
+## Figures
+
+* **Uncategorized**
+    * May 2026: from May 1-25, $3390 · entire month $3390
+    * Apr 2026: from Apr 1-25, $3447 · entire month $3526
+    * Mar 2026: from Mar 1-25, $3203 · entire month $3249
+    * Feb 2026: from Feb 1-25, $2999 · entire month $2999
+    * Jan 2026: from Jan 1-25, $3390 · entire month $3043
+    * Dec 2025: from Dec 1-25, $2915 · entire month $2915
+    * Nov 2025: from Nov 1-25, $2752 · entire month $2803
+    * Oct 2025: from Oct 1-25, $2839 · entire month $3014
+    * Sep 2025: from Sep 1-25, $3029 · entire month $3029
+
+## Drivers
+
+* **Uncategorized** is slightly up for the year despite being down slightly compared to the first 25 days of April ($3,447); the category is dominated by a recurring $2,850 payment to "Property Group LLC" on the 3rd of every month, while the remaining balance reflects a higher volume of small miscellaneous charges like "ATM Withdrawals" ($420 total in May) and Amazon purchases, which account for the upward trend in overall category spending compared to the baseline established in late 2025.
+
+## Next steps
+
+* **Recategorize:** Review the transaction for "Property Group LLC" ($2,850); if this is rent or a mortgage, recategorize it under `shelter_home`.
+* **Budget:** Set a monthly budget of $300 for `uncategorized` to track miscellaneous spending while excluding identified recurring fixed costs.
+* **Audit:** Review all ATM withdrawals and Amazon transactions currently sitting in `uncategorized` and move them to more appropriate categories like `leisure_entertainment` or `shopping_gadgets`.
 """,
   },
 ]
