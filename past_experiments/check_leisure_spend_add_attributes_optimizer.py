@@ -21,37 +21,6 @@ RUN_SETTINGS = {
     "thinking_budget": 0,
   },
   "model_name": "gemini-flash-lite-latest",
-  "output_schema": {
-    "type": 6,
-    "items": None,
-    "required": ["eval_text", "good_copy", "info_correct"],
-    "properties": {
-      "eval_text": {
-        "type": 1,
-        "description": (
-          "Empty when no issues; else one line per bad id ('Establishment <id>: ', max 25 words). "
-          "State the concrete flaw. No rule numbers. Flag only bare generic stubs, not "
-          "descriptor-qualified multi-word tags."
-        ),
-      },
-      "good_copy": {
-        "type": 4,
-        "description": (
-          "True only when REVIEW_NEEDED is a JSON array with one object per EVAL_INPUT id, each "
-          "having id, primary (list), and secondary (list). False only for structural gaps — "
-          "not for tag quality."
-        ),
-      },
-      "info_correct": {
-        "type": 4,
-        "description": (
-          "True when leisure rows have valid primary(s), 3-7 grounded secondaries, no exact "
-          "primary reuse in secondary, and no whole-tag bare generic stubs; non-leisure rows "
-          "are blank. Never fail solely for using any allowed primary."
-        ),
-      },
-    },
-  },
 }
 
 CHECKER_OUTPUT_SCHEMA = types.Schema(
@@ -73,38 +42,56 @@ CHECKER_OUTPUT_SCHEMA = types.Schema(
   required=["eval_text", "good_copy", "info_correct"],
 )
 
-SYSTEM_PROMPT = """You are a checker for structured leisure merchant attributes. Tags cluster similar entertainment- or travel-related merchants.
+SYSTEM_PROMPT = """You are a checker verifying the output of a model that transforms leisure establishment data into structured attributes.
 
-## Inputs / Output
-- **EVAL_INPUT**, **PAST_REVIEW_OUTCOMES**, **REVIEW_NEEDED** (`id`, `primary`, `secondary`)
-- JSON only, field order: `eval_text`, `good_copy`, `info_correct`
+## Input:
+- **EVAL_INPUT**: A JSON array of leisure establishments. Each has `id`, `name`, and `description`.
+- **PAST_REVIEW_OUTCOMES**: An array of past review outcomes.
+- **REVIEW_NEEDED**: The JSON output from the optimizer that needs to be reviewed (array of result objects).
 
-## Step 1 — Classification
-Default **leisure-related** unless the purchase cannot plausibly connect to any allowed primary; weak links count. Non-leisure only when impossible (salary, utilities, pure groceries). Correct non-leisure: `"primary": []`, `"secondary": []`. Never fail because an allowed primary was chosen.
+## Output:
+Return valid JSON only. Put each top-level key on its own line (line break after each of good_copy, info_correct, eval_text). Example format:
+```
+{"good_copy": true,
+"info_correct": true,
+"eval_text": ""}
+```
 
-## Step 2 — Structure (`good_copy`)
-One object per `id` with list fields `primary`, `secondary`. Structural errors only.
+- `good_copy`: True if REVIEW_NEEDED is a valid JSON array and each item has the required fields: `id`, `primary`, `secondary`. Every `id` in REVIEW_NEEDED must exist in EVAL_INPUT. There must be exactly one output item per establishment in EVAL_INPUT.
+- `info_correct`: True if the `primary` and `secondary` attributes for each item in REVIEW_NEEDED are correct according to the rules.
+- `eval_text`: Empty string when good_copy and info_correct are both True. Otherwise, explain why REVIEW_NEEDED is incorrect. Each line must start with "Establishment <id>: ". **Crucial: The explanation must be self-contained and descriptive (e.g., "contains forbidden generic term 'Leisure'" instead of "violates Rule 3").** One line per erroneous item (max 25 words per line). **NEVER reference rule numbers in your output.**
 
-## Step 3 — Tags (`info_correct`)
+## Critical Rules for LeisureSpendAddAttributes:
+1. `primary`: Every output must have at least one primary attribute. Options:
+   - Logistics: Functional infrastructure and travel essentials (eg. flights, car rentals, trains, hotels, Airbnbs, travel insurance, passports, visas).
+   - Shows: Ticketed live performances and scheduled events (eg. concerts, festivals, theater, live performances).
+   - Attractions: Entry to points of interest or curated experiences (eg. zoos, museums, theme parks, guided city tours, scuba charters).
+   - Sports: Physical participation and active recreation venues (eg. bowling alleys, ski resorts, gyms, golf courses).
+   - Nightlife: Adult-oriented social consumption and evening entertainment (eg. bars, nightclubs, liquor stores, cannabis dispensaries, lounges).
+   - Relaxation: Physical rejuvenation and mental calm (eg. day spas, massage therapy centers, saunas, hot springs).
+   - Movies: The film-viewing experience across all platforms. Includes cinema tickets, theater concessions, and digital video streaming services.
+   - Apps: Recurring fees or one-time purchases for non-gaming, non-movie, and non-literature digital services. Includes music streaming, productivity tools, and utility applications.
+   - Gaming: Digital and interactive software, hardware, or services (eg. video game purchases, online multiplayer subscriptions, in-game content).
+   - Literature: Purchase or subscription of written content (eg. physical bookstores, e-book subscriptions, newsstands, magazines).
+   - Crafts and Hobbies: Materials and retailers for personal projects and skill-based interests (eg. art supply stores, musical instrument shops, photography equipment).
+   - Gear: Durable physical goods for specific leisure pursuits (eg. camping equipment, luggage, specialized technical apparel).
 
-### Primary
-At least one per leisure row; multiples allowed. Allowed: Logistics (travel/visas/hotels/flights), Shows, Attractions, Sports, Nightlife, Relaxation, Movies, Apps, Gaming, Literature, Crafts and Hobbies, Gear.
+2. `secondary`: Extract highly specific, high-value category tags. Every establishment MUST have at least 3 `secondary` tags.
+   - SOURCE MATERIAL ONLY. Tags MUST be solely based on Name and Description provided.
+   - DEFINE THE ESTABLISHMENT. Tags are only valid if they define what the establishment IS or DOES.
+   - ABSOLUTELY NO STANDALONE GENERIC TERMS. Must prepend a specific descriptor for: "Rental", "Pass", "Admission", "Card", "Fee", "Reservation", "Stay", "Booking", "Ticket", "Venue", "Travel", "Arena", "Concession", "Content", "Online", "Digital", "Service", "Subscription", "Round-trip".
+   - ABSOLUTELY NO PRIMARY REUSE. Secondary tags MUST NOT contain any of the primary attribute names (Logistics, Shows, Attractions, Sports, Nightlife, Relaxation, Movies, Apps, Gaming, Literature, Crafts, Hobbies, Gear), unless accompanied by descriptors. e.g. "Japanese Literature" is okay, but "Literature" is not
+   - P2P PAYMENTS. For person-to-person payments (e.g., Venmo), only focus on the purpose (e.g., "Dinner", "Gift").
+   - SPECIFICITY. eg. prefer "Basketball Game" over "Game".
+   - SINGULAR NOUNS. Use singular nouns for `secondary` tags where appropriate.
+   - COMPOUND TERMS. Allow compound terms (e.g., "Video game", "Theme park").
+   - NO REPETITION. `primary` categories must not be repeated in `secondary`.
 
-### Secondary
-3–7 tags (three is enough). Use `name` + `description`; paraphrases pass. Fail specifics with no reasonable link (e.g., "Knitting material" when knitting is not mentioned). Fail exact primary reuse or `{Primary}` + generic stub only.
-
-### Bare generic stubs
-Per tag: if it contains a space, **stop** — multi-word tags are never bare generic stubs; **do not split** into words; judge grounding only.
-
-Single-word tags only: fail when the entire tag exactly equals Rental, Pass, Admission, Card, Fee, Reservation, Stay, Booking, Ticket, Venue, Travel, Arena, Concession, Content, Online, Digital, Service, Good, Goods, Subscription, or Round-trip.
-
-Tags paraphrasing `name` or `description` pass (Online store, Museum admission, Administrative fee, Podcast Service, Developer Service, Consumer Good, Public Transportation).
-
-### Strictness
-Fail each bad tag; do not fail alternate wording, exactly three tags, or multiple primaries.
-
-## Procedure
-Per id: classify → structure → each secondary (grounding, primary reuse, bare stub). Set `eval_text`, `good_copy`, `info_correct`.
+## Verification Steps:
+1. Check PAST_REVIEW_OUTCOMES for repeated mistakes.
+2. Verify good_copy: structure, required fields, one-to-one mapping of IDs.
+3. Verify info_correct: Check primary/secondary choices against the rules above.
+4. eval_text: Only when incorrect. Each line starts with "Establishment <id>: ". **NEVER reference rule numbers in eval_text. Use descriptive language only.**
 """
 
 class CheckLeisureSpendAddAttributesOptimizer:
