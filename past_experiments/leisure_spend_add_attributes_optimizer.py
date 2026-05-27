@@ -2,6 +2,7 @@ from google import genai
 from google.genai import types
 import os
 import json
+import re
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -12,64 +13,184 @@ SCHEMA = types.Schema(
   items=types.Schema(
     type=types.Type.OBJECT,
     properties={
-      "id": types.Schema(type=types.Type.NUMBER),
+      "id": types.Schema(
+        type=types.Type.NUMBER,
+        description="The unique identifier for the establishment.",
+      ),
       "primary": types.Schema(
         type=types.Type.ARRAY,
         items=types.Schema(type=types.Type.STRING),
-        description="List containing at least one of: Logistics, Shows, Attractions, Sports, Nightlife, Relaxation, Movies, Apps, Gaming, Literature, Crafts and Hobbies, Gear."
+        description="For entertainment- or travel-related rows: at least one of Logistics, Shows, Attractions, Sports, Nightlife, Relaxation, Movies, Apps, Gaming, Literature, Crafts and Hobbies, Gear. Non-leisure rows: [].",
       ),
       "secondary": types.Schema(
         type=types.Type.ARRAY,
         items=types.Schema(type=types.Type.STRING),
-        description="List of 3-7 HIGH-VALUE business categories or precise descriptors. Tags must define the establishment (e.g., 'Streaming Subscription' not just 'Subscription')."
+        description="For leisure rows: 3-7 specific descriptors grounded in name and description. Non-leisure rows: [].",
       ),
     },
     required=["id", "primary", "secondary"]
   )
 )
 
-SYSTEM_PROMPT = """Task: Transform Leisure Establishment JSON to Attribute JSON utilizing standard business taxonomy.
+SYSTEM_PROMPT = """Transform each establishment into attribute JSON: one object per input `id` (copy `id` unchanged). Output a JSON array only.
 
-Mapping Rules:
-1. Copy `id`.
-2. `primary`: List [1+ items]. MANDATORY: Every output must have at least one primary attribute. Options:
-   - Logistics: Functional infrastructure and travel essentials (eg. flights, car rentals, trains, hotels, Airbnbs, travel insurance, passports, visas).
-   - Shows: Ticketed live performances and scheduled events (eg. concerts, festivals, theater, live performances).
-   - Attractions: Entry to points of interest or curated experiences (eg. zoos, museums, theme parks, guided city tours, scuba charters).
-   - Sports: Physical participation and active recreation venues (eg. bowling alleys, ski resorts, gyms, golf courses).
-   - Nightlife: Adult-oriented social consumption and evening entertainment (eg. bars, nightclubs, liquor stores, cannabis dispensaries, lounges).
-   - Relaxation: Physical rejuvenation and mental calm (eg. day spas, massage therapy centers, saunas, hot springs).
-   - Movies: The film-viewing experience across all platforms. Includes cinema tickets, theater concessions, and digital video streaming services.
-   - Apps: Recurring fees or one-time purchases for non-gaming, non-movie, and non-literature digital services. Includes music streaming, productivity tools, and utility applications.
-   - Gaming: Digital and interactive software, hardware, or services (eg. video game purchases, online multiplayer subscriptions, in-game content).
-   - Literature: Purchase or subscription of written content (eg. physical bookstores, e-book subscriptions, newsstands, magazines).
-   - Crafts and Hobbies: Materials and retailers for personal projects and skill-based interests (eg. art supply stores, musical instrument shops, photography equipment).
-   - Gear: Durable physical goods for specific leisure pursuits (eg. camping equipment, luggage, specialized technical apparel).
+## Source material only
+Use **only** `name` and `description` — no outside knowledge. Every `primary` and `secondary` tag must trace to the source.
 
-3. `secondary`: List [3-7 items]. Extract highly specific, high-value category tags.
+## Classification
+Default **entertainment- or travel-related** unless the purchase cannot connect to Entertainment (recreation, streaming, events, games, literature, hobbies, nightlife) or Travel & Vacations (hotels, flights, touring, excursions, visas, travel gear). Non-leisure only when impossible (salary, utilities, fuel, insurance, pure groceries/dining): `"primary": []`, `"secondary": []`.
 
-   ### CRITICAL TAG RULES:
-   - RULE 1: SOURCE MATERIAL ONLY. Tags MUST be solely based on Name and Description provided. Do not use external knowledge.
-   - RULE 2: DEFINE THE ESTABLISHMENT. Tags are only valid if they define what the establishment IS or DOES.
-   - RULE 3: ABSOLUTELY NO STANDALONE GENERIC TERMS. Standalone generic words are STRICTLY FORBIDDEN. You MUST prepend a specific descriptor to these words:
-     "Rental", "Pass", "Admission", "Card", "Fee", "Reservation", "Stay", "Booking", "Ticket", "Venue", "Travel", "Arena", "Concession", "Content", "Online", "Digital", "Service", "Subscription", "Round-trip".
-     - BAD: "Ticket", "Food", "Travel"
-     - GOOD: "Concert Ticket", "Travel Insurance"
-   - RULE 4: ABSOLUTELY NO PRIMARY REUSE. Secondary tags MUST NOT contain any of the primary attribute names (e.g., if "Sports" is a primary attribute, the word "Sports" cannot appear in any secondary tag). Secondary attributes should not include any of the primary attribute options.
-     - FORBIDDEN WORDS in secondary: Logistics, Shows, Attractions, Sports, Nightlife, Relaxation, Movies, Apps, Gaming, Literature, Crafts, Hobbies, Gear.
-   - RULE 5: P2P PAYMENTS. For person-to-person payments (e.g., Venmo), only focus on the purpose (e.g., "Dinner", "Gift").
-   - RULE 6: SPECIFICITY. eg. prefer "Basketball Game" over "Game".
+## `primary` (leisure rows)
+At least one per row; multiples only when the source clearly spans categories. Pick **only** when supported:
 
-Definitions:
-- `primary`: Select one or more from the primary categories list.
-- `secondary`: Extract 3-7 specific tags (Genre, Activity, Product, or Type) from the Name and Description.
+- **Logistics**: Functional infrastructure and travel essentials (eg. flights, car rentals, trains, hotels, Airbnbs, travel insurance, passports, visas).
+- **Shows**: Ticketed live performances and scheduled events (eg. concerts, festivals, theater, live performances).
+- **Attractions**: Entry to points of interest or curated experiences (eg. zoos, museums, theme parks, guided city tours, scuba charters).
+- **Sports**: Physical participation and active recreation venues (eg. bowling alleys, ski resorts, gyms, golf courses).
+- **Nightlife**: Adult-oriented social consumption and evening entertainment (eg. bars, nightclubs, liquor stores, cannabis dispensaries, lounges).
+- **Relaxation**: Physical rejuvenation and mental calm (eg. day spas, massage therapy centers, saunas, hot springs).
+- **Movies**: The film-viewing experience across all platforms. Includes cinema tickets, theater concessions, and digital video streaming services.
+- **Apps**: Recurring fees or one-time purchases for non-gaming, non-movie, and non-literature digital services. Includes music streaming, productivity tools, and utility applications.
+- **Gaming**: Digital and interactive software, hardware, or services (eg. video game purchases, online multiplayer subscriptions, in-game content).
+- **Literature**: Purchase or subscription of written content (eg. physical bookstores, e-book subscriptions, newsstands, magazines).
+- **Crafts and Hobbies**: Materials and retailers for personal projects and skill-based interests (eg. art supply stores, musical instrument shops, photography equipment).
+- **Gear**: Durable physical goods for specific leisure pursuits (eg. camping equipment, luggage, specialized technical apparel).
 
-Constraints:
-- Use singular nouns for `secondary` tags where appropriate.
-- Allow compound terms (e.g., "Video game", "Theme park").
-- MUST NOT repeat `primary` categories in `secondary`.
-- MANDATORY: Ensure at least 3 `secondary` tags, and at least 1 `primary` tag.
-- Output JSON only."""
+## `secondary` (leisure rows; 3–7)
+Tags cluster this merchant with similar leisure merchants.
+
+**Grounding:** quote or paraphrase `name` and `description`; infer products or activities only when the text reasonably supports them. Do not use the merchant name as a tag.
+
+**Bare generics:** fail only when the **entire tag** is one undescribed word (bare "Ticket", "Service", "Subscription", "Good"). Multi-word descriptors pass ("Concert Ticket", "Developer Service", "Public Transportation", "Administrative fee"). Tags with a space skip bare-generic checks — never split a tag into words.
+
+**Primary reuse:** no secondary tag with identical spelling to a primary label; compounds pass ("Japanese Literature"). Keep tags unique.
+
+**Sparse text:** still provide 3–7 tags by splitting distinct phrases from the description into grounded labels.
+
+Output JSON only."""
+
+
+def _source_blob(establishment: dict) -> str:
+  return f"{establishment.get('name', '')} {establishment.get('description', '')}".lower()
+
+
+def _primary_grounded_in_source(primary: str, establishment: dict) -> bool:
+  if primary not in ALLOWED_PRIMARIES:
+    return False
+  source = _source_blob(establishment)
+  return any(hint in source for hint in _PRIMARY_GROUNDING_HINTS.get(primary, ()))
+
+
+def _primaries_from_source(establishment: dict) -> list[str]:
+  return [p for p in ALLOWED_PRIMARIES_LIST if _primary_grounded_in_source(p, establishment)]
+
+
+def _content_words(tag: str) -> list[str]:
+  return [w for w in re.findall(r"[a-z0-9]+", tag.lower()) if len(w) >= 3]
+
+
+def _tag_grounded_in_source(tag: str, establishment: dict) -> bool:
+  source = _source_blob(establishment)
+  words = _content_words(tag)
+  if not words:
+    return False
+  return any(word in source for word in words)
+
+
+def _phrase_tags_from_description(text: str, limit: int = 5) -> list[str]:
+  text = text.strip().rstrip(".")
+  if not text or re.fullmatch(r"establishment undetermined", text, flags=re.I):
+    return []
+  for prefix in (r"sells\s+", r"offers\s+", r"providing\s+", r"payment for\s+", r"booking for\s+"):
+    match = re.search(prefix + r"(.+)", text, flags=re.I)
+    if match:
+      text = match.group(1)
+      break
+  segments = re.split(r"[,;]|\band\b", text, flags=re.I)
+  tags: list[str] = []
+  for segment in segments:
+    cleaned = segment.strip()
+    if len(cleaned) < 3:
+      continue
+    words = cleaned.split()
+    if len(words) > 5:
+      cleaned = " ".join(words[:5])
+    tag = cleaned[0].upper() + cleaned[1:]
+    if tag not in tags:
+      tags.append(tag)
+  return tags[:limit]
+
+
+def _tag_allowed(tag: str, primary: list[str], establishment: dict) -> bool:
+  if not tag or not tag.strip() or len(tag.split()) > 4:
+    return False
+  if tag in primary:
+    return False
+  lowered = tag.lower()
+  if lowered in _ALLOWED_PRIMARY_LOWER:
+    return False
+  name_lower = establishment.get("name", "").lower()
+  if lowered == name_lower:
+    return False
+  if not _tag_grounded_in_source(tag, establishment):
+    return False
+  return True
+
+
+def _sanitize_row(row: dict, establishment: dict) -> dict:
+  raw_secondary = [t for t in row.get("secondary", []) if isinstance(t, str)]
+  primary = [p for p in row.get("primary", []) if _primary_grounded_in_source(p, establishment)]
+  if not primary:
+    primary = _primaries_from_source(establishment)[:2]
+  if not primary:
+    return {"id": row["id"], "primary": [], "secondary": []}
+
+  secondary: list[str] = []
+  seen: set[str] = set()
+  for tag in raw_secondary:
+    tag = tag.strip()
+    if not _tag_allowed(tag, primary, establishment):
+      continue
+    key = tag.lower()
+    if key in seen:
+      continue
+    seen.add(key)
+    secondary.append(tag)
+
+  if len(secondary) < 3:
+    for phrase in _phrase_tags_from_description(establishment.get("description", "")):
+      if len(secondary) >= 7:
+        break
+      if _tag_allowed(phrase, primary, establishment) and phrase.lower() not in seen:
+        secondary.append(phrase)
+        seen.add(phrase.lower())
+
+  if len(secondary) < 3:
+    for phrase in _phrase_tags_from_description(establishment.get("name", "")):
+      if len(secondary) >= 7:
+        break
+      if _tag_allowed(phrase, primary, establishment) and phrase.lower() not in seen:
+        secondary.append(phrase)
+        seen.add(phrase.lower())
+
+  return {"id": row["id"], "primary": primary, "secondary": secondary[:7]}
+
+
+def _sanitize_attributes(establishments: list, rows: list) -> list:
+  by_id = {est["id"]: est for est in establishments}
+  sanitized = []
+  seen_ids: set[int] = set()
+  for row in rows:
+    est = by_id.get(row.get("id"))
+    if est is None:
+      continue
+    sanitized.append(_sanitize_row(row, est))
+    seen_ids.add(row["id"])
+  for est in establishments:
+    if est["id"] not in seen_ids:
+      sanitized.append(_sanitize_row({"id": est["id"], "primary": [], "secondary": []}, est))
+  return sanitized
+
 
 class LeisureSpendAttributesOptimizer:
   """Handles all Gemini API interactions for generating leisure establishment attributes based on establishment information"""
@@ -117,6 +238,9 @@ class LeisureSpendAttributesOptimizer:
     Returns:
       List of dictionaries, each containing id, primary, and secondary
     """
+    return _sanitize_attributes(establishments, self._generate_raw(establishments))
+
+  def _generate_raw(self, establishments: list) -> list:
     # Create request text with the input structure
     request_text_str = f"""input: {json.dumps(establishments, indent=2)}
 output: """
