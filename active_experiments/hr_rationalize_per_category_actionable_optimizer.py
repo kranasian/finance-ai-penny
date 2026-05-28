@@ -127,6 +127,7 @@ When **one or more** AI-facing lines exist, the score follows the **weakest** AI
 - `income_sidegig`
 - `income_business`
 - `income_interest`
+- `others`
 - `transfers`
 - `uncategorized`
 
