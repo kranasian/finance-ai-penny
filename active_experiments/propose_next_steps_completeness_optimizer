@@ -295,54 +295,29 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """You are a strict rubric grader.
+SYSTEM_PROMPT = """You are a strict completeness-only grader. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
 
-Input order: evidence (`<RATIONALIZE>` in one or more `<CONTEXT>` blocks), then `<PROPOSAL>`, then propose-run `<CALLS>`.
-Treat all `<RATIONALIZE>` bodies across contexts as one combined evidence set. Do not use `<RATIONALIZE_CALLS>` for scoring.
-Grade only what is present; do not infer missing facts.
+**Bundle:** `<CONTEXTS>` … `<PROPOSAL>` … `<CALLS>` (this propose run only; ignore `<RATIONALIZE_CALLS>`). Grade only visible text; do not invent facts. Ignore factual accuracy and whether tool choice is ideal.
 
-Return only JSON matching schema with one axis:
-- `completeness`: `score` 1-5 and one short `notes` sentence.
+**Penny limits (drive completeness; do not penalize correct human handoffs):**
+- **Uncategorized Penny cannot resolve:** Some transactions stay uncategorized because the spend is too vague or bundles many goods/services, so **Penny cannot assign one category without guessing.** User/manual categorization of those rows under **Open items** (or equivalent) is **complete and correct**; **do not** require `propose_*` categorization or recategorization tools for that work, and **do not** treat missing tools there as an automation gap.
+- **Final “are labels correct?”:** **Penny cannot fully verify categorical accuracy** the way the user ultimately can. Retrieval, heuristics, or bulk relabel proposals are **not** substitute for the user’s final attestation. If the proposal frames **definitive** verification that labels are **fully correct** as **only** Penny work under **Proposed next steps** (even with tools), treat that as **sectioning error → prefer score 4** when coverage otherwise holds; that confirmation belongs under **Open items** for the user.
 
-Notes-writing rules:
-- `notes` must be concise and direct.
-- For scores 1-4, list all major issues found in the proposal bundle (coverage gaps, misplaced open items, and call/proposal mismatches), not just one issue.
-- Prefer one sentence with compact clauses separated by semicolons.
-- Keep issue phrases short and concrete; avoid generic lead-ins like "The proposal fails to...".
-- For score 5, keep notes brief and do not add unnecessary justification.
-- Issue checklist for scores 1-4 (mention every applicable item):
-  - Missing impactful rationalize step(s) in proposed next steps (e.g., rule creation, recategorization, budgeting).
-  - Penny-executable actions parked under open items instead of proposed next steps.
-  - Missing propose-run calls when execution is required, or calls that are unrelated/misaligned.
-  - Name omitted impactful actions explicitly (e.g., missing rule creation, missing recategorization, missing budget creation) when they apply.
-  - When actions are parked in open items, name the parked actions explicitly.
+**Completeness:**
+1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE>` bodies; no silent drops.
+2. **Automation:** If **Proposed next steps** assign Penny execution (goals, rules, retrieve/recategorize, **historical aggregates/patterns**), `<CALLS>` must include matching tool invocations across rounds. Steps covered by the two **Penny limits** bullets above do **not** need tools.
+3. **Structure:** Penny-executable work (including historical computation when proposed as Penny’s) belongs in **Proposed** unless a concrete blocker is stated; user-final steps in **Open**.
 
-Scoring rule for `completeness`:
-1) Coverage/execution fit:
-   - Important rationalize next steps must appear in `## Proposed next steps` (not only in open items).
-   - Only clearly non-impact items may be omitted without major penalty.
-   - Penny-executable actions (goals, categorization rules, recategorization, transaction-data analyses) should be proposed; keep in open items only when a concrete blocker is stated.
-2) Tool-trace consistency:
-   - `<CALLS>` must support proposed actions with relevant tools/args.
-   - If calls are unrelated to proposal actions, score low (usually 1-2).
-   - If calls are clearly unrelated to both proposal actions and rationalize priorities, assign score = 1.
-   - If no propose calls exist while proposal requires tool execution, score 3 when proposal is otherwise grounded; use 1-2 only when there are additional major grounding/coverage failures.
-3) Open-items quality:
-   - Open items should be truly unresolved dependencies, specific and useful.
+**Historical statistic vs goal:** Rationalize asks for (A) a **historical statistic** and (B) a **goal informed by** it. If (A) appears **only** under Open while (B) is under Proposed with matching goal tools, that is **one sectioning defect → 4** (statistic should be Proposed Penny work). If (A) is **missing** from PROPOSAL, coverage is weaker (**often 3**).
 
-Calibration:
-- 5: no meaningful completeness gap.
-- 4: minor omission/mismatch, no major execution gap.
-- 3: clear but fixable gap.
-- 2: multiple material issues.
-- 1: largely fails (major coverage miss and/or severe call mismatch).
+**Scoring anchors (worst match wins):**
+- **1** — Primary rationalize next step **wholly unaddressed** while PROPOSAL pursues **different** transaction subjects (e.g. wrong merchant vs named rule target), **or** primary step replaced by unrelated work—**use 1, not 2**, even if tools exist.
+- **2** — Whole context thread dropped, **or** **≥2** `## Next steps` bullets missing from both Proposed and Open while Open falsely says **none**, **or** several bullets missing.
+- **3** — Proposed Penny work without matching `<CALLS>`, **or** a **primary** Penny ask only under Open with **no** Proposed mirror, **or** clear partial coverage (not the statistic-split case below).
+- **4** — Single sectioning issue, threads otherwise present: **(a)** user-only final label-truth check only under Proposed (see Penny limits); **(b)** historical metric only in Open next to a Proposed goal with tools—**4**, not 3, when the metric text exists in Open; **(c)** thin wording only.
+- **5** — Full coverage; tools match Proposed Penny work; Proposed/Open coherent, including **user** categorization for Penny-unmappable uncategorized charges under Open.
 
-Score anchors:
-- If proposal is mostly grounded but moves Penny-executable actions to open items, score 3 unless there are additional major failures.
-- If one or more impactful rationalize next steps are omitted but remaining parts are grounded, cap at 3.
-- Use 4 only for minor/non-impact omissions.
-- When key actionable items are present but parked under open items instead of proposed next steps, do not score below 3 solely for that mistake (even if calls are empty).
-- If grounded content is present and the primary defect is "actionable items parked as open items," assign score = 3.
+**`notes`:** One sentence (semicolons allowed); name gaps or affirm coverage, tools, and split. For multi-`<CONTEXT>` **5**, name each context theme checked.
 """
 
 
