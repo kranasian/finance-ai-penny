@@ -18,7 +18,7 @@ Run from `finance-ai-penny` repo root:
 - **max_output_tokens:** `384`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Rubric:** Grade **only** **`## Drivers`** vs **`# Rationalize What`** (movement insight, clarity, coverage). **`## Figures`** and **`## Next steps`** are **out of scope**—never score figure tables, labels, or next steps. **What** is ground truth; **What vs Response number mismatches are out of scope**. **18 fixtures** in batches **1–5**; **`--batch N --check`** (batches **1–4** for iteration).
+**Rubric:** Grade **only** **`## Drivers`**. Use **`# Rationalize What`** for **which categories** to explain; use **`## Figures`** as **factual truth** (amounts, periods, merchants). Every referenced charge must name the merchant/source (e.g. **Amazon $50**, not “a $50 charge”). **`## Next steps`** out of scope. **18 fixtures** in batches **1–5**; **`--batch N --check`**.
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
 """
@@ -68,58 +68,76 @@ OUTPUT_SCHEMA = types.Schema(
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "One sentence on **## Drivers only**: period-over-period why for each What move, clarity, and coverage. Do not cite Figures-table quality or What-vs-Response amount mismatches."
+        "One sentence on **## Drivers only**: why for each required category, merchant-named transaction(s), clarity, and coverage. Do not critique Figures-table formatting."
       ),
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness** vs **`# Rationalize What`**.
+SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness**.
+
+## Sources of truth
+- **`## Figures`** = **factual ground truth** for amounts, date windows, period-over-period comparisons, and which merchants/charges exist. When Figures and **`# Rationalize What`** disagree, **trust Figures** for grading Drivers.
+- **`# Rationalize What`** = **scope only**: which categories must be explained. **Do not** treat What’s up/down/$0 headline or dollar amount as truth when **Figures** disagree—use Figures for direction, totals, and comparisons.
+- **`## Next steps`** — out of scope.
 
 ## Out of scope (never affects score)
-- **`## Figures`** — do not grade figure tables, labels, grain, or whether figures match the What.
-- **`## Next steps`**
-- **What vs Response data discrepancies** — different amounts, windows, or totals between What and Figures/Drivers are **not** rubric issues. Do not mention or penalize them in `notes`.
-- Whether the What “should” differ from underlying data
+- **`## Figures`** table formatting, labels, or grain.
+- Whether the What headline “should” match Figures—do not mention What/Figures doc mismatches in `notes` unless Drivers repeat a wrong What direction or total **instead of** Figures-backed facts.
+- **What vs Figures direction/amount conflicts** — **trust Figures**. Grade whether Drivers explain the **Figures** move for each required category, not whether they parrot a wrong What headline.
 
 ## In scope
-**`# Rationalize What`** = ground truth for each move (category, direction, amount, dates). Judge whether **`## Drivers`** explains **why each move happened** vs a relevant prior period.
+For **each category listed in What**, judge whether **`## Drivers`** explains **why that move happened** vs a relevant prior period, using **Figures** for the underlying facts.
 
-## Period windows (What dates vs comparisons)
-- Dates on the What line may be a **subset** of the period described (e.g. “this month” with data through May 19). That is valid.
-- Drivers may compare to **full prior months** (Apr 1–30) **or** **matching subsets** (Apr 1–19) when that supports the movement story. Do not penalize use of full-month priors when the What uses a partial month.
-- Score from the **weakest** What move when several are listed.
+## Period windows
+- What date lines may be a **subset** of the period in Figures (e.g. partial month). Follow **Figures** for comparison windows when they are clearer.
+- Drivers may compare to **full prior months** or **matching subsets** when that supports the movement story.
+- Score from the **weakest** required category when several are listed in What.
 
-## Insight = movement in Drivers (not composition alone)
-Insightful **Drivers** explain **period-over-period change**: why spend/income **rose, fell, restarted, or stayed $0** vs prior week/month—not only how the focal total was built.
+## Name every transaction
+When Drivers cite a charge, refund, hold, or deposit, name the **merchant or identifiable source**—not only an amount.
+- **Bad:** “There was a **$50** charge.” / “a large purchase” / “an overage fee”
+- **Good:** “**Amazon $50.00**” / “**T-Mobile roaming overage $67.31**” / “**Payroll deposit $3,250.00**”
+Unnamed or generic charges → **partial (~3) or weaker**, even if amounts and direction are right.
 
-**Each What line:** Drivers must explain **that line’s stated direction** (up/down/flat/$0) **vs a relevant prior period**—not only what merchants/charges make up the focal total.
+## Insight in Drivers
+Insightful **Drivers** explain **why** each required category moved. That can be:
+- **Period-over-period change** — why spend/income **rose, fell, restarted, or stayed $0** vs a relevant prior week/month; or
+- **Composition of the focal total** — **sufficient** when Drivers **identify which transaction(s)** drove the increase or decrease (merchant names, specific charges, refunds, holds, etc.).
 
-- **Naming focal merchants without a vs-prior movement story → partial (~3), not 5.** Listing this week’s charges (or May MTD composition) **without** why the pattern **changed** from the prior week/month is **not** fully insightful. Contrast: explaining a cleared hold vs prior-week posted **is** movement insight (can be 5).
+**Each What category:** Explain that category **per Figures** (direction, amounts, merchants).
+
+**What/Figures conflict (critical):** If What says **“significantly up”** but Figures show **down** week-over-week, grade Drivers on whether they explain the **Figures decrease** with merchant-named drivers. **Do not** penalize Drivers for “contradicting” What—**penalize** Drivers that parrot What’s wrong direction while Figures show the opposite. A **5** is possible when Drivers correctly explain the Figures move even though What said up.
+
+- **Up/down moves:** name the **merchant-named transaction(s)** that **drove** the increase or decrease vs the prior period (new this period, larger than last period, absent last period, etc.).
+- **Listing focal composition ≠ identifying drivers → partial (~3), not 5.** Naming every August line (e.g. **Bright Smiles**, **root canal**, **copay**) **without** saying which **drove** the up move vs July is **~3**, not 5—even when all charges are merchant-named. Contrast: “the jump is from **T-Mobile roaming overage $67.31**” or “**Sam’s Club $198** restock with **no warehouse trip last week**.”
+- **Amount-only or generic references → partial (~3).** “**Subscriptions** is down after a single lower **$28** charge during **Jul 6–12**” names category, amount, and window but **no establishment**—**~3**, not 5. Same for “a **$50** charge” without a merchant name.
 - **$0 focal period:** If the What move is **$0** and prior periods had activity, stating **no transactions / no new charges / no activity** in the focal window is a **complete** explanation—do not demand extra mechanisms.
 - **Refunds in the What:** treat as net credit aggregates; name mechanisms in Drivers when stated.
 - **Prior-period narrative alone** in Drivers (e.g. last month’s trip/gym charges) **without** why the **focal** window is $0/up/down → **weak (~2)** for that move; cannot score **5**.
-- **Denying the What in Drivers** (e.g. “not really down”) → **weak insight (~2)**; reserve **1** for no causal story at all.
-- **Hollow tautology** in Drivers (“up because you spent more”) with no vs-prior contrast → **~2**; **1** only when Drivers **only** restate What/amounts with **no** “because” attempt.
-- **Several What lines:** score from the **weakest**; a strong explanation for one category (e.g. Taxes) does **not** excuse another (e.g. Service Fees “**down** at $117”) where Drivers **only** name May interest charges with **no why lower than** the prior month → that line is **partial (~3)**; overall **≤3**.
+- **Denying a Figures move** (e.g. Figures show down, Drivers say “not really down”) → **weak (~2)**. **Following Figures when What is wrong** (What says up, Figures down, Drivers explain down) → **not** denial; score on Figures insight.
+- **Hollow tautology** in Drivers (“up because you bought more groceries”) with **no transaction names** and no vs-prior contrast → **1**, same as pure restatement.
+- **Several What lines:** score from the **weakest**; a strong explanation for one category does **not** excuse another where Drivers only restate totals with **no** named transaction driving that line’s direction → **partial (~3)**; overall **≤3**.
 
 ## Scoring process
-1. Parse each What move and its date window.
-2. Read **only** Drivers: does each move get a **why vs prior period** story?
-3. One integer **1–5** from holistic impact (weakest move + severity). No fixed mapping from issue labels to scores.
+1. From **What**, list each category that must be explained.
+2. From **Figures**, note amounts, windows, and merchants for each category.
+3. Read **only** Drivers: does each required category get a **why vs prior period** story with **merchant-named** transactions?
+4. One integer **1–5** from holistic impact (weakest category + severity).
 
 ## Scores (integer 1–5)
-- **5** — Every What move: clear **why-it-changed** in Drivers (merchants/dates, pause/restart, absence of activity for $0, etc.).
-- **4** — Strong; one move slightly thin or vague in Drivers.
-- **3** — **Partial:** Drivers **name focal-period merchants/charges** (or vs-prior totals) for a move but **not why that move’s direction changed** vs the prior period—**not** a 5. *Naming merchants without a vs-prior movement story → ~3.*
-- **2** — **Weak:** **focal move skipped** (only prior-period merchants, never why focal $0/up/down); **denies What**; **circular “because”** with no vs-prior story; **generic timing/vague** when Drivers could cite specific charges; reciting prior totals with a hollow “because.”
-- **1** — Drivers **only** echo What headlines and **recite dollar amounts** across periods—**no** merchants, timing, pause, absence, or real mechanism (e.g. “down to $12; May was $48, April was $52” only).
+- **5** — Every required category: clear **why**, every cited charge **merchant-named**, with driver(s) vs prior period (or absence/pause/restart for $0).
+- **4** — Strong; one category thin or one charge referenced by amount only.
+- **3** — **Partial:** merchants listed but **not which drove** the move; or generic/amount-only references mixed with some names; one category thin in a multi-line What.
+- **2** — **Weak:** category **skipped**; **denies** the move; **timing-only** with **no merchant names** in Drivers when Figures list specific charges; vague refunds/activity with no merchant names.
+- **Multi-line What:** one category strong (merchant-named drivers) and another only restates direction with no merchants → overall **3**, not 2.
+- **1** — Drivers **only** echo What/Figures headlines and **recite dollar amounts**—**no** merchant-named transactions (e.g. “down to $12; July was $48” only).
 
-**Weakest-move cap:** Score from the weakest move. If **any** move is **partial** (focal merchants/charges named, no vs-prior **direction** story) → overall **≤3** (e.g. Connectivity up: Verizon overage + Xfinity listed, no why overage missing before). **Focal skip** (prior-period merchants only) is **weak (~2)**, not partial.
+**Weakest-category cap:** Score from the weakest required category. Any up/down category with only composition lists or unnamed charges → overall **≤3**. **Focal skip** (prior-period merchants only) → **~2**.
 
 ## `notes`
-One sentence on **Drivers-only** insight: movement explanation, clarity, coverage. Never critique Figures or What/Response mismatches.
+One sentence on **Drivers-only** insight: coverage of What categories, merchant-named transactions, movement explanation. Do not critique Figures formatting.
 
 Return **only** JSON `{score, notes}`.
 """
@@ -128,255 +146,258 @@ Return **only** JSON `{score, notes}`.
 TEST_CASES: list[dict[str, Any]] = [
   # --- Batch 1: week grain, contradictions, tautology, partial spike ---
   {
-    "name": "dining_hold_reconciles_headline_up_move",
+    "name": "rideshare_hold_reconciles_headline_up_move",
     "batch": 1,
     "output": (
-      '{"score": 5, "notes": "Reconciles the What’s up-at-$180 headline with posted vs-prior-week '
-      'figures and the cleared hold so the reader sees why the move looks up."}'
+      '{"score": 5, "notes": "Reconciles the What’s up-at-$95 headline with posted vs-prior-week '
+      'figures and the cleared authorization so the reader sees why the move looks up."}'
     ),
     "input": """# Rationalize What
 
-Explain: Dining Out is significantly up this week at $180. (2026-05-03 to 2026-05-09)
+Explain: Rideshare is significantly up this week at $95. (2026-07-06 to 2026-07-12)
 
 # Rationalize Response
 
 ## Figures
 
-* **Dining Out posted (May 3–9, 2026):** $94.80 vs $139.55 (Apr 26–May 2, 2026).
-* **Pending hold cleared this week (same category):** $85.20 authorization from May 2 that posted May 6.
-* **Insight-style total (posted + cleared hold):** $180.00 vs $139.55 prior week → **up ~29%**.
+* **Rideshare posted (Jul 6–12, 2026):** $48.30 vs $72.15 (Jun 29–Jul 5, 2026).
+* **Pending authorization cleared this week (same category):** $46.70 from Jul 5 that posted Jul 9.
+* **Insight-style total (posted + cleared auth):** $95.00 vs $72.15 prior week → **up ~32%**.
 
 ## Drivers
 
-Posted dining alone is **down** week-over-week, but the insight total treats the **$85.20** hold that cleared May 6 as part of this week’s dining story—**$94.80 + $85.20 ≈ $180**, which is higher than last week’s **$139.55**. The “up” move is driven by that timing artifact, not a broad restaurant surge.
+Posted rides alone are **down** week-over-week, but the insight total counts an **Uber $46.70** authorization from Jul 5 that cleared Jul 9 toward this week—**$48.30 + $46.70 ≈ $95**, above last week’s **$72.15**. The “up” move is driven by that posting delay, not a sudden surge in new trips.
 
 ## Next steps
 
-1. Set a weekly cap on `meals_dining_out` if you want posted dining to stay under $120 regardless of holds.
+1. Set a weekly cap on `transportation_rideshare` if you want posted rides to stay under $60 regardless of pending auths.
 """,
   },
   {
-    "name": "groceries_up_circular_no_prior_week_story",
+    "name": "household_what_up_figures_down_drivers_follow_figures",
     "batch": 1,
     "output": (
-      '{"score": 2, "notes": "Affirms the What’s up direction with a hollow because-clause and never '
-      'explains why grocery spend rose vs the prior week shown in Figures."}'
+      '{"score": 5, "notes": "What claims up but Figures show a decrease; Drivers explain the '
+      'down move with merchant-named charges vs prior week—insight follows Figures, not What."}'
     ),
     "input": """# Rationalize What
 
-Explain: Groceries is significantly up this week at $412. (2026-05-10 to 2026-05-16)
+Explain: Household Supplies is significantly up this week at $89. (2026-07-06 to 2026-07-12)
 
 # Rationalize Response
 
 ## Figures
 
-* **Groceries (May 10–16, 2026):** $412.30 vs $286.15 (May 3–9, 2026).
+* **Household Supplies (Jul 6–12, 2026):** $89.20 vs $156.40 (Jun 29–Jul 5, 2026) → **down ~43%**.
+* **Jun 29–Jul 5:** Target **$98.00**; Amazon Fresh **$58.40**.
+* **Jul 6–12:** Target **$42.20**; Dollar Tree **$47.00** (no Amazon Fresh).
 
 ## Drivers
 
-Groceries are up this week at about $412 because you bought more groceries.
+**Household Supplies is significantly up this week at $89.**: Household supplies actually **fell** to **$89.20** from **$156.40** last week because **Amazon Fresh $58.40** did not repeat and **Target** was smaller (**$42.20** vs **$98.00**); **Dollar Tree $47.00** was new but not enough to offset the missing grocery delivery run.
 
 ## Next steps
 
-1. Review grocery receipts.
+1. Review household receipts when What and posted totals disagree.
 """,
   },
   {
-    "name": "entertainment_denies_what_down_move",
+    "name": "subscriptions_down_single_charge_no_merchant_name",
     "batch": 1,
     "output": (
-      '{"score": 2, "notes": "Drivers deny the What’s down move instead of explaining why '
-      'entertainment fell vs last week using the provided figures."}'
+      '{"score": 3, "notes": "Cites a lower single charge and time window but never names '
+      'which subscription merchant posted—partial insight without establishment names."}'
     ),
     "input": """# Rationalize What
 
-Explain: Entertainment is significantly down this week at $45. (2026-05-10 to 2026-05-16)
+Explain: Subscriptions is significantly down this week at $28. (2026-07-06 to 2026-07-12)
 
 # Rationalize Response
 
 ## Figures
 
-* **Entertainment (May 10–16, 2026):** $45.00 vs $198.40 (May 3–9, 2026).
-* **Top May 3–9 charges:** AMC **$62.00**; Spotify **$11.99**; Steam **$124.41**.
+* **Subscriptions (Jul 6–12, 2026):** $28.00 vs $142.50 (Jun 29–Jul 5, 2026).
+* **Top Jun 29–Jul 5 charges:** Adobe Creative Cloud **$54.99**; NYTimes **$17.00**; Audible annual **$70.51**.
+* **Jul 6–12:** Craftsy **$16.99**; Spotify **$11.01** (no Adobe, NYTimes, or Audible this week).
 
 ## Drivers
 
-Entertainment is **not really down**—you still had steady subscriptions, and the AMC ticket was just posted late. The category is effectively flat if you ignore window boundaries.
+Subscriptions is down after a single lower **$28** charge appeared during **Jul 6–12, 2026**, compared with heavier billing last week.
 
 ## Next steps
 
-1. Tag AMC → `leisure_entertainment` consistently.
+1. Tag Adobe → `bills_subscriptions` consistently.
 """,
   },
   {
-    "name": "connectivity_spike_lists_charges_missing_prior_pattern",
+    "name": "phone_spike_overage_drives_week_up",
     "batch": 1,
     "output": (
-      '{"score": 3, "notes": "Compares weeks and itemizes focal charges but leaves unexplained '
-      'why the overage pattern was absent in earlier weeks—partial movement insight."}'
+      '{"score": 5, "notes": "Names T-Mobile international overage and AT&T as the transactions '
+      'driving the weekly up move—the overage is framed as the cause of the jump."}'
     ),
     "input": """# Rationalize What
 
-Explain: Connectivity is significantly up this week at $189. (2026-05-10 to 2026-05-16)
+Explain: Phone and Mobile is significantly up this week at $142. (2026-07-06 to 2026-07-12)
 
 # Rationalize Response
 
 ## Figures
 
-* **Connectivity (May 10–16, 2026):** $189.40 vs $78.20 (May 3–9, 2026) vs $81.05 (Apr 26–May 2, 2026).
+* **Phone and Mobile (Jul 6–12, 2026):** $142.30 vs $52.80 (Jun 29–Jul 5, 2026) vs $55.10 (Jun 22–28, 2026).
 
 ## Drivers
 
-Connectivity is higher this week at **$189.40** versus **$78.20** last week. The jump is from a **Verizon wireless overage** (**$95.00** on May 12) plus your usual **Xfinity internet** (**$74.99** on May 14).
+Phone spend is higher this week at **$142.30** versus **$52.80** last week. The jump is from a **T-Mobile international roaming overage** (**$67.31** on Jul 8) plus your regular **AT&T family plan** (**$74.99** on Jul 10).
 
 ## Next steps
 
-1. Set an alert on `bills_connectivity` if weekly spend exceeds $100.
+1. Set an alert on `bills_phone_mobile` if weekly spend exceeds $80.
 """,
   },
   # --- Batch 2: $0 restart, pure restatement, thin timing ---
   {
-    "name": "delivered_food_restart_after_subscription_pause",
+    "name": "coffee_delivery_restart_after_subscription_pause",
     "batch": 2,
     "output": (
       '{"score": 5, "notes": "Uses $0 prior months and mid-month ISO buckets to explain why '
-      'delivered-food spend restarted and why the move looks sharply up."}'
+      'coffee-delivery spend restarted and why the move looks sharply up."}'
     ),
     "input": """# Rationalize What
 
-Explain: Delivered Food is significantly up this month at $214. (2026-06-01 to 2026-06-30)
+Explain: Coffee Delivery is significantly up this month at $118. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Delivered Food (Jun 1–30, 2026):** $214.60.
-* **Delivered Food (May 1–31, 2026):** $0.00.
-* **Delivered Food (Apr 1–30, 2026):** $0.00.
-* **ISO week buckets (Jun):** $0.00 (Jun 1–7); $18.40 (Jun 8–14); $96.20 (Jun 15–21); $100.00 (Jun 22–28).
+* **Coffee Delivery (Aug 1–31, 2026):** $118.40.
+* **Coffee Delivery (Jul 1–31, 2026):** $0.00.
+* **Coffee Delivery (Jun 1–30, 2026):** $0.00.
+* **ISO week buckets (Aug):** $0.00 (Aug 1–7); $12.60 (Aug 8–14); $48.80 (Aug 15–21); $57.00 (Aug 22–28).
 
 ## Drivers
 
-This is a **restart**, not a steady climb: May and April are **$0** because Instacart+ and DoorDash DashPass were **paused** after a budget reset. Charges resume mid-June—**Instacart** (**$96.20** week of Jun 15) and **DoorDash** (**$100.00** week of Jun 22)—which is why June totals jump from a true **$0** baseline.
+This is a **restart**, not a steady climb: July and June are **$0** because **Blue Bottle** and **Philz** delivery subscriptions were **canceled** during a spending reset. Orders resume mid-August—**Blue Bottle** (**$48.80** week of Aug 15) and **Philz** (**$57.00** week of Aug 22)—which is why August totals jump from a true **$0** baseline.
 
 ## Next steps
 
-1. Tag Instacart and DoorDash → `meals_delivered_food` so pauses stay visible.
+1. Tag Blue Bottle and Philz → `meals_coffee_delivery` so pauses stay visible.
 """,
   },
   {
-    "name": "interest_income_restate_figures_only",
+    "name": "cashback_restate_figures_only",
     "batch": 2,
     "output": (
-      '{"score": 1, "notes": "Recites What and figure rows with no mechanism for why interest '
+      '{"score": 1, "notes": "Recites What and figure rows with no mechanism for why cashback '
       'income fell vs prior months."}'
     ),
     "input": """# Rationalize What
 
-Explain: Interest is significantly down this month at $12. (2026-06-01 to 2026-06-30)
+Explain: Cashback is significantly down this month at $8. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Interest (Jun 1–30, 2026):** $12.18.
-* **Interest (May 1–31, 2026):** $48.90.
-* **Interest (Apr 1–30, 2026):** $52.10.
+* **Cashback (Aug 1–31, 2026):** $8.42.
+* **Cashback (Jul 1–31, 2026):** $34.60.
+* **Cashback (Jun 1–30, 2026):** $38.15.
 
 ## Drivers
 
-Interest is down to $12. May was $48.90 and April was $52.10.
+Cashback is down to $8. July was $34.60 and June was $38.15.
 
 ## Next steps
 
-1. Monitor interest income.
+1. Monitor cashback rewards.
 """,
   },
   {
-    "name": "transportation_car_up_generic_timing",
+    "name": "home_maintenance_up_generic_timing",
     "batch": 2,
     "output": (
       '{"score": 2, "notes": "Cites vs-prior-month totals but only offers generic timing language '
-      'without tying specific charges to why June rose vs May."}'
+      'without tying specific charges to why August rose vs July."}'
     ),
     "input": """# Rationalize What
 
-Explain: Car and Transportation is significantly up this month at $680. (2026-06-01 to 2026-06-30)
+Explain: Home Maintenance is significantly up this month at $540. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Car and Transportation (Jun 1–30, 2026):** $680.40 vs $412.00 (May 1–31, 2026).
-* **Largest Jun lines:** Shell **$186.00**; Jiffy Lube **$214.00**; City Parking **$88.00**.
+* **Home Maintenance (Aug 1–31, 2026):** $540.20 vs $285.00 (Jul 1–31, 2026).
+* **Largest Aug lines:** Home Depot **$248.00**; Ace Hardware **$162.00**; Plumber Co **$130.20**.
 
 ## Drivers
 
-Transportation is higher in June mostly because of **timing**—some car expenses hit this month. It is up compared to May.
+Home maintenance is higher in August mostly because of **timing**—some repair and supply expenses hit this month. It is up compared to July.
 
 ## Next steps
 
-1. Set a monthly cap on `transportation_car`.
+1. Set a monthly cap on `housing_home_maintenance`.
 """,
   },
   # --- Batch 3: refunds, multi-line What, payroll, partial shopping ---
   {
-    "name": "shopping_gadgets_refunds_mechanism_clear",
+    "name": "clothing_refunds_mechanism_clear",
     "batch": 3,
     "output": (
       '{"score": 5, "notes": "Links the What’s refund line to named merchants and explains how '
-      'returns shape net gadget spend vs the prior month."}'
+      'returns shape net clothing spend vs the prior month."}'
     ),
     "input": """# Rationalize What
 
-Explain: Gadgets net spend is elevated this month at $920, including **$310 in refunds** for Gadgets that offset gross electronics charges. (2026-06-01 to 2026-06-30)
+Explain: Clothing net spend is elevated this month at $640, including **$185 in refunds** for Clothing that offset gross apparel charges. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Gadgets gross (Jun 1–30, 2026):** $1,230.00.
-* **Gadgets refunds/credits (Jun 1–30, 2026):** −$310.00 across 3 lines.
-* **Gadgets net (Jun 1–30, 2026):** $920.00 vs $740.00 net (May 1–31, 2026).
+* **Clothing gross (Aug 1–31, 2026):** $825.00.
+* **Clothing refunds/credits (Aug 1–31, 2026):** −$185.00 across 2 lines.
+* **Clothing net (Aug 1–31, 2026):** $640.00 vs $520.00 net (Jul 1–31, 2026).
 
 ## Drivers
 
-The **$310 refunds** are concentrated: **Best Buy** return for an unopened monitor (**−$220.00** on Jun 8) and an **Amazon** duplicate-charge reversal (**−$90.00** on Jun 19). Gross looks like a spending spike, but returns explain why net is only **$180** above May despite the **$1,230** in posted buys.
+The **$185 refunds** are concentrated: **Nordstrom** return for unworn boots (**−$120.00** on Aug 6) and a **Zara** wrong-size reversal (**−$65.00** on Aug 21). Gross buys include **Uniqlo $320.00** and **H&M $285.00** in August; those returns explain why net is only **$120** above July’s **$520** despite **$825** in posted apparel charges.
 
 ## Next steps
 
-1. Watch Amazon duplicate charges on `shopping_gadgets`.
+1. Watch Zara sizing returns on `shopping_clothing`.
 """,
   },
   {
-    "name": "dining_net_refunds_vague_no_march_story",
+    "name": "takeout_net_refunds_vague_no_prior_story",
     "batch": 3,
     "output": (
-      '{"score": 2, "notes": "Mentions refunds and activity but does not explain why net dining '
+      '{"score": 2, "notes": "Mentions refunds and activity but does not explain why net takeout '
       'moved vs the prior month using the figures provided."}'
     ),
     "input": """# Rationalize What
 
-Explain: Dining Out net spend is elevated this month at $510, including **$180 in refunds** for Dining Out that offset gross restaurant charges. (2026-06-01 to 2026-06-30)
+Explain: Takeout net spend is elevated this month at $380, including **$95 in refunds** for Takeout that offset gross delivery charges. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Dining Out net (Jun 1–30, 2026):** $510.00 vs $455.00 (May 1–31, 2026).
-* **Refunds (Jun):** −$180.00 total.
+* **Takeout net (Aug 1–31, 2026):** $380.00 vs $342.00 (Jul 1–31, 2026).
+* **Refunds (Aug):** −$95.00 total.
 
 ## Drivers
 
-You dined out more in June and got some money back from refunds, so net landed at $510.
+Takeout net is **$380** versus **$342** in July—you ordered delivery more often in August and refunds offset some of the gross total, so net still landed above July.
 
 ## Next steps
 
-1. Set a monthly dining budget.
+1. Set a monthly takeout budget.
 """,
   },
   {
-    "name": "salary_down_biweekly_paycheck_count_explained",
+    "name": "salary_down_semimonthly_paycheck_count_explained",
     "batch": 3,
     "output": (
       '{"score": 5, "notes": "Explains the salary down move with paycheck timing and counts vs '
@@ -384,18 +405,18 @@ You dined out more in June and got some money back from refunds, so net landed a
     ),
     "input": """# Rationalize What
 
-Explain: Salary is significantly down this month at $2,140. (2026-06-01 to 2026-06-30)
+Explain: Salary is significantly down this month at $3,250. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Salary (Jun 1–30, 2026):** $2,140.00 vs $4,280.00 (May 1–31, 2026) vs $4,280.00 (Apr 1–30, 2026).
-* **Paychecks posted:** Jun **1** deposit **$2,140.00** (May 30 pay date); May **2** deposits **$2,140.00** each (May 2 and May 16).
+* **Salary (Aug 1–31, 2026):** $3,250.00 vs $6,500.00 (Jul 1–31, 2026) vs $6,500.00 (Jun 1–30, 2026).
+* **Paychecks posted:** Aug **1** deposit **$3,250.00** (Jul 31 pay date); Jul **2** deposits **$3,250.00** each (Jul 1 and Jul 15).
 
 ## Drivers
 
-June salary is **half** of May/April because only **one bi-weekly paycheck** posted in June so far (**$2,140** on May 30), while May had **two** (**$4,280** total). The drop is **pay-cycle timing** at month-end, not a pay-rate cut.
+August salary is **half** of July/June because only **one semi-monthly paycheck** posted in August so far (**$3,250** on Jul 31), while July had **two** (**$6,500** total). The drop is **pay-cycle timing** at month-end, not a pay-rate cut.
 
 ## Next steps
 
@@ -403,144 +424,144 @@ June salary is **half** of May/April because only **one bi-weekly paycheck** pos
 """,
   },
   {
-    "name": "utilities_down_shelter_thin_multi_line_what",
+    "name": "insurance_down_rent_thin_multi_line_what",
     "batch": 3,
     "output": (
-      '{"score": 3, "notes": "Utilities vs May is well explained but the shelter move is only '
+      '{"score": 3, "notes": "Insurance vs July is well explained but the rent move is only '
       'named—overall insight is pulled down by the weakest What line."}'
     ),
     "input": """# Rationalize What
 
-Explain: Utilities is significantly down this month at $210. Shelter is thus slightly down this month to $3,050. (2026-06-01 to 2026-06-30)
+Explain: Insurance is significantly down this month at $145. Rent is thus slightly down this month to $2,400. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Utilities (Jun 1–30, 2026):** $210.40 vs $338.90 (May 1–31, 2026).
-* **Shelter total (Jun 1–30, 2026):** $3,050.00 vs $3,088.90 (May 1–31, 2026).
-* **Dominion Energy (utilities):** $118.00 Jun vs $226.40 May.
+* **Insurance (Aug 1–31, 2026):** $145.80 vs $268.40 (Jul 1–31, 2026).
+* **Rent total (Aug 1–31, 2026):** $2,400.00 vs $2,418.40 (Jul 1–31, 2026).
+* **Geico auto (insurance):** $98.00 Aug vs $186.40 Jul.
 
 ## Drivers
 
-Utilities fell **$128.50** because **Dominion** summer billing posted lower usage (**$118** vs **$226** in May) after an estimated-read correction in May inflated that month. **Shelter** is slightly down this month.
+Insurance fell **$122.60** because **Geico** posted a lower six-month renewal (**$98** vs **$186** in July) after a safe-driver discount applied. **Rent** is slightly down this month.
 
 ## Next steps
 
-1. Create a `shelter_utilities` budget at $230/month based on the last three months.
+1. Create a `shelter_insurance` budget at $160/month based on the last three months.
 """,
   },
   # --- Batch 4: focal $0, focal skip, health partial ---
   {
-    "name": "travel_zero_no_june_bookings_explained",
+    "name": "hotels_zero_no_august_bookings_explained",
     "batch": 4,
     "output": (
-      '{"score": 5, "notes": "Explains focal-month $0 travel by absence of new bookings against '
+      '{"score": 5, "notes": "Explains focal-month $0 hotels by absence of new bookings against '
       'prior-month spend—full insight on the What move."}'
     ),
     "input": """# Rationalize What
 
-Explain: Travel and Vacations is **$0** this month. (2026-06-01 to 2026-06-30)
+Explain: Hotels is **$0** this month. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Travel and Vacations (Jun 1–30, 2026):** $0.00.
-* **Travel and Vacations (May 1–31, 2026):** $1,120.00 (Denver flights + hotel).
-* **Travel and Vacations (Apr 1–30, 2026):** $640.00 (weekend rail + Airbnb).
+* **Hotels (Aug 1–31, 2026):** $0.00.
+* **Hotels (Jul 1–31, 2026):** $890.00 (Chicago conference + lodging).
+* **Hotels (Jun 1–30, 2026):** $420.00 (weekend Marriott stay).
 
 ## Drivers
 
-June is **$0** because May already captured Denver airfare and lodging, and **no new flight, hotel, or Airbnb charges** posted in June—unlike April/May, which show booking clusters. The category is quiet by **absence of new trips**, not missing data.
+August is **$0** because July already captured Chicago conference lodging, and **no new hotel or resort charges** posted in August—unlike June/July, which show booking clusters. The category is quiet by **absence of new stays**, not missing data.
 
 ## Next steps
 
-1. Add a placeholder `leisure_travel` budget line if July travel is likely.
+1. Add a placeholder `leisure_hotels` budget line if September travel is likely.
 """,
   },
   {
-    "name": "gym_wellness_zero_drivers_rehash_may_only",
+    "name": "fitness_zero_drivers_rehash_prior_only",
     "batch": 4,
     "output": (
-      '{"score": 2, "notes": "Narrates prior-month gym spend while leaving the focal $0 month '
-      'unexplained despite June showing $0 in Figures."}'
+      '{"score": 2, "notes": "Narrates prior-month fitness spend while leaving the focal $0 month '
+      'unexplained despite August showing $0 in Figures."}'
     ),
     "input": """# Rationalize What
 
-Explain: Gym and Wellness is **$0** this month. (2026-06-01 to 2026-06-30)
+Explain: Fitness is **$0** this month. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Gym and Wellness (Jun 1–30, 2026):** $0.00.
-* **Gym and Wellness (May 1–31, 2026):** $156.00 (Equinox + yoga studio).
+* **Fitness (Aug 1–31, 2026):** $0.00.
+* **Fitness (Jul 1–31, 2026):** $142.00 (Peloton + yoga studio).
 
 ## Drivers
 
-May gym spend was **Equinox $120.00** and **CorePower $36.00**—that is the recent wellness pattern in your account.
+July fitness spend was **Peloton $39.00** and **YogaWorks $103.00**—that is the recent workout pattern in your account.
 
 ## Next steps
 
-1. Review May gym receipts.
+1. Review July fitness receipts.
 """,
   },
   {
-    "name": "medical_pharmacy_up_lists_rx_without_prior_change",
+    "name": "dental_up_lists_visits_without_prior_change",
     "batch": 4,
     "output": (
-      '{"score": 3, "notes": "Itemizes June pharmacy charges and vs-May comparison but does not '
-      'explain why the prescription pattern differed from May—partial movement insight."}'
+      '{"score": 3, "notes": "Lists August dental charges but does not identify which '
+      'transactions drove the increase vs July—partial, not full insight."}'
     ),
     "input": """# Rationalize What
 
-Explain: Medical and Pharmacy is significantly up this month at $385. (2026-06-01 to 2026-06-30)
+Explain: Dental is significantly up this month at $520. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Medical and Pharmacy (Jun 1–30, 2026):** $385.60 vs $92.40 (May 1–31, 2026).
+* **Dental (Aug 1–31, 2026):** $520.40 vs $85.00 (Jul 1–31, 2026).
 
 ## Drivers
 
-Pharmacy is up this month at **$385.60** compared with **$92.40** in May. June includes **CVS** (**$142.00**), **Walgreens** (**$118.60**), and a **Mail Order Rx** (**$125.00**) on Jun 4.
+Dental is up this month at **$520.40** compared with **$85.00** in July. August includes **Bright Smiles cleaning** (**$185.00**), **Root Canal Specialists** (**$245.40**), and a **Delta Dental copay** (**$90.00**) on Aug 14.
 
 ## Next steps
 
-1. Set a monthly cap on `health_medical_pharmacy`.
+1. Set a monthly cap on `health_dental`.
 """,
   },
   {
-    "name": "pets_up_new_vendor_no_prior_absence_story",
+    "name": "childcare_up_lists_vendors_no_prior_story",
     "batch": 4,
     "output": (
-      '{"score": 3, "notes": "Shows vs-prior-month increase and names focal pet charges but not '
-      'why similar spend was missing in May—reader gets composition more than movement cause."}'
+      '{"score": 3, "notes": "Itemizes August childcare merchants but does not say which charges '
+      'drove the up move vs July—composition without drivers is partial."}'
     ),
     "input": """# Rationalize What
 
-Explain: Pets is significantly up this month at $240. (2026-06-01 to 2026-06-30)
+Explain: Childcare is significantly up this month at $1,840. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Pets (Jun 1–30, 2026):** $240.80 vs $38.00 (May 1–31, 2026).
+* **Childcare (Aug 1–31, 2026):** $1,840.00 vs $620.00 (Jul 1–31, 2026).
 
 ## Drivers
 
-June pet spend totals **$240.80**, mainly **Banfield vet visit $165.00** (Jun 12), **Chewy $58.80** (Jun 18), and **Petco food $17.00**.
+August childcare totals **$1,840.00**, mainly **Bright Horizons tuition $1,200.00** (Aug 1), **KinderCare camp $480.00** (Aug 12), and **babysitter Venmo $160.00**.
 
 ## Next steps
 
-1. Budget `shopping_pets` at $120/month unless vet visits are planned.
+1. Budget `family_childcare` at $1,400/month unless camp weeks are planned.
 """,
   },
   # --- Batch 5: multi-claim restatement, mixed complexity ---
   {
-    "name": "income_interest_sidegig_multi_restate_only",
+    "name": "income_dividends_freelance_multi_restate_only",
     "batch": 5,
     "output": (
       '{"score": 1, "notes": "Repeats all three What headlines and figure totals with no '
@@ -548,19 +569,19 @@ June pet spend totals **$240.80**, mainly **Banfield vet visit $165.00** (Jun 12
     ),
     "input": """# Rationalize What
 
-Explain: Salary is significantly down this month at $2,140. Interest is significantly down this month at $12. Side-Gig income is significantly up this month at $890. (2026-06-01 to 2026-06-30)
+Explain: Salary is significantly down this month at $3,250. Dividends is significantly down this month at $45. Freelance income is significantly up this month at $1,120. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
 ## Figures
 
-* **Salary (Jun):** $2,140.00 vs $4,280.00 (May).
-* **Interest (Jun):** $12.18 vs $48.90 (May).
-* **Side-Gig (Jun):** $890.00 vs $310.00 (May).
+* **Salary (Aug):** $3,250.00 vs $6,500.00 (Jul).
+* **Dividends (Aug):** $45.20 vs $128.00 (Jul).
+* **Freelance (Aug):** $1,120.00 vs $380.00 (Jul).
 
 ## Drivers
 
-Salary is $2,140, interest is $12, and side-gig is $890 this month.
+Salary is $3,250, dividends are $45, and freelance is $1,120 this month.
 
 ## Next steps
 
@@ -568,59 +589,59 @@ Salary is $2,140, interest is $12, and side-gig is $890 this month.
 """,
   },
   {
-    "name": "groceries_up_warehouse_restart_clear",
+    "name": "groceries_up_sams_club_restock_clear",
     "batch": 5,
     "output": (
-      '{"score": 5, "notes": "Explains the weekly up move with Costco vs prior week, Kroger '
+      '{"score": 5, "notes": "Explains the weekly up move with Sam’s Club vs prior week, Safeway '
       'contrast, and ISO timing—full movement insight."}'
     ),
     "input": """# Rationalize What
 
-Explain: Groceries is significantly up this week at $512. (2026-05-17 to 2026-05-23)
+Explain: Groceries is significantly up this week at $428. (2026-07-20 to 2026-07-26)
 
 # Rationalize Response
 
 ## Figures
 
-* **Groceries (May 17–23, 2026):** $512.40 vs $298.10 (May 10–16, 2026).
-* **ISO split:** $180.00 (May 17–19); $332.40 (May 20–23).
-* **Largest lines:** Costco **$214.00** (May 20); Kroger **$118.40** (May 18); Trader Joe’s **$96.00** (May 22).
+* **Groceries (Jul 20–26, 2026):** $428.60 vs $245.30 (Jul 13–19, 2026).
+* **ISO split:** $142.00 (Jul 20–22); $286.60 (Jul 23–26).
+* **Largest lines:** Sam’s Club **$198.00** (Jul 23); Safeway **$96.40** (Jul 21); Whole Foods **$84.20** (Jul 25).
 
 ## Drivers
 
-The week jumped to **$512.40** from **$298.10** because of a **Costco** restock (**$214**) in a week with **no warehouse trip last week**, plus a larger **Kroger** run (**$118** vs **$62** prior week). **Other stores** account for the remaining increase.
+The week jumped to **$428.60** from **$245.30** because of a **Sam’s Club** restock (**$198**) in a week with **no warehouse trip last week**, plus a larger **Safeway** run (**$96** vs **$48** prior week). **Other stores** account for the remaining increase.
 
 ## Next steps
 
-1. Set a weekly `meals_groceries` cap at $400 if you want to limit stock-up weeks.
+1. Set a weekly `meals_groceries` cap at $350 if you want to limit stock-up weeks.
 """,
   },
   {
-    "name": "entertainment_down_one_time_purchases_absent",
+    "name": "hobbies_down_one_time_purchases_absent",
     "batch": 5,
     "output": (
-      '{"score": 5, "notes": "Ties the down move to absent AMC/Steam one-timers vs last week while '
-      'noting steady streaming—clear period-over-period insight."}'
+      '{"score": 5, "notes": "Ties the down move to absent Michaels/REI one-timers vs last week while '
+      'noting steady craft subscriptions—clear period-over-period insight."}'
     ),
     "input": """# Rationalize What
 
-Explain: Entertainment is significantly down this week at $45. (2026-05-10 to 2026-05-16)
+Explain: Hobbies is significantly down this week at $22. (2026-07-06 to 2026-07-12)
 
 # Rationalize Response
 
 ## Figures
 
-* **Entertainment (May 10–16, 2026):** $45.00 vs $198.40 (May 3–9, 2026).
-* **May 3–9:** AMC **$62.00**; Steam **$124.41**; Spotify **$11.99**.
-* **May 10–16:** Spotify **$11.99** only (no AMC/Steam).
+* **Hobbies (Jul 6–12, 2026):** $22.00 vs $168.50 (Jun 29–Jul 5, 2026).
+* **Jun 29–Jul 5:** REI **$89.00**; Michaels **$62.51**; Craftsy **$16.99**.
+* **Jul 6–12:** Craftsy **$16.99** only (no REI/Michaels).
 
 ## Drivers
 
-Entertainment fell **$153.40** because last week included a **Steam** purchase (**$124.41**) and an **AMC** ticket (**$62**), while this week has **no similar one-time purchases**—only recurring streaming. Subscriptions were **about the same** as usual.
+Hobbies fell **$146.50** because last week included a **REI** gear purchase (**$89.00**) and a **Michaels** supply run (**$62.51**), while this week has **no similar one-time purchases**—only recurring craft streaming. Subscriptions were **about the same** as usual.
 
 ## Next steps
 
-1. Tag AMC and Steam → `leisure_entertainment` for cleaner week-over-week reads.
+1. Tag REI and Michaels → `leisure_hobbies` for cleaner week-over-week reads.
 """,
   },
 ]
