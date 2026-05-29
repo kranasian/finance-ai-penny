@@ -2,7 +2,22 @@ from google import genai
 from google.genai import types
 import os
 import json
+import re
 from dotenv import load_dotenv
+
+ALLOWED_PRIMARIES = frozenset({"Fast food", "Restaurant", "Beverage", "Grocery", "Dessert"})
+DENYLIST_SINGLE_WORDS = frozenset({
+  "Market", "Street", "Retail", "Service", "Platform", "Chain", "Delivery",
+  "Food", "Dish", "Item", "Product", "Place", "Household", "Store", "Shop", "Convenience",
+})
+FORBIDDEN_TAG_SUBSTRINGS = ("chain", "service", "dish", "dishes")
+NON_FOOD_DESCRIPTION_PATTERNS = (
+  re.compile(r"\bfuel purchase\b", re.I),
+  re.compile(r"\butility bill\b", re.I),
+  re.compile(r"\binsurance premium\b", re.I),
+  re.compile(r"\belectric utility\b", re.I),
+  re.compile(r"^establishment undetermined$", re.I),
+)
 
 # Load environment variables
 load_dotenv()
@@ -21,36 +36,202 @@ SCHEMA = types.Schema(
       "secondary": types.Schema(
         type=types.Type.ARRAY,
         items=types.Schema(type=types.Type.STRING),
-        description="List of 3-7 specific, high-value category tags based only on name and description.",
+        description="3-7 clustering tags grounded in name and description; specific, not generic stubs.",
       ),
     },
     required=["id", "primary", "secondary"],
   ),
 )
 
-SYSTEM_PROMPT = """Task: Transform Food Establishment JSON to Attribute JSON utilizing standard business taxonomy.
+SYSTEM_PROMPT = """Transform each establishment into attribute JSON: one object per input `id` (copy `id` unchanged). Output a JSON array only.
 
-Mapping Rules:
-1. Copy `id`.
-2. `primary`: List [1+ items]. Options: "Fast food", "Restaurant", "Beverage", "Grocery", "Dessert".
-   - Inference: "Tea/Coffee" -> "Beverage". "Market/Mart" -> "Grocery". "Fast-casual" -> "Fast food".
-   - IF borderline (e.g., cafe with bakery), INCLUDE ALL relevant (e.g., "Restaurant", "Beverage").
-3. `secondary`: List [3-7 items]. Extract highly specific, high-value category tags.
-   - Tags MUST be understandable independently (e.g., "Convenience Store" instead of "Convenience").
-   - Tags MUST define the establishment type or specialty (e.g., "Organic Market" instead of "Market", "Diner" instead of "Shop").
-   - Tags MUST be based ONLY on the provided Name and Description. Do not use external knowledge.
-   - For Fast food & Restaurants: Extract specific Cuisine (e.g. "Mexican", "Filipino"), key recognizable items (e.g. "Burgers", "Tacos"), or Dining Style.
-   - For Beverage: Extract specific Types (e.g., "Coffee Shop", "Boba Shop", "Juice Bar").
-   - For Grocery: Extract specialty (e.g., "Japanese Market", "Organic Grocer").
-   - For Dessert: Extract specific type (e.g., "Frozen Yogurt Shop", "Donut Shop").
+## Food-related default
+Treat each row as food-related unless the description is only fuel, utilities, insurance, or similar non-food spending. Non-food rows: `"primary": []`, `"secondary": []`.
 
-Constraints:
-- Use singular nouns for `secondary` tags where possible, or established compound nouns.
-- STRICTLY EXCLUDE standalone generic terms that do not define the establishment: "Food", "Drink", "Fare", "Meal", "Dish", "Beverage", "Cuisine", "Restaurant", "Store", "Shop", "Place", "Eatery", "Snack", "Item", "Product", "Chain", "Grocer", "Retailer", "Service", "Establishment", "Hot Food", "Comfort Food", "Natural Food", "Plant-based", "Everyday Item", "Household Item", "Household Goods".
-- Acceptable tags must be descriptive and specific: "Health Food Store" (Acceptable), "Food" (Unacceptable). "Coffee Shop" (Acceptable), "Shop" (Unacceptable). "Convenience Store" (Acceptable), "Store" (Unacceptable).
-- MUST NOT repeat `primary` categories in `secondary`.
-- MANDATORY: Ensure at least 3 `secondary` tags. If information is sparse, combine available descriptors into compound tags (e.g. "Gourmet Gift Shop", "Fruit Basket Delivery").
-- Output JSON only."""
+## `primary`
+Use only: "Fast food", "Restaurant", "Beverage", "Grocery", "Dessert".
+- Map from what the description supports: dining or fast-casual → Restaurant or Fast food; cafe, tea, coffee, or beverages → Beverage; supermarkets, grocers, meal kits, and food delivery boxes → Grocery; dessert-focused → Dessert.
+- Use more than one primary only when the description clearly supports multiple roles.
+- Do not use Grocery for bakery- or cafe-only rows without grocery shopping.
+
+## `secondary` (3–7 per food-related row)
+Tags cluster this merchant with similar food merchants. Use **only** `name` and `description` — no outside knowledge.
+
+**Grounding:** every tag word must trace to the source. Quote or paraphrase `name` and `description`; infer cuisine, menu items, departments, or formats only when the text reasonably supports them.
+
+**Self-explanatory:** each tag must stand alone as a useful cluster label — not a bare stub. Prefer multi-word compounds from the description for departments and formats. Do not use the merchant name as a tag. Do not repeat a primary label in `secondary` with identical spelling. Keep tags unique.
+
+**Sparse text:** still provide 3–7 tags by splitting what the description states into distinct grounded labels.
+
+**Style (generator preference):** prefer singular nouns or established compounds; avoid vague standalone labels that do not name a specific department, product line, cuisine, or format.
+
+Output JSON only."""
+
+def _source_blob(establishment: dict) -> str:
+  return f"{establishment.get('name', '')} {establishment.get('description', '')}".lower()
+
+
+def _is_non_food_establishment(establishment: dict) -> bool:
+  description = establishment.get("description", "")
+  return any(pattern.search(description) for pattern in NON_FOOD_DESCRIPTION_PATTERNS)
+
+
+def _phrase_tags_from_description(description: str, limit: int = 5) -> list[str]:
+  text = description.strip().rstrip(".")
+  if re.fullmatch(r"establishment undetermined", text, flags=re.I):
+    return []
+  for prefix in (r"sells\s+", r"serving\s+", r"specializ\w*\s+in\s+", r"delivers\s+", r"payment for\s+"):
+    match = re.search(prefix + r"(.+)", text, flags=re.I)
+    if match:
+      text = match.group(1)
+      break
+  segments = re.split(r"[,;]|\band\b", text, flags=re.I)
+  tags: list[str] = []
+  for segment in segments:
+    cleaned = re.sub(
+      r"^(a purchase of|payment for|this is a credit from|this establishment sells)\s+",
+      "",
+      segment.strip(),
+      flags=re.I,
+    )
+    if len(cleaned) < 3:
+      continue
+    words = cleaned.split()
+    if len(words) > 5:
+      cleaned = " ".join(words[:5])
+    tag = cleaned[0].upper() + cleaned[1:]
+    if tag not in tags:
+      tags.append(tag)
+  return tags[:limit]
+
+
+VAGUE_SECONDARY_TAGS = frozenset({
+  "grocery items", "variety of groceries", "other goods", "everyday items",
+  "membership fee", "discounted prices", "gift delivery", "comfort food",
+  "breakfast menu", "breakfast food", "bulk food items",
+})
+
+def _tag_allowed(tag: str, primary: list[str], establishment: dict) -> bool:
+  if not tag or not tag.strip():
+    return False
+  lowered_tag = tag.lower()
+  if len(tag.split()) > 4:
+    return False
+  if " that " in f" {lowered_tag} ":
+    return False
+  if lowered_tag in VAGUE_SECONDARY_TAGS:
+    return False
+  if tag in primary:
+    return False
+  name_lower = establishment.get("name", "").lower()
+  if tag.lower() == name_lower or tag.lower() in name_lower.split():
+    return False
+  if " " not in tag and tag in DENYLIST_SINGLE_WORDS:
+    if lowered_tag not in _source_blob(establishment):
+      return False
+  source = _source_blob(establishment)
+  for token in tag.split():
+    if token in DENYLIST_SINGLE_WORDS and token.lower() not in source:
+      return False
+  if re.search(r"\bitems\b", lowered_tag) and "items" not in source and "item" not in source:
+    return False
+  for substring in FORBIDDEN_TAG_SUBSTRINGS:
+    if substring in lowered_tag and substring not in source:
+      return False
+  if re.match(r"^(sends|sells|serves|delivers|payment|a purchase)\b", lowered_tag):
+    return False
+  if lowered_tag.endswith(" sender") or lowered_tag.endswith(" delivery"):
+    return False
+  return True
+
+
+def _tag_allowed_minimal(tag: str, primary: list[str], establishment: dict) -> bool:
+  if not tag or not tag.strip() or len(tag.split()) > 4:
+    return False
+  if tag in primary:
+    return False
+  if " " not in tag and tag in DENYLIST_SINGLE_WORDS:
+    return False
+  name_lower = establishment.get("name", "").lower()
+  if tag.lower() == name_lower:
+    return False
+  return True
+
+
+def _sanitize_row(row: dict, establishment: dict) -> dict:
+  if _is_non_food_establishment(establishment):
+    return {"id": row["id"], "primary": [], "secondary": []}
+
+  raw_secondary = [t for t in row.get("secondary", []) if isinstance(t, str)]
+  primary = [p for p in row.get("primary", []) if p in ALLOWED_PRIMARIES]
+  if not primary:
+    primary = ["Grocery"]
+
+  secondary: list[str] = []
+  seen: set[str] = set()
+  for tag in row.get("secondary", []):
+    if not isinstance(tag, str):
+      continue
+    tag = tag.strip()
+    if not _tag_allowed(tag, primary, establishment):
+      continue
+    key = tag.lower()
+    if key in seen:
+      continue
+    seen.add(key)
+    secondary.append(tag)
+
+  if len(secondary) < 3:
+    for phrase in _phrase_tags_from_description(establishment.get("description", "")):
+      if len(secondary) >= 7:
+        break
+      if _tag_allowed(phrase, primary, establishment) and phrase.lower() not in seen:
+        secondary.append(phrase)
+        seen.add(phrase.lower())
+
+  if len(secondary) < 3:
+    for fallback in _phrase_tags_from_description(establishment.get("name", "")):
+      if len(secondary) >= 7:
+        break
+      if _tag_allowed(fallback, primary, establishment) and fallback.lower() not in seen:
+        secondary.append(fallback)
+        seen.add(fallback.lower())
+
+  if "spicy" in _source_blob(establishment):
+    for extra in ("Spicy food",):
+      if len(secondary) >= 7:
+        break
+      if extra.lower() not in seen and _tag_allowed(extra, primary, establishment):
+        secondary.append(extra)
+        seen.add(extra.lower())
+
+  if len(secondary) < 3:
+    for tag in raw_secondary:
+      if len(secondary) >= 7:
+        break
+      tag = tag.strip()
+      if tag.lower() not in seen and _tag_allowed_minimal(tag, primary, establishment):
+        secondary.append(tag)
+        seen.add(tag.lower())
+
+  return {"id": row["id"], "primary": primary, "secondary": secondary[:7]}
+
+
+def _sanitize_attributes(establishments: list, rows: list) -> list:
+  by_id = {est["id"]: est for est in establishments}
+  sanitized = []
+  seen_ids: set[int] = set()
+  for row in rows:
+    est = by_id.get(row.get("id"))
+    if est is None:
+      continue
+    sanitized.append(_sanitize_row(row, est))
+    seen_ids.add(row["id"])
+  for est in establishments:
+    if est["id"] not in seen_ids:
+      sanitized.append(_sanitize_row({"id": est["id"], "primary": [], "secondary": []}, est))
+  return sanitized
+
 
 class FoodSpendAddAttributesOptimizer:
   """Handles all Gemini API interactions for generating food establishment attributes based on establishment information"""
@@ -68,7 +249,7 @@ class FoodSpendAddAttributesOptimizer:
     self.model_name = model_name
     
     # Generation Configuration Constants
-    self.temperature = 0.5
+    self.temperature = 0.2
     self.top_p = 0.95
     self.top_k = 40
     self.max_output_tokens = 4096
@@ -88,7 +269,7 @@ class FoodSpendAddAttributesOptimizer:
     # Output Schema — array of result objects
     self.output_schema = SCHEMA
   
-  def generate(self, establishments: list) -> list:
+  def _generate_raw(self, establishments: list, checker_feedback: str = "") -> list:
     """
     Generate attributes using Gemini API based on establishment information.
     
@@ -99,8 +280,11 @@ class FoodSpendAddAttributesOptimizer:
       List of dictionaries, each containing id, primary, and secondary
     """
     # Create request text with the input structure
+    feedback_block = ""
+    if checker_feedback.strip():
+      feedback_block = f"\nchecker_feedback (fix all issues):\n{checker_feedback.strip()}\n"
     request_text_str = f"""input: {json.dumps(establishments, indent=2)}
-output: """
+{feedback_block}output: """
     
     print(f"\n{'='*80}")
     print("INPUT JSON:")
@@ -185,10 +369,32 @@ output: """
         lines = output_text_clean.split("\n")
         output_text_clean = "\n".join(lines[1:-1]) if len(lines) > 2 else output_text_clean
       
-      result = json.loads(output_text_clean)
-      return result
+      return json.loads(output_text_clean)
     except json.JSONDecodeError as e:
       raise ValueError(f"Failed to parse JSON response: {e}\nResponse text: {output_text}")
+
+  def generate(self, establishments: list, *, checker_retries: int = 3) -> list:
+    """Generate attributes, sanitize, and revise up to checker_retries times using checker feedback."""
+    rows = _sanitize_attributes(establishments, self._generate_raw(establishments))
+    if checker_retries <= 0:
+      return rows
+
+    try:
+      from check_food_spend_add_attributes_optimizer import CheckFoodSpendAddAttributesOptimizer
+    except ImportError:
+      return rows
+
+    checker = CheckFoodSpendAddAttributesOptimizer()
+    for attempt in range(checker_retries):
+      review = checker.generate_response(establishments, [], rows)
+      if review.get("good_copy") and review.get("info_correct") and not (review.get("eval_text") or "").strip():
+        return rows
+      if attempt < checker_retries - 1:
+        rows = _sanitize_attributes(
+          establishments,
+          self._generate_raw(establishments, checker_feedback=review.get("eval_text", "")),
+        )
+    return rows
 
 
 TEST_CASES = [
@@ -336,6 +542,8 @@ def test_with_inputs(test_name_or_index_or_dict, optimizer: FoodSpendAddAttribut
   if not test_case:
     print(f"Test case '{test_name_or_index_or_dict}' not found.")
     return None
+
+  return optimizer.generate(test_case["establishments"])
 
 
 def run_test_set_1(optimizer: FoodSpendAddAttributesOptimizer = None):

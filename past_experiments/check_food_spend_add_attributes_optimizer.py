@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from google import genai
 from google.genai import types
 import os
@@ -7,62 +9,179 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a checker verifying the output of a model (FoodSpendAddAttributesOptimizer) that transforms food establishment data into structured attributes.
+RUN_SETTINGS = {
+  "json": True,
+  "sanitize": True,
+  "gen_config": {
+    "top_p": 0.95,
+    "top_k": 40,
+    "temperature": 0.2,
+    "max_output_tokens": 4096,
+    "response_mime_type": "application/json",
+    "thinking_budget": 0,
+  },
+  "model_name": "gemini-flash-lite-latest",
+  "output_schema": {
+    "type": 6,
+    "items": None,
+    "required": ["eval_text", "good_copy", "info_correct"],
+    "properties": {
+      "eval_text": {
+        "type": 1,
+        "description": (
+          "Empty string when no issues. Otherwise one line per bad establishment id, starting "
+          "with 'Establishment <id>: '. Max 25 words per line. State the concrete flaw in "
+          "plain language. Never cite rule numbers."
+        ),
+      },
+      "good_copy": {
+        "type": 4,
+        "description": (
+          "True only when REVIEW_NEEDED is a JSON array with one object per EVAL_INPUT id, each "
+          "having id, primary (list), and secondary (list). False only for structural gaps — "
+          "not for tag quality."
+        ),
+      },
+      "info_correct": {
+        "type": 4,
+        "description": (
+          "True when food/non-food classification is correct, secondary count is 3-7, tags are "
+          "grounded, and every secondary tag is self-explanatory (no rejected single-word stubs)."
+        ),
+      },
+    },
+  },
+}
 
-## Input:
-- **EVAL_INPUT**: A JSON array of food establishments. Each has `id`, `name`, and `description`.
-- **PAST_REVIEW_OUTCOMES**: An array of past review outcomes.
-- **REVIEW_NEEDED**: The JSON output from the optimizer that needs to be reviewed (array of result objects).
+CHECKER_OUTPUT_SCHEMA = types.Schema(
+  type=types.Type.OBJECT,
+  properties={
+    "eval_text": types.Schema(
+      type=types.Type.STRING,
+      description=RUN_SETTINGS["output_schema"]["properties"]["eval_text"]["description"],
+    ),
+    "good_copy": types.Schema(
+      type=types.Type.BOOLEAN,
+      description=RUN_SETTINGS["output_schema"]["properties"]["good_copy"]["description"],
+    ),
+    "info_correct": types.Schema(
+      type=types.Type.BOOLEAN,
+      description=RUN_SETTINGS["output_schema"]["properties"]["info_correct"]["description"],
+    ),
+  },
+  required=["eval_text", "good_copy", "info_correct"],
+)
 
-## Output:
-Return valid JSON only. Put each top-level key on its own line (line break after each of good_copy, info_correct, eval_text). Example format:
-```
-{"good_copy": true,
-"info_correct": true,
-"eval_text": ""}
-```
+SYSTEM_PROMPT = """You are a checker for structured merchant attributes. Tags are used to cluster similar food-related establishments; they need not be food words but must discriminate one merchant from unrelated food merchants.
 
-- `good_copy`: True if REVIEW_NEEDED is a valid JSON array and each item has the required fields: `id`, `primary`, `secondary`. Every `id` in REVIEW_NEEDED must exist in EVAL_INPUT. There must be exactly one output item per establishment in EVAL_INPUT.
-- `info_correct`: True if the `primary` and `secondary` attributes for each item in REVIEW_NEEDED are correct according to the rules.
-- `eval_text`: Empty string when good_copy and info_correct are both True. Otherwise, explain why REVIEW_NEEDED is incorrect. Each line must start with "Establishment <id>: ". **Crucial: The explanation must be self-contained and descriptive (e.g., "contains forbidden generic term 'Food'" instead of "violates Rule 3").** One line per erroneous item (max 25 words per line). **NEVER reference rule numbers in your output.**
+## Inputs
+- **EVAL_INPUT**: array of `{id, name, description}`
+- **PAST_REVIEW_OUTCOMES**: prior checker results
+- **REVIEW_NEEDED**: array of `{id, primary, secondary}` to validate
 
-## Critical Rules for FoodSpendAddAttributes:
-1. `primary`: Must be a list containing at least one of: "Fast food", "Restaurant", "Beverage", "Grocery", "Dessert".
-2. `secondary`: Must be a list of 3-7 tags that define the establishment and set it apart from others.
-3. **Definition Axis**: Tags are only acceptable if they contribute to describing the establishment (e.g., "Burger" is okay, "Item" is unacceptable as it is too vague).
-4. **Independently Understandable**: Tags must be understandable on their own. (e.g., "Convenience Store" is okay, but "Convenience" alone is unacceptable as it requires context).
-5. **Source Grounding**: Tags must be based solely on the provided `name` and `description`. Do not use external knowledge or infer details not present in the text.
-6. **Multi-word Tags**: Two-word tags are acceptable if a single word cannot capture the essence (e.g., "Frozen Yogurt").
-7. **Singular Nouns**: Use singular nouns for `secondary` tags (e.g., "Taco" not "Tacos").
-8. **No Repetition**: `primary` categories must not be repeated in `secondary`.
-9. **Minimum Tags**: Every establishment MUST have at least 3 `secondary` tags. If fewer are provided, it is a failure.
-10. **No External Inference**: If the description says "sells spicy food", do not tag "Burger" unless "Burger" is mentioned in the name or description.
-11. **Negative Constraints**: `secondary` tags MUST NOT contain: "food", "dish", "cuisine", "snack", "meal", "eatery", "appetizer", "entree", "heat", "place".
-12. **Generic Terms**: Strictly exclude standalone generic terms like "Food", "Drink", "Fare", "Meal", "Dish", "Beverage", "Cuisine", "Restaurant", "Store", "Cafe", "Tea", "Boba".
+## Output
+Return JSON only, fields in order: `eval_text`, `good_copy`, `info_correct`.
 
-## Verification Steps:
-1. Check PAST_REVIEW_OUTCOMES for repeated mistakes.
-2. Verify good_copy: structure, required fields, one-to-one mapping of IDs.
-3. Verify info_correct: Check primary/secondary choices against the axes and rules above.
-4. eval_text: Only when incorrect. Each line starts with "Establishment <id>: ". **NEVER reference rule numbers in eval_text. Use descriptive language only (e.g., "contains forbidden term 'Cuisine'" or "tag 'Burger' is not grounded in source text").**
+## Step 1 — Food-related classification
+Default **food-related** for every row unless the purchase cannot connect to any of:
+- **Groceries** — food sold for home use (markets, supermarkets, food-forward general merchandise)
+- **Delivered food** — prepared or grocery food brought to the customer
+- **Dining out** — prepared food or drinks consumed away from home, including inflight or venue food service
+
+If **not** food-related: correct output is `"primary": []`, `"secondary": []`. Fail if REVIEW_NEEDED assigns food categories to a non-food purchase, or leaves food merchants blank without cause.
+
+Discount or variety retailers whose description emphasizes non-food merchandise (apparel, toys, general household goods) with no food angle are usually **not** food-related.
+
+## Step 2 — Structure (`good_copy`)
+- REVIEW_NEEDED is an array with exactly one object per EVAL_INPUT `id`
+- Each object has `id`, `primary` (list), `secondary` (list)
+- Fail `good_copy` only for missing/extra ids or wrong field types — not for tag semantics
+
+## Step 3 — Food-related tag rules (`info_correct`)
+
+**Denylist reminder:** the denylist applies only when the full tag has **no space**. Any tag with a space skips denylist checks entirely.
+
+### Primary
+- Non-empty list; **multiple primaries allowed** when the merchant spans more than one allowed category
+- Allowed values only: "Fast food", "Restaurant", "Beverage", "Grocery", "Dessert"
+- **Never** fail because primary has more than one entry
+- When primary is **Beverage**, tags naming a specific drink or snack format are grounded if `description` mentions beverages, drinks, cafe, or snacks — including when the tag names a beverage type consistent with those words
+
+### Secondary count and uniqueness
+- **3 to 7** tags inclusive; three tags is sufficient — do not require more
+- Tags unique within the row
+- **Primary repeat rule:** fail only if a secondary tag equals a primary tag with **identical spelling** (same characters). Never fail because a secondary tag is plural, synonymous, or shares a root with a primary label
+
+### Grounding (name + description together)
+- Use **both** `name` and `description`. Merchant-name tokens count. Words or phrases from the description count.
+- **Description phrases**: multi-word tags that quote or closely paraphrase phrasing from `description` are grounded.
+- **Specialty inference**: a tag is grounded when reasonably linked to what the name or description establishes — not for unrelated dishes, cuisines, or flavors. A product or menu-style tag implied by the merchant **name** passes when `description` supports the same retail context and does not contradict it.
+- **Flavor descriptors**: grounded when the source describes that taste profile.
+- **Format/channel/venue tags**: grounded when stated in the source, or as a multi-word compound naming the food-related role. Do not assume takeout or delivery without support.
+- **Mixed purchases** on food-related merchants: tags naming non-food departments or product lines are grounded when `description` includes them as part of the same purchase.
+- Reject tags with no reasonable link to the source.
+
+### Self-explanatory (clustering test)
+*Would this tag alone cluster this merchant with similar food merchants?*
+
+**Denylist gate (apply first per tag):** if the tag contains a space character, **stop** — do not run denylist logic on that tag; do not split the tag into words; never combine two denylist words into a failure. Judge only grounding and whether the full phrase is specific enough. Tags paraphrasing `description` pass.
+
+For tags with **no** space: fail only when the **entire tag string** exactly equals one denylist token (case-sensitive). Words not on the list are never denylist failures. Never treat a substring or a word inside a multi-word tag as a denylist hit.
+
+**Multi-word tags** copied or closely paraphrased from `description` pass the clustering test when they name a purchase type, department, venue, or channel stated in the source — including non-food words that describe where or how the food purchase occurred.
+
+**Single-word denylist** — fail only when the entire tag equals one of:
+`Market`, `Street`, `Retail`, `Service`, `Platform`, `Chain`, `Delivery`, `Food`, `Dish`, `Item`, `Product`, `Place`, `Household`, `Store`, `Shop`, `Convenience`
+Exception: allow that exact token when it appears in `name` or `description` with clear food-retail meaning.
+
+**Other single-word tags** — pass when grounded as cuisine, menu item, product department, beverage, flavor, venue/format, or name token supported by the source (including reasonable specialty inference from the merchant name).
+
+### Strictness balance
+- Fail every unsupported or non-self-explanatory tag on a row, even if other tags are strong
+- Do not fail for alternate valid wording, count of exactly three, or multiple primaries
+- Do not fail subjective quality opinions when all tags pass grounding and the self-explanatory test
+
+## Field semantics
+- `eval_text`: empty if no issues; else one line per bad `id`, prefix `Establishment <id>: `, max 25 words, no rule numbers
+- `good_copy`: structural validity only
+- `info_correct`: false if any row fails classification or tag rules above
+
+## Procedure
+1. Read PAST_REVIEW_OUTCOMES for recurring failure patterns
+2. Per id: classify food-related vs not; check structure; for each secondary tag, check grounding, then self-explanatory (denylist only if the tag has no spaces)
+3. Write `eval_text` listing every distinct issue
+4. Set `good_copy`, then `info_correct`
 """
 
 class CheckFoodSpendAddAttributesOptimizer:
   """Handles all Gemini API interactions for checking FoodSpendAddAttributesOptimizer outputs"""
 
-  def __init__(self, model_name="gemini-flash-lite-latest"):
+  def __init__(
+    self,
+    model_name: str | None = None,
+    thinking_budget: int | None = None,
+    json_output: bool | None = None,
+    sanitize: bool | None = None,
+  ):
     """Initialize the Gemini agent with API configuration"""
     api_key = os.getenv('GEMINI_API_KEY')
     if not api_key:
       raise ValueError("GEMINI_API_KEY environment variable is not set.")
     self.client = genai.Client(api_key=api_key)
 
-    self.model_name = model_name
-    self.top_k = 40
-    self.top_p = 0.95
-    self.temperature = 0.5
-    self.thinking_budget = 0
-    self.max_output_tokens = 4096
+    gc = RUN_SETTINGS["gen_config"]
+    self.model_name = model_name if model_name is not None else RUN_SETTINGS["model_name"]
+    self.thinking_budget = (
+      thinking_budget if thinking_budget is not None else gc["thinking_budget"]
+    )
+    self.top_k = gc["top_k"]
+    self.top_p = gc["top_p"]
+    self.temperature = gc["temperature"]
+    self.max_output_tokens = gc["max_output_tokens"]
+    self.json_output = json_output if json_output is not None else RUN_SETTINGS["json"]
+    self.sanitize = sanitize if sanitize is not None else RUN_SETTINGS["sanitize"]
+    self.response_mime_type = gc.get("response_mime_type", "application/json")
+    self.output_schema = CHECKER_OUTPUT_SCHEMA
 
     self.safety_settings = [
       types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
@@ -71,6 +190,30 @@ class CheckFoodSpendAddAttributesOptimizer:
       types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF")
     ]
     self.system_prompt = SYSTEM_PROMPT
+
+  def _parse_checker_json(self, output_text: str) -> dict:
+    text = output_text.strip()
+    if self.sanitize:
+      if text.startswith("```json"):
+        text = text[7:].strip()
+        if text.endswith("```"):
+          text = text[:-3].strip()
+      elif text.startswith("```"):
+        text = text[3:].strip()
+        if text.endswith("```"):
+          text = text[:-3].strip()
+    else:
+      json_start = text.find("{")
+      json_end = text.rfind("}") + 1
+      if json_start != -1 and json_end > json_start:
+        text = text[json_start:json_end]
+
+    parsed = json.loads(text.strip())
+    if not isinstance(parsed, dict):
+      raise ValueError(f"Expected dict, got {type(parsed)}")
+    if "eval_text" not in parsed:
+      parsed["eval_text"] = ""
+    return parsed
 
   def generate_response(self, eval_input: list, past_review_outcomes: list, review_needed: list) -> dict:
     """Generate a response using Gemini API for checking optimizer outputs."""
@@ -91,7 +234,7 @@ Output:"""
     request_text = types.Part.from_text(text=request_text_str)
     contents = [types.Content(role="user", parts=[request_text])]
 
-    generate_content_config = types.GenerateContentConfig(
+    config_kwargs = dict(
       top_k=self.top_k,
       top_p=self.top_p,
       temperature=self.temperature,
@@ -102,8 +245,11 @@ Output:"""
         thinking_budget=self.thinking_budget,
         include_thoughts=True,
       ),
-      response_mime_type="application/json",
     )
+    if self.json_output:
+      config_kwargs["response_mime_type"] = self.response_mime_type
+      config_kwargs["response_schema"] = self.output_schema
+    generate_content_config = types.GenerateContentConfig(**config_kwargs)
 
     output_text = ""
     thought_summary = ""
@@ -138,110 +284,360 @@ Output:"""
       print("="*80)
 
     try:
-      return json.loads(output_text.strip())
-    except json.JSONDecodeError:
-      # Fallback for potential markdown or extra text
-      json_start = output_text.find('{')
-      json_end = output_text.rfind('}') + 1
-      if json_start != -1 and json_end > json_start:
-        return json.loads(output_text[json_start:json_end])
-      raise ValueError(f"Failed to parse JSON: {output_text}")
+      return self._parse_checker_json(output_text)
+    except json.JSONDecodeError as e:
+      raise ValueError(f"Failed to parse JSON: {e}\nResponse: {output_text}") from e
 
 
 TEST_CASES = [
+  # --- Batch 1: correct passes across establishment types ---
   {
-    "name": "correct_response",
+    "name": "beverage_boba_cafe",
     "batch": 1,
     "eval_input": [
-      {"id": 1, "name": "Snack Tiger Tea", "description": "A purchase of snacks and beverages from a cafe."}
+      {"id": 101, "name": "Snack Tiger Tea", "description": "Snacks and beverages purchased at a cafe."}
     ],
     "review_needed": [
-      {"id": 1, "primary": ["Beverage"], "secondary": ["Boba", "Tea", "Cafe"]}
+      {"id": 101, "primary": ["Beverage"], "secondary": ["Boba", "Tea", "Cafe"]}
     ],
     "past_review_outcomes": [],
-    "ideal_response": """{"good_copy": true,
-"info_correct": true,
-"eval_text": ""}
-Key validations:
-- Valid structure with one output per establishment.
-- Primary and secondary tags are grounded and rule-compliant."""
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
   },
   {
-    "name": "wrong_secondary_count",
+    "name": "grocery_supermarket",
+    "batch": 1,
+    "eval_input": [
+      {
+        "id": 102,
+        "name": "Trader Joe's",
+        "description": "Groceries including organic produce, private-label items, and prepared foods.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 102,
+        "primary": ["Grocery"],
+        "secondary": ["Organic produce", "Private-label", "Prepared foods"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  {
+    "name": "fast_food_mexican",
+    "batch": 1,
+    "eval_input": [
+      {
+        "id": 103,
+        "name": "Chipotle",
+        "description": "Fast-casual Mexican restaurant serving burritos, bowls, and tacos.",
+      }
+    ],
+    "review_needed": [
+      {"id": 103, "primary": ["Fast food"], "secondary": ["Mexican", "Burrito", "Bowl", "Taco"]}
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  {
+    "name": "restaurant_sushi_bar",
+    "batch": 1,
+    "eval_input": [
+      {
+        "id": 104,
+        "name": "Nobu",
+        "description": "Japanese restaurant serving sushi, sashimi, and Japanese-Peruvian fusion dishes.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 104,
+        "primary": ["Restaurant"],
+        "secondary": ["Japanese", "Sushi", "Sashimi", "Peruvian fusion"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  # --- Batch 2: semantic / tag-quality failures ---
+  {
+    "name": "dessert_too_few_secondary",
     "batch": 2,
     "eval_input": [
-      {"id": 2, "name": "San Froyo", "description": "Frozen yogurt shop."}
+      {"id": 201, "name": "San Froyo", "description": "Frozen yogurt shop selling frozen yogurt and toppings."}
     ],
     "review_needed": [
-      {"id": 2, "primary": ["Dessert"], "secondary": ["Frozen yogurt"]}
+      {"id": 201, "primary": ["Dessert"], "secondary": ["Frozen yogurt"]}
     ],
     "past_review_outcomes": [],
-    "ideal_response": """{"good_copy": true,
-"info_correct": false,
-"eval_text": "Establishment 2: fewer than 3 secondary tags provided."}
-Key validations:
-- good_copy remains true (structure is valid).
-- info_correct is false because secondary must have 3-7 tags.
-- eval_text cites establishment id with a descriptive reason."""
+    "ideal_output": {
+      "eval_text": "Establishment 201: fewer than 3 secondary tags provided.",
+      "good_copy": True,
+      "info_correct": False,
+    },
   },
   {
-    "name": "forbidden_words",
+    "name": "primary_repeated_in_secondary",
+    "batch": 2,
+    "eval_input": [
+      {
+        "id": 202,
+        "name": "Shake Shack",
+        "description": "Fast-casual chain serving burgers, hot dogs, fries, and shakes.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 202,
+        "primary": ["Fast food"],
+        "secondary": ["Fast food", "Burger", "Milkshake"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {
+      "eval_text": "Establishment 202: secondary repeats primary value 'Fast food'.",
+      "good_copy": True,
+      "info_correct": False,
+    },
+  },
+  {
+    "name": "vague_food_and_dish_tags",
+    "batch": 2,
+    "eval_input": [
+      {"id": 203, "name": "Manila Bay Kitchen", "description": "Family-style Filipino restaurant with rice plates."}
+    ],
+    "review_needed": [
+      {"id": 203, "primary": ["Restaurant"], "secondary": ["Food", "Dish", "Family style"]}
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {
+      "eval_text": "Establishment 203: secondary tags 'Food' and 'Dish' are too vague.",
+      "good_copy": True,
+      "info_correct": False,
+    },
+  },
+  {
+    "name": "vague_household_tag",
+    "batch": 2,
+    "eval_input": [
+      {
+        "id": 205,
+        "name": "Target",
+        "description": "General store purchase including groceries and household essentials.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 205,
+        "primary": ["Grocery"],
+        "secondary": ["General store", "Groceries", "Household"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {
+      "eval_text": "Establishment 205: tag 'Household' is not self-explanatory; use a specific compound such as 'Household essentials'.",
+      "good_copy": True,
+      "info_correct": False,
+    },
+  },
+  {
+    "name": "household_essentials_ok",
+    "batch": 2,
+    "eval_input": [
+      {
+        "id": 206,
+        "name": "Target",
+        "description": "General store purchase including groceries and household essentials.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 206,
+        "primary": ["Grocery"],
+        "secondary": ["General store", "Groceries", "Household essentials"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  {
+    "name": "meal_kit_delivery_correct",
+    "batch": 2,
+    "eval_input": [
+      {
+        "id": 204,
+        "name": "Blue Apron",
+        "description": "Subscription boxes of ingredients and recipes delivered for home cooking.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 204,
+        "primary": ["Grocery"],
+        "secondary": ["Meal kit", "Home cooking", "Subscription delivery"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  # --- Batch 3: non-food vs food-adjacent ---
+  {
+    "name": "non_food_fuel_blank",
     "batch": 3,
     "eval_input": [
-      {"id": 3, "name": "Manila Bay Cuisine", "description": "sells Filipino dishes"}
+      {"id": 301, "name": "Shell Gas Station", "description": "Fuel purchase at a gas station."}
     ],
     "review_needed": [
-      {"id": 3, "primary": ["Restaurant"], "secondary": ["Filipino Cuisine", "Rice dish", "Family style"]}
+      {"id": 301, "primary": [], "secondary": []}
     ],
     "past_review_outcomes": [],
-    "ideal_response": """{"good_copy": true,
-"info_correct": false,
-"eval_text": "Establishment 3: contains forbidden terms 'Cuisine' and 'dish' in secondary tags."}
-Key validations:
-- Forbidden generic terms in secondary (cuisine, dish).
-- eval_text is non-empty and establishment-scoped."""
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
   },
   {
-    "name": "external_inference",
-    "batch": 4,
+    "name": "non_food_utility_tagged_as_grocery",
+    "batch": 3,
     "eval_input": [
-      {"id": 4, "name": "Burning Mouth", "description": "This establishment sells spicy food."}
+      {"id": 302, "name": "PG&E", "description": "Monthly electric utility bill payment."}
     ],
     "review_needed": [
-      {"id": 4, "primary": ["Restaurant"], "secondary": ["Spicy", "Burger", "Chicken"]}
+      {"id": 302, "primary": ["Grocery"], "secondary": ["Utility", "Electric", "Bill"]}
     ],
     "past_review_outcomes": [],
-    "ideal_response": """{"good_copy": true,
-"info_correct": false,
-"eval_text": "Establishment 4: tags 'Burger' and 'Chicken' are not grounded in name or description."}
-Key validations:
-- Tags must come only from name/description (no external inference).
-- Ungrounded secondary tags fail info_correct."""
+    "ideal_output": {
+      "eval_text": "Establishment 302: non-food transaction should have empty primary and secondary.",
+      "good_copy": True,
+      "info_correct": False,
+    },
+  },
+  {
+    "name": "non_food_insurance_blank",
+    "batch": 3,
+    "eval_input": [
+      {"id": 303, "name": "State Farm", "description": "Auto insurance premium payment."}
+    ],
+    "review_needed": [
+      {"id": 303, "primary": [], "secondary": []}
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  {
+    "name": "airline_inflight_food",
+    "batch": 3,
+    "eval_input": [
+      {
+        "id": 305,
+        "name": "United Airlines",
+        "description": "Inflight meal and beverage purchase on a domestic flight.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 305,
+        "primary": ["Restaurant"],
+        "secondary": ["Inflight meal", "Airline catering", "Domestic flight"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  {
+    "name": "convenience_store_with_food",
+    "batch": 3,
+    "eval_input": [
+      {
+        "id": 304,
+        "name": "7-Eleven",
+        "description": "Convenience store purchase of snacks, drinks, and hot food.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 304,
+        "primary": ["Grocery"],
+        "secondary": ["Convenience Store", "Snacks", "Fountain drinks"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  # --- Batch 4: inference and structural edge cases ---
+  {
+    "name": "supported_spicy_inference",
+    "batch": 4,
+    "eval_input": [
+      {"id": 401, "name": "Burning Mouth", "description": "Restaurant known for spicy food."}
+    ],
+    "review_needed": [
+      {"id": 401, "primary": ["Restaurant"], "secondary": ["Spicy", "Bold flavor", "Heat-forward"]}
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  {
+    "name": "ungrounded_burger_and_chicken",
+    "batch": 4,
+    "eval_input": [
+      {"id": 402, "name": "Burning Mouth", "description": "Restaurant known for spicy food."}
+    ],
+    "review_needed": [
+      {"id": 402, "primary": ["Restaurant"], "secondary": ["Spicy", "Burger", "Chicken"]}
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {
+      "eval_text": "Establishment 402: tags 'Burger' and 'Chicken' are not grounded in name or description.",
+      "good_copy": True,
+      "info_correct": False,
+    },
+  },
+  {
+    "name": "warehouse_grocery_mixed_retailer",
+    "batch": 4,
+    "eval_input": [
+      {
+        "id": 403,
+        "name": "Costco",
+        "description": "Bulk groceries, electronics, and household goods with membership.",
+      }
+    ],
+    "review_needed": [
+      {
+        "id": 403,
+        "primary": ["Grocery"],
+        "secondary": ["Warehouse club", "Bulk groceries", "Membership retailer"],
+      }
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {"eval_text": "", "good_copy": True, "info_correct": True},
+  },
+  {
+    "name": "missing_establishment_in_review",
+    "batch": 4,
+    "eval_input": [
+      {"id": 501, "name": "Marugame Udon", "description": "Japanese noodle restaurant specializing in udon and tempura."},
+      {"id": 502, "name": "Harry & David", "description": "Gift retailer shipping fruit baskets and gourmet gifts."},
+    ],
+    "review_needed": [
+      {"id": 501, "primary": ["Restaurant"], "secondary": ["Udon", "Tempura", "Japanese noodle"]}
+    ],
+    "past_review_outcomes": [],
+    "ideal_output": {
+      "eval_text": "Establishment 502: missing from REVIEW_NEEDED; expected one result per EVAL_INPUT id.",
+      "good_copy": False,
+      "info_correct": False,
+    },
   },
 ]
 
 
-def _parse_ideal_response(raw: str) -> dict | None:
-  if not raw:
-    return None
-  json_start = raw.find("{")
-  json_end = raw.rfind("}") + 1
-  if json_start == -1 or json_end <= json_start:
-    return None
-  try:
-    return json.loads(raw[json_start:json_end])
-  except json.JSONDecodeError:
-    return None
-
-
-def _compare_checker_result(actual: dict | None, ideal: dict) -> tuple[bool, str]:
+def _compare_checker_result(actual: dict | None, ideal_output: dict) -> tuple[bool, str]:
   if actual is None:
     return False, "no model output"
 
   actual_good_copy = bool(actual.get("good_copy"))
   actual_info_correct = bool(actual.get("info_correct"))
-  ideal_good_copy = bool(ideal.get("good_copy"))
-  ideal_info_correct = bool(ideal.get("info_correct"))
+  ideal_good_copy = bool(ideal_output.get("good_copy"))
+  ideal_info_correct = bool(ideal_output.get("info_correct"))
 
   if actual_good_copy != ideal_good_copy or actual_info_correct != ideal_info_correct:
     return (
@@ -263,7 +659,7 @@ def run_test_case(
   review_needed: list,
   past_review_outcomes: list | None = None,
   checker: CheckFoodSpendAddAttributesOptimizer | None = None,
-  ideal_response: str | None = None,
+  ideal_output: dict | None = None,
 ):
   if past_review_outcomes is None:
     past_review_outcomes = []
@@ -271,20 +667,18 @@ def run_test_case(
     checker = CheckFoodSpendAddAttributesOptimizer()
 
   print(f"\n{'='*80}\nRunning test: {test_name}\n{'='*80}")
+  if ideal_output is not None:
+    print("IDEAL OUTPUT:")
+    print(json.dumps(ideal_output, indent=2))
   try:
     result = checker.generate_response(eval_input, past_review_outcomes, review_needed)
-    print("Result:")
+    print("CHECKER OUTPUT:")
     print(json.dumps(result, indent=2))
-    if ideal_response:
-      print(f"{'='*80}")
-      print("IDEAL RESPONSE:")
-      print(ideal_response.strip())
-      ideal = _parse_ideal_response(ideal_response)
-      if ideal:
-        ok, detail = _compare_checker_result(result, ideal)
-        print(f"{'='*80}")
-        print("Match:", "PASS" if ok else "FAIL")
-        print(detail)
+    if ideal_output is not None:
+      ok, detail = _compare_checker_result(result, ideal_output)
+      print("OUTPUT MATCHES IDEAL:")
+      print("YES" if ok else "NO")
+      print(detail)
     print("="*80)
     return result
   except Exception as e:
@@ -299,7 +693,7 @@ def run_test_from_case(test_case: dict, checker: CheckFoodSpendAddAttributesOpti
     test_case["review_needed"],
     test_case.get("past_review_outcomes", []),
     checker,
-    test_case.get("ideal_response"),
+    test_case.get("ideal_output"),
   )
 
 
@@ -327,17 +721,17 @@ def test_with_inputs(test_name_or_index_or_dict, checker: CheckFoodSpendAddAttri
   return run_test_from_case(test_case, checker)
 
 
-def run_correct_response(checker: CheckFoodSpendAddAttributesOptimizer | None = None):
-  return test_with_inputs("correct_response", checker)
-
-def run_wrong_secondary_count(checker: CheckFoodSpendAddAttributesOptimizer | None = None):
-  return test_with_inputs("wrong_secondary_count", checker)
-
-def run_forbidden_words(checker: CheckFoodSpendAddAttributesOptimizer | None = None):
-  return test_with_inputs("forbidden_words", checker)
-
-def run_external_inference(checker: CheckFoodSpendAddAttributesOptimizer | None = None):
-  return test_with_inputs("external_inference", checker)
+def run_batch(batch: int, checker: CheckFoodSpendAddAttributesOptimizer | None = None):
+  """Run all test cases in a batch (1–4)."""
+  if checker is None:
+    checker = CheckFoodSpendAddAttributesOptimizer()
+  cases = [tc for tc in TEST_CASES if tc.get("batch") == batch]
+  if not cases:
+    raise ValueError(f"No test cases for batch {batch}")
+  results = []
+  for tc in cases:
+    results.append(run_test_from_case(tc, checker))
+  return results
 
 
 def main(batch: int = 0):
@@ -347,7 +741,7 @@ def main(batch: int = 0):
   else:
     cases = [tc for tc in TEST_CASES if tc.get("batch") == batch]
     if not cases:
-      raise ValueError(f"batch must be 0 or 1–{len(TEST_CASES)}")
+      raise ValueError("batch must be 0 (all) or 1–4")
   for tc in cases:
     run_test_from_case(tc, checker)
 
