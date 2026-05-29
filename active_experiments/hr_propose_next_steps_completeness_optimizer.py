@@ -514,7 +514,7 @@ SYSTEM_PROMPT = """You are a strict completeness-only grader. Return JSON `{scor
 - **Final “are labels correct?”:** **Penny cannot fully verify categorical accuracy** the way the user ultimately can. Retrieval, heuristics, or bulk relabel proposals are **not** substitute for the user’s final attestation. If the proposal frames **definitive** verification that labels are **fully correct** as **only** Penny work under **Proposed next steps** (even with tools), treat that as **sectioning error → prefer score 4** when coverage otherwise holds; that confirmation belongs under **Open items** for the user.
 
 **Completeness:**
-1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE_N>` bodies; no silent drops.
+1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE_N>` bodies; no silent drops. **Merged / synthesized** Proposed bullets count as mapping **all** rationalize candidates they subsume.
 2. **Automation:** If **Proposed next steps** assign Penny execution (goals, rules, retrieve/recategorize, **historical aggregates/patterns**), `<PROPOSAL_TOOL_CALLS>` must include matching tool invocations **across rounds** (scan every `# Round N` block). Steps covered by the two **Penny limits** bullets above do **not** need tools.
 3. **Structure:** Penny-executable work (including historical computation when proposed as Penny’s) belongs in **Proposed** unless a concrete blocker is stated; user-final steps in **Open**.
 
