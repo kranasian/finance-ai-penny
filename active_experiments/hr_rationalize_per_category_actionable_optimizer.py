@@ -1,8 +1,9 @@
 """
-Rationalize rubric checker optimizer: **Actionable** — score **only** AI-facing **## Next steps** (instruction-level specificity; categorization targets must use valid category slugs). If there are **no** AI-facing steps, score **defaults to 5**.
+Rationalize rubric checker optimizer: **Actionable** — score **every** **`## Next steps`** line on **appropriateness**, **concreteness**, and **relevance** given **`## Figures`** and **`## Drivers`**.
 
-Use this to iterate on the system_prompt that will be stored in `penny_templates`
-for the checker template `Chk:RationalizePerCategoryActionable`.
+Directional goals: **higher income**, **lower spending**, **fewer uncategorized transactions**. Budget trend/directive rules and categorization fit are part of these three checks—not a separate pass for “budget-only” lines. **Incomplete inputs are OK** (amounts, slugs may be omitted).
+
+Use this to iterate on the system_prompt stored in `penny_templates` for `Chk:RationalizePerCategoryActionable`.
 
 Run from `finance-ai-penny` repo root:
 
@@ -10,17 +11,15 @@ Run from `finance-ai-penny` repo root:
   python3 active_experiments/hr_rationalize_per_category_actionable_optimizer.py --batch 1 --check
   python3 active_experiments/hr_rationalize_per_category_actionable_optimizer.py --test all --model gemini-flash-lite-latest
 
-Batches **1–6** partition fixtures (two in batch 1; one each in batches 2–6). Use **`--check`** to assert each case’s integer **score** matches expected JSON.
-
-**Recommended minimal generation settings** (validated `python3 active_experiments/hr_rationalize_per_category_actionable_optimizer.py --test all`; spot-check scores vs `ideal_response`):
+**Recommended generation settings** (re-validate `--test all --check` after prompt edits):
 
 - **model:** `gemini-flash-lite-latest`
 - **temperature:** `0` · **top_p:** `0.95`
-- **thinking_budget:** `0`
-- **max_output_tokens:** `128` (raise to `256` if truncated)
+- **thinking_budget:** `0` (raise to `256` if scores drift; keep `include_thoughts=False`)
+- **max_output_tokens:** `384`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
+**Fixtures:** **4 batches** (`--batch 1|2|3|4 --check`). **Input:** markdown with `# Rationalize What` and `# Rationalize Response`.
 """
 
 from __future__ import annotations
@@ -28,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from typing import Any, Dict
 
 try:
@@ -63,92 +63,53 @@ OUTPUT_SCHEMA = types.Schema(
   properties={
     "score": types.Schema(
       type=types.Type.INTEGER,
-      description="Integer 1-5 rubric score.",
+      description="1-5; weakest Next-steps line × worst of appropriateness/concreteness/relevance.",
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
-      description="One short sentence.",
+      description="One sentence: decisive flaw (appropriateness, concreteness, relevance, or empty). Never cite missing budget $ or slug.",
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Rubric grader. Input: markdown with `# Rationalize Response`. Judge **only** `## Next steps` that are **for the AI** (product-executable instructions). Read Figures/Drivers **only** to interpret references in those steps—**do not** score Figures or Drivers for quality, truth, or completeness.
+SYSTEM_PROMPT = """Grade **written `## Next steps` lines only** (never infer). **Figures** = truth; **Drivers** = why / miscoding; **Rationalize What** = focal scope. Do not grade Figures/Drivers quality.
 
-**AI-facing line** = tells product/AI to **recategorize**, **merchant→category rule**, **budget/goal** with numbers and horizon, or **historical analysis** with explicit scope (merchants/categories/dates, **or** detect **missing expected recurring payments** for a **named month** by contrasting with **prior months** in history)—not generic “review finances.”
+**FIRST (hard):** If `## Next steps` contains **zero** bullet/numbered lines (section blank), return **exactly**:\n`{\"score\": 1, \"notes\": \"No next-step bullets were provided.\"}`\nThis overrides everything else.
 
-**Human-only lines** (lifestyle, “spend less,” vague self-review): **not** AI-facing. They **do not** affect the numeric score.
+**Hard rule — never score down for:** missing budget **$**, category slug, or horizon when step type, merchant, and focal category are right. **“Set a budget for X” without $ = concrete (5), not vague.**
 
-**Default when there are no AI-facing lines** (empty `## Next steps`, section missing, or **only** human-only / non-product bullets): **5**. There is nothing for the AI to execute, so there is nothing to mark down.
+**Hard rule (out of scope):** any next step that asks Penny/the user to set up **external autopay/automatic bank transfers** (e.g. bank→credit-card payment scheduling) is **2** for appropriateness (outside Penny levers), even if it sounds financially sensible.
 
-When **one or more** AI-facing lines exist, the score follows the **weakest** AI-facing line only (ignore human-only lines beside them).
+If Figures/Drivers **do not necessitate** budget/goal/categorization work, general monitoring or human guidance can still score **5**.
+**Budget phrasing (AI budget/goal steps only):**
+1. Not budget/goal/categorization → **ignore** definitive vs optional.
+2. **Continuous** multi-month up/down, **erratic** history, or baseline was **$0** → optional/hedged budget wording is **5**.
+3. **Only** for **one-off** spend spike or income decline vs a **non-zero** stable band (flat/narrow band then a single jump—**not** a multi-month steady climb): **directive** “set budget” → **5**; **hedged** (“if necessary”, “check if you need”) → **3**.
 
-**Executable** = another model could run it **without inventing** missing inputs: match text or merchant set, **numeric** budget/goal + period, and for any assign/recategorize/rule (and category-scoped budgets): **exactly one** target slug from the Category List (character-for-character). Multiple allowed slugs named for **one** operation (“A or B”) = **not** one target → treat as **2**.
+**Weakest line × worst dimension** (appropriateness, concreteness, relevance):
 
-**Invalid slug** = categorization target string **not** in the list (e.g. `investments`). If that is the **only** substantive defect and the merchant/action is otherwise clear → **4**, not **3** or **5**.
+- **Appropriateness:** improves situation as described? Recategorize **miscodings** only—not merchants that **belong** in the focal category (groceries↑ + recategorize Walmart out → 2). Bank/CC **autopay** outside Penny → 2.
+- **Appropriateness (budget phrasing):** apply only to AI budget/goal lines. **3** when one-off spike/decline vs non-zero band uses hedged budget language; **5** for continuous trend, erratic, or $0-baseline cases with optional phrasing.
+- **Concreteness:** budget, cap, rule, named recategorize, bounded scan = pass. “Spend less” / “stop buying X” with no lever → 3.
+- **Relevance:** focal What/Figures category or named miscoding—not unrelated (tuition↑ → kids-activities budget → 2).
 
-**Category List** (exact tokens; categorization/recategorization/rule/budget-by-category targets must match one line):
+One “A or B” / “possibly X or Y” merchant categorization rule **without** memo split when Drivers separate patterns → **3** (not 5). **No bullets at all under `## Next steps` → 1**. Vague companion (“review finances”) **does not** cap overall below **5** if another line passes all three.
 
-- `meals`
-- `meals_dining_out`
-- `meals_delivered_food`
-- `meals_groceries`
-- `leisure`
-- `leisure_entertainment`
-- `leisure_travel`
-- `shopping_pets`
-- `bills`
-- `bills_connectivity`
-- `bills_insurance`
-- `bills_tax`
-- `bills_service_fees`
-- `shelter`
-- `shelter_home`
-- `shelter_utilities`
-- `shelter_upkeep`
-- `education`
-- `education_kids_activities`
-- `education_tuition`
-- `shopping`
-- `shopping_clothing`
-- `shopping_gadgets`
-- `shopping_kids`
-- `transportation`
-- `transportation_car`
-- `transportation_public`
-- `health`
-- `health_medical_pharmacy`
-- `health_gym_wellness`
-- `health_personal_care`
-- `donations_gifts`
-- `miscellaneous`
-- `income`
-- `income_salary`
-- `income_sidegig`
-- `income_business`
-- `income_interest`
-- `others`
-- `transfers`
-- `uncategorized`
+**Scores:** 5 all pass; 4 minor unrelated flaw; 3 one clear flaw; 2 wrong lever; **1 only when there are no next-step bullets**.
 
-**Scores (1–5)** — if **no** AI-facing lines → **5** (default). If **≥1** AI-facing line → worst AI line wins:
-- **5** — Every AI line executable; category targets are valid list tokens; no unresolved “pick one of several categories” for a single action.
-- **4** — **Single** defect: one invalid slug **or** one mildly underspecified AI line; otherwise strong.
-- **3** — **Two or more** stacked defects (e.g. multiple invalid slugs, or invalid slug **and** vagueness).
-- **2** — Main AI categorization leaves **which one** category unresolved among alternatives, or core parameters missing, **or** the step(s) sit **outside in-scope levers** (e.g. automatic bank→card payment transfers / external autopay scheduling).
-- **1** — Only when ≥1 AI-facing line: worst line is below the bar for **2** (e.g. mutually contradictory AI instructions with no resolution path).
-
-**`notes`**: One sentence on the decisive issue (invalid slug, ambiguous multi-target categorization, out-of-scope payment automation, all AI lines clear, **or** no AI-facing steps so default **5**). If **5** with a mix of solid AI steps and human-only bullets, say human lines were **ignored for the score**.
-
-Return only JSON `{score, notes}` per schema.
+Return JSON `{score, notes}` only.
 """
 
 
 TEST_CASES: list[dict[str, Any]] = [
   {
-    "name": "ai_next_steps_specific_enough_recategorize_zelle",
+    "name": "recategorize_zelle_maria_matches_uncategorized_finding",
     "batch": 1,
-    "output": '{"score": 5, "notes": "Recategorization names a clear payee pattern and a valid target slug (`transfers`)."}',
+    "output": (
+      '{"score": 5, "notes": "Recategorizing the Maria Zelle pattern to transfers directly addresses '
+      'the uncategorized spend Drivers and Figures describe."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Several Zelle payments to Maria are sitting in uncategorized spend this month. (2026-04-01 to 2026-04-30)
@@ -173,9 +134,12 @@ March shows the same payee text with higher frequency but the same lack of a sta
 """,
   },
   {
-    "name": "ai_specific_human_vague_human_out_of_scope",
+    "name": "dining_spike_with_trend_budget_appropriate",
     "batch": 1,
-    "output": '{"score": 5, "notes": "AI budget step is concrete with amount and valid category; vague human line is out of scope."}',
+    "output": (
+      '{"score": 5, "notes": "Sets a dining-out budget for the focal category; directive phrasing '
+      'is appropriate and concrete even alongside a general review line."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Dining out is elevated this month at $620. (2026-04-01 to 2026-04-30)
@@ -197,14 +161,17 @@ Compared with March, you have more weekend restaurant clusters and fewer “groc
 
 ## Next steps
 
-1. Set **dining out** spending budget to **$500/month** tracked against **`meals_dining_out`**.
+1. Set a **dining out** spending budget tracked against **`meals_dining_out`** (amount TBD from recent months).
 2. Review finances.
 """,
   },
   {
-    "name": "ai_vague_walmart_ambiguous_target_category",
+    "name": "walmart_mixed_memos_ambiguous_categorization_step",
     "batch": 2,
-    "output": '{"score": 2, "notes": "Walmart step leaves the target category undecided between groceries and upkeep, so the AI cannot execute it as written."}',
+    "output": (
+      '{"score": 3, "notes": "Walmart memos split groceries vs upkeep in Drivers; a single undecided '
+      'groceries-or-upkeep rule does not resolve the mixed pattern."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Walmart spend is elevated and split across categories this month. (2026-04-01 to 2026-04-30)
@@ -229,9 +196,40 @@ That pattern matches your Rationalize prompt: spend is elevated versus March, an
 """,
   },
   {
-    "name": "ai_specific_coinbase_invalid_investments_slug",
-    "batch": 3,
-    "output": '{"score": 4, "notes": "Merchant and intent are clear, but `investments` is not on the Category List, so categorization is not actionable."}',
+    "name": "erratic_dining_history_budget_not_required",
+    "batch": 2,
+    "output": (
+      '{"score": 5, "notes": "Dining Figures are erratic with no stable baseline, so omitting a budget '
+      'while recategorizing miscoded lines is appropriate."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining out is elevated this month at $250. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — `meals_dining_out`:** $250.00.
+* **Prior months — `meals_dining_out` (newest to oldest):** $0, $50, $500, $0, $0, $300, $1 — no stable monthly band.
+* **April miscoded restaurant lines still in `miscellaneous`:** $88.00 across 3 charges Drivers list below.
+
+## Drivers
+
+April’s $250 is not a clean “spike over a $150 norm”: history bounces from zero to large one-off months. The actionable issue in the feed is three restaurant charges (**Taco Cantina $32**, **Olive Garden $41**, **DoorDash — Sushi Co $15**) sitting in `miscellaneous` instead of `meals_dining_out`, which inflates uncategorized-style totals more than a new dining habit.
+
+## Next steps
+
+1. Recategorize the **miscellaneous** restaurant charges listed in Drivers to **`meals_dining_out`**.
+""",
+  },
+  {
+    "name": "coinbase_miscoded_exchange_fits_categorization",
+    "batch": 2,
+    "output": (
+      '{"score": 5, "notes": "Moving Coinbase ACH debits out of miscellaneous matches Drivers’ '
+      'exchange-funding pattern even without a stated slug."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Coinbase purchase debits are still landing in miscellaneous this month. (2026-04-01 to 2026-04-30)
@@ -252,13 +250,127 @@ Because the amounts are recurring in shape (multiple pulls in one month) but the
 
 ## Next steps
 
-1. Set **Coinbase** transactions to **`investments`** for past and future.
+1. Set **Coinbase** transactions to a dedicated non-shopping category for past and future (slug TBD).
 """,
   },
   {
-    "name": "only_human_next_step_not_ai_actionable",
-    "batch": 4,
-    "output": '{"score": 5, "notes": "No AI-facing next steps; score defaults to 5."}',
+    "name": "dining_trend_optional_budget_phrasing_not_directive",
+    "batch": 3,
+    "output": (
+      '{"score": 5, "notes": "Three-month continuous dining increase is trend-consistent, so '
+      'optional budget phrasing is acceptable for this AI budget step."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining out is elevated this month at $620. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — `meals_dining_out`:** $620.00.
+* **Prior Month (Mar 1–31, 2026) — `meals_dining_out`:** $410.00.
+* **Two Months Ago (Feb 1–28, 2026) — `meals_dining_out`:** $385.00.
+
+## Drivers
+
+April restaurant tickets (**Brasserie North $118.42**, **Sushi Yamato $96.10**) plus more weekday lunch/coffee charges explain the +$210 vs March; the category has risen three months in a row.
+
+## Next steps
+
+1. Check if you need a **dining out** budget for **`meals_dining_out`** given the recent increase.
+""",
+  },
+  {
+    "name": "dining_trend_missing_budget_only_generic_advice",
+    "batch": 3,
+    "output": (
+      '{"score": 3, "notes": "Figures show a steady dining climb ($385→$410→$620) but next steps only '
+      'offer generic spend-less advice with no category budget or cap."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining out is elevated this month at $620. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — `meals_dining_out`:** $620.00.
+* **Prior Month (Mar 1–31, 2026) — `meals_dining_out`:** $410.00.
+* **Two Months Ago (Feb 1–28, 2026) — `meals_dining_out`:** $385.00.
+
+## Drivers
+
+April restaurant tickets (**Brasserie North $118.42**, **Sushi Yamato $96.10**) plus more weekday lunch/coffee charges explain the +$210 vs March; the category has risen three months in a row.
+
+## Next steps
+
+1. Spend less on restaurants this month.
+""",
+  },
+  {
+    "name": "dining_trend_monitor_then_budget_if_necessary",
+    "batch": 3,
+    "output": (
+      '{"score": 3, "notes": "Stable dining trend plus spike warrants a directive budget; '
+      'monitor and budget if necessary leaves the budget optional."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining out is elevated this month at $250. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — `meals_dining_out`:** $250.00.
+* **Prior Month (Mar 1–31, 2026) — `meals_dining_out`:** $160.00.
+* **Two Months Ago (Feb 1–28, 2026) — `meals_dining_out`:** $145.00.
+
+## Drivers
+
+Dining out has sat in a narrow $140–$160 band for the past two months and then stepped up to **$250** this month, driven by a few larger weekend meals plus more frequent smaller tickets, not a one-off refund reversal.
+
+## Next steps
+
+1. Monitor your restaurant spending and set a **dining out** budget for **`meals_dining_out`** if necessary.
+""",
+  },
+  {
+    "name": "dining_one_off_from_zero_baseline_optional_budget_ok",
+    "batch": 3,
+    "output": (
+      '{"score": 5, "notes": "One-off spike from a $0 baseline does not require definitive budget '
+      'phrasing; optional budget language is acceptable."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining out jumped this month to $180. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — `meals_dining_out`:** $180.00.
+* **Prior two months — `meals_dining_out`:** $0.00, $0.00 (no restaurant spend posted).
+
+## Drivers
+
+April is the first month with material dining activity after two $0 months—a one-off restart of restaurant spend, not a non-zero baseline band that broke.
+
+## Next steps
+
+1. Consider setting a **dining out** budget for **`meals_dining_out`** if you want to cap this new activity.
+""",
+  },
+  {
+    "name": "only_generic_spend_less_discretionary_up",
+    "batch": 3,
+    "output": (
+      '{"score": 3, "notes": "Spend less does not target the discretionary categories or merchants '
+      'Drivers tied to the April lift."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Discretionary spend is up this month. (2026-04-01 to 2026-04-30)
@@ -285,8 +397,11 @@ March was comparatively quiet in apparel and gadgets, so April’s month-over-mo
   },
   {
     "name": "automatic_bank_transfer_cc_payment_out_of_scope",
-    "batch": 5,
-    "output": '{"score": 2, "notes": "Automatic bank-to-card payment transfers are outside Penny in-scope AI levers, so the step is not executable here."}',
+    "batch": 4,
+    "output": (
+      '{"score": 2, "notes": "Automatic bank-to-card payment scheduling is outside Penny product levers '
+      'and does not address the categorized spend Drivers explain."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Credit card balance is up and minimum payments are larger this month. (2026-04-01 to 2026-04-30)
@@ -312,9 +427,12 @@ Your Rationalize prompt is directionally right: both the balance level and the m
 """,
   },
   {
-    "name": "ai_identify_missing_monthly_payments_via_history",
-    "batch": 6,
-    "output": '{"score": 5, "notes": "Bounded historical analysis: named month plus comparison window to find recurring payees with no payment."}',
+    "name": "missing_recurring_payments_historical_scan_appropriate",
+    "batch": 1,
+    "output": (
+      '{"score": 5, "notes": "A bounded April vs prior-6-month recurring scan matches Drivers’ missing '
+      'CityPower and BroadbandCo anchors."}'
+    ),
     "input": """# Rationalize What
 
 Explain: Total spend looks lower than usual this month; some recurring bills may not have cleared. (2026-04-01 to 2026-04-30)
@@ -339,6 +457,272 @@ That gap is consistent with “lower than usual” spend: it may be timing/posti
 1. For **2026-04-01 through 2026-04-30**, scan **historical transactions from the prior 6 full calendar months** and list **recurring monthly payees** that **did not post any payment** in that April window (include amount pattern used as the recurrence signal).
 """,
   },
+  {
+    "name": "zelle_finding_wrong_grocery_categorization",
+    "batch": 2,
+    "output": (
+      '{"score": 2, "notes": "Drivers describe P2P Zelle transfers, but the step routes Maria payments to '
+      'groceries, which contradicts the finding."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Several Zelle payments to Maria are sitting in uncategorized spend this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — uncategorized Zelle to Maria:** $840.00 across 6 posted transfers.
+* **Prior Month (Mar 1–31, 2026) — same payee pattern:** $600.00 across 4 transfers, also uncategorized.
+
+## Drivers
+
+Memos consistently show **Zelle** payments to **Maria** with no merchant spend cues—personal transfers, not grocery runs.
+
+## Next steps
+
+1. Set all **Zelle to Maria** transactions to **`meals_groceries`**.
+""",
+  },
+  {
+    "name": "utilities_trend_up_budget_step_appropriate",
+    "batch": 1,
+    "output": (
+      '{"score": 5, "notes": "Shelter utilities rose on a stable band in Figures; a utilities budget step '
+      'fits the spike Drivers explain."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Utilities are higher than usual this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — `shelter_utilities`:** $248.00.
+* **Prior three months — `shelter_utilities`:** $162, $158, $165 (CityPower + gas in a narrow band).
+* **April drivers in category:** **CityPower Electric $142.00** (vs ~$95–$98 prior months) plus **Metro Gas $106.00** (winter rate step).
+
+## Drivers
+
+The jump is not random noise: **CityPower** posted ~$45 higher than its usual bill and **Metro Gas** added a seasonal surcharge visible in the memo line—together they explain almost all of the month-over-month change.
+
+## Next steps
+
+1. Set a monthly **utilities** budget for **`shelter_utilities`**.
+""",
+  },
+  {
+    "name": "empty_next_steps_when_recategorization_clearly_needed",
+    "batch": 4,
+    "output": (
+      '{"score": 1, "notes": "No next-step bullets were provided."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Several Zelle payments to Maria are sitting in uncategorized spend this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — uncategorized Zelle to Maria:** $840.00 across 6 transfers in `miscellaneous`.
+* **Prior Month (Mar 1–31, 2026):** $600.00 across 4 transfers, same coding issue.
+
+## Drivers
+
+Repeat **Zelle to Maria** memos with no retail merchant text; pattern unchanged from March.
+
+## Next steps
+
+""",
+  },
+  {
+    "name": "no_ai_levers_needed_general_steps_ok",
+    "batch": 4,
+    "output": (
+      '{"score": 5, "notes": "No AI levers are necessitated by Figures/Drivers, so general monitoring steps are fine."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Dining out looks normal this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — `meals_dining_out`:** $152.00.
+* **Prior Month (Mar 1–31, 2026) — `meals_dining_out`:** $148.00.
+* **Two Months Ago (Feb 1–28, 2026) — `meals_dining_out`:** $155.00.
+
+## Drivers
+
+Dining out is steady in a narrow band with no sign of a spike, miscoding, or missing recurring items; the mix of merchants and ticket sizes looks consistent with prior months.
+
+## Next steps
+
+1. Keep an eye on dining out to maintain this steady level.
+2. Review your weekly spend summary.
+""",
+  },
+  {
+    "name": "groceries_up_walmart_recategorize_inappropriate",
+    "batch": 2,
+    "output": (
+      '{"score": 2, "notes": "Walmart charges belong in groceries per Drivers; recategorizing them '
+      'out would not appropriately address groceries being up."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Groceries is up this week at $210. (2026-07-06 to 2026-07-12)
+
+# Rationalize Response
+
+## Figures
+
+* **Groceries (`meals_groceries`) Jul 6–12, 2026:** $210.00 vs $145.00 (Jun 29–Jul 5, 2026).
+* **Within Jul 6–12 groceries:** **Walmart Grocery pickup** and in-store Walmart food lines total **$118.00** (already coded `meals_groceries`).
+
+## Drivers
+
+The week-over-week lift is mostly larger **Walmart** grocery runs (**Walmart Grocery pickup $64.22**, **Walmart Supercenter $53.78**)—descriptions read as pantry/food, not miscoded gadgets or transfers.
+
+## Next steps
+
+1. Recategorize **Walmart** transactions out of **`meals_groceries`** to lower grocery spend.
+""",
+  },
+  {
+    "name": "groceries_up_apple_miscode_recategorize_appropriate",
+    "batch": 1,
+    "output": (
+      '{"score": 5, "notes": "Recategorizing miscoded Apple.com charges to gadgets appropriately '
+      'addresses groceries inflated by non-grocery spend."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Groceries is up this week at $210. (2026-07-06 to 2026-07-12)
+
+# Rationalize Response
+
+## Figures
+
+* **Groceries (`meals_groceries`) Jul 6–12, 2026:** $210.00 vs $145.00 prior week.
+* **Included in groceries total:** **Apple.com $129.00** (posted under `meals_groceries`).
+
+## Drivers
+
+**Apple.com $129.00** is a one-time **AirPods** order (electronics), miscoded into groceries at import—true grocery merchants (**Trader Joe’s**, **Walmart Grocery**) explain only part of the lift; fixing Apple removes the miscoding distortion.
+
+## Next steps
+
+1. Recategorize **Apple.com** transactions to **`shopping_gadgets`**.
+""",
+  },
+  {
+    "name": "clothing_up_stop_buying_not_concrete",
+    "batch": 3,
+    "output": (
+      '{"score": 3, "notes": "Stop buying clothing is not a concrete Penny action—no budget, rule, '
+      'or merchant target for how spend would improve."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Clothing is up this week at $180. (2026-07-06 to 2026-07-12)
+
+# Rationalize Response
+
+## Figures
+
+* **`shopping_clothing` Jul 6–12, 2026:** $180.00 vs $95.00 prior week.
+
+## Drivers
+
+Two apparel orders (**Nordstrom $110**, **Old Navy $70**) drive the increase vs a quiet prior week.
+
+## Next steps
+
+1. Stop buying clothing.
+""",
+  },
+  {
+    "name": "clothing_up_set_budget_concrete",
+    "batch": 1,
+    "output": (
+      '{"score": 5, "notes": "A directive clothing budget is concrete and relevant to the '
+      'shopping_clothing spike in Figures."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Clothing is up this week at $180. (2026-07-06 to 2026-07-12)
+
+# Rationalize Response
+
+## Figures
+
+* **`shopping_clothing` Jul 6–12, 2026:** $180.00 vs $95.00 prior week.
+
+## Drivers
+
+Two apparel orders (**Nordstrom $110**, **Old Navy $70**) drive the increase vs a quiet prior week.
+
+## Next steps
+
+1. Set a monthly budget for **`shopping_clothing`**.
+""",
+  },
+  {
+    "name": "tuition_up_kids_activities_budget_irrelevant",
+    "batch": 4,
+    "output": (
+      '{"score": 2, "notes": "A kids activities budget does not target tuition—the focal category '
+      'named in What and Figures."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Tuition is up this month at $2,400. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **`education_tuition` Apr 2026:** $2,400.00 vs $1,800.00 Mar 2026 (spring installment posting).
+
+## Drivers
+
+**State University spring tuition $2,400** posted Apr 3; no change in **`education_kids_activities`** ($120, flat vs prior months).
+
+## Next steps
+
+1. Set a monthly budget for **`education_kids_activities`**.
+""",
+  },
+  {
+    "name": "tuition_up_tuition_budget_relevant",
+    "batch": 1,
+    "output": (
+      '{"score": 5, "notes": "A tuition budget is relevant and concrete for the education_tuition '
+      'increase Figures and Drivers describe."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Tuition is up this month at $2,400. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **`education_tuition` Apr 2026:** $2,400.00 vs $1,800.00 Mar 2026 (spring installment posting).
+
+## Drivers
+
+**State University spring tuition $2,400** posted Apr 3; installment is larger than the fall monthly plan amounts.
+
+## Next steps
+
+1. Set a monthly budget for **`education_tuition`**.
+""",
+  },
 ]
 
 
@@ -347,7 +731,7 @@ class CheckerOptimizer:
     self,
     model_name: str = "gemini-flash-lite-latest",
     *,
-    max_output_tokens: int = 128,
+    max_output_tokens: int = 384,
     thinking_budget: int = 0,
   ):
     api_key = os.getenv("GEMINI_API_KEY")
@@ -369,6 +753,20 @@ class CheckerOptimizer:
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
     user_msg = (agent_outcome or "").strip()
+
+    # Hard, deterministic override: if there are no bullet/numbered lines under
+    # "## Next steps", the score must be 1 (per product spec).
+    if "## Next steps" in user_msg:
+      after = user_msg.split("## Next steps", 1)[1]
+      # Stop at next markdown H2 heading if present.
+      after = re.split(r"(?m)^##\s+", after, maxsplit=1)[0]
+      has_bullets = any(
+        re.match(r"^\s*(?:\d+\.|[-*])\s+\S", line)
+        for line in after.splitlines()
+      )
+      if not has_bullets:
+        return {"score": 1, "notes": "No next-step bullets were provided."}
+
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
     cfg = types.GenerateContentConfig(
       temperature=self.temperature,
@@ -378,7 +776,7 @@ class CheckerOptimizer:
       system_instruction=[types.Part.from_text(text=self.system_prompt)],
       thinking_config=types.ThinkingConfig(
         thinking_budget=self.thinking_budget,
-        include_thoughts=True,
+        include_thoughts=False,
       ),
       response_mime_type="application/json",
       response_schema=OUTPUT_SCHEMA,
@@ -427,7 +825,7 @@ def main() -> None:
   parser.add_argument("--test", type=str, default=None, help="Test name, index, or 'all'.")
   parser.add_argument("--batch", type=int, default=None, help="Run all tests in batch N.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
-  parser.add_argument("--max-output-tokens", type=int, default=128)
+  parser.add_argument("--max-output-tokens", type=int, default=384)
   parser.add_argument("--thinking-budget", type=int, default=0)
   parser.add_argument(
     "--check",
@@ -510,4 +908,3 @@ def main() -> None:
 
 if __name__ == "__main__":
   main()
-
