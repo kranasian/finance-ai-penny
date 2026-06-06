@@ -6,10 +6,10 @@ that scores a **three-part** grader bundle (rationalize outcome, propose outcome
 
 Run from `finance-ai-penny` repo root:
 
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test all
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test good_aligned
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --test multi_two_contexts_synthesized
-  python3 active_experiments/propose_next_steps_rubrics_optimizer.py --model gemini-flash-lite-latest
+  python3 active_experiments/propose_next_steps_completeness_optimizer --test all
+  python3 active_experiments/propose_next_steps_completeness_optimizer --test calls_do_not_match_proposal
+  python3 active_experiments/propose_next_steps_completeness_optimizer --test perfect_proposal_and_calls
+  python3 active_experiments/propose_next_steps_completeness_optimizer --model gemini-flash-lite-latest
 
 **LLM checker input**
 
@@ -24,18 +24,15 @@ The grader expects **three** inputs, matching production Hermes/DB shapes:
 3. **`calls`** — JSON array from the **propose_next_steps** row’s **`calls`** field (same shape as
    Hermes `ai_agent_outcomes.calls`). Use **`[]`** when there were no round-trips.
 
-These are wrapped for the model as **`<RATIONALIZE>`**, **`<PROPOSAL>`**, and **`<CALLS>`** (calls
-rendered to markdown via `calls_to_markdown`). See `bundle_checker_input`.
-
-**Multi rationalize (`propose_next_steps_multi`)** — same **`<PROPOSAL>`** and **`<CALLS>`** (propose run), but
-evidence is **`Multiple prior rationalize contexts:`** + **`<CONTEXTS>`** … (each **`<CONTEXT>`** has
-**`<RATIONALIZE>`** and optional **`<RATIONALIZE_CALLS>`**). See `bundle_checker_input_multi`.
+These are wrapped for the model as **``<RATIONALIZE_1>``**, **``<RATIONALIZE_2>``**, …, **``<PROPOSAL>``**, and **``<PROPOSAL_TOOL_CALLS>``**
+(propose-run ``calls`` rendered via ``proposal_tool_calls_to_markdown`` — no token/latency lines).
+See ``bundle_checker_input`` / ``bundle_checker_input_multi``.
 
 **Quality axis (one score in output)**
 
 | Axis | What it measures |
 |------|------------------|
-| **completeness** | **Coverage + execution completeness:** important rationalize **Next steps** / drivers are addressed in **`<PROPOSAL>`** (or explicitly parked with a concrete blocker), and propose **`<CALLS>`** support what is proposed. |
+| **completeness** | **Coverage + execution completeness:** important rationalize **Next steps** are addressed in **``<PROPOSAL>``** (or explicitly parked under Open items), and **``<PROPOSAL_TOOL_CALLS>``** support what is proposed. |
 
 **Multiple rounds:** Source `calls` has **one object per LLM round-trip**; the markdown lists them as
 **`# Round 1`**, **`# Round 2`**, … with **`## Invoked tools`** under each when present.
@@ -111,10 +108,21 @@ def _tool_args_to_fenced_block(args: Any) -> str:
   return f"```{lang}\n{inner}\n```\n"
 
 
-def rationalize_calls_to_markdown(calls: list[Any]) -> str:
-  """Stored rationalize ``calls`` inside ``<RATIONALIZE_CALLS>`` (Hermes-aligned)."""
+def _tool_call_name_and_args(tc: dict[str, Any]) -> tuple[str, Any]:
+  name = tc.get("tool_name") or tc.get("name")
+  fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
+  if name is None and isinstance(fn, dict):
+    name = fn.get("name")
+  args = tc.get("args") if "args" in tc else tc.get("arguments")
+  if args is None and isinstance(fn, dict):
+    args = fn.get("arguments")
+  return str(name or "(unknown_tool)"), args
+
+
+def proposal_tool_calls_to_markdown(calls: list[Any]) -> str:
+  """Render propose-run ``calls`` as ``# Round N`` + ``## Invoked tools`` (no token/latency metadata)."""
   if not isinstance(calls, list) or len(calls) == 0:
-    return ""
+    return "_No LLM round-trips._\n"
   parts: list[str] = []
   for idx, turn in enumerate(calls, start=1):
     parts.append(f"# Round {idx}\n\n")
@@ -130,61 +138,43 @@ def rationalize_calls_to_markdown(calls: list[Any]) -> str:
       if not isinstance(tc, dict):
         parts.append(f"{tci}. _(invalid tool call entry)_\n\n")
         continue
-      name = tc.get("tool_name") or tc.get("name")
-      fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
-      if name is None and isinstance(fn, dict):
-        name = fn.get("name")
-      args = tc.get("args") if "args" in tc else tc.get("arguments")
-      if args is None and isinstance(fn, dict):
-        args = fn.get("arguments")
-      name_s = str(name or "(unknown_tool)")
+      name_s, args = _tool_call_name_and_args(tc)
       parts.append(f"{tci}. **`{name_s}`**\n\n")
       fence = _tool_args_to_fenced_block(args)
       if fence:
         parts.append(fence)
       parts.append("\n")
   return "".join(parts).rstrip() + "\n"
+
+
+def proposal_tool_calls_xml(calls: list[Any]) -> str:
+  md = proposal_tool_calls_to_markdown(calls)
+  return f"<PROPOSAL_TOOL_CALLS>\n\n{md.rstrip()}\n\n</PROPOSAL_TOOL_CALLS>\n"
+
+
+def _render_rationalize_block(index: int, body: str) -> str:
+  tag = f"RATIONALIZE_{index}"
+  return f"<{tag}>\n\n{body.rstrip()}\n\n</{tag}>\n"
+
+
+def build_rationalize_blocks(*, contexts: list[dict[str, Any]]) -> str:
+  """``<RATIONALIZE_1>`` … ``<RATIONALIZE_N>`` (rationalize row traces omitted — Hermes grader shape)."""
+  if not isinstance(contexts, list) or not contexts:
+    raise ValueError("contexts must be a non-empty list")
+  blocks: list[str] = []
+  for i, ctx in enumerate(contexts, start=1):
+    if not isinstance(ctx, dict):
+      raise TypeError(f"contexts[{i - 1}] must be a dict")
+    ra = (ctx.get("rationalize_agent_outcome") or "").strip()
+    if not ra:
+      raise ValueError(f"contexts[{i - 1}].rationalize_agent_outcome must be non-empty")
+    blocks.append(_render_rationalize_block(i, ra))
+  return "\n\n".join(blocks)
 
 
 def calls_to_markdown(calls: list[Any]) -> str:
-  """Render Hermes-style `calls` list as readable markdown for the grader."""
-  if not isinstance(calls, list) or len(calls) == 0:
-    return "_No LLM round-trips._\n"
-  parts: list[str] = []
-  for idx, turn in enumerate(calls, start=1):
-    parts.append(f"# Round {idx}\n")
-    if not isinstance(turn, dict):
-      parts.append(f"- _(non-object round):_ `{type(turn).__name__}`\n\n")
-      continue
-    meta_lines: list[str] = []
-    for key in ("call_number", "latency_ms", "input_tokens", "output_tokens", "total_tokens"):
-      if key in turn and turn[key] is not None:
-        meta_lines.append(f"- **{key}:** {turn[key]}")
-    if meta_lines:
-      parts.append("\n".join(meta_lines) + "\n\n")
-    tcs = turn.get("tool_calls")
-    if not isinstance(tcs, list) or not tcs:
-      parts.append("_No tool calls this round._\n\n")
-      continue
-    parts.append("## Invoked tools\n\n")
-    for tci, tc in enumerate(tcs, start=1):
-      if not isinstance(tc, dict):
-        parts.append(f"{tci}. _(invalid tool call entry)_\n\n")
-        continue
-      name = tc.get("tool_name") or tc.get("name")
-      fn = tc.get("function") if isinstance(tc.get("function"), dict) else {}
-      if name is None and isinstance(fn, dict):
-        name = fn.get("name")
-      args = tc.get("args") if "args" in tc else tc.get("arguments")
-      if args is None and isinstance(fn, dict):
-        args = fn.get("arguments")
-      name_s = str(name or "(unknown_tool)")
-      parts.append(f"{tci}. **`{name_s}`**\n\n")
-      fence = _tool_args_to_fenced_block(args)
-      if fence:
-        parts.append(fence)
-      parts.append("\n")
-  return "".join(parts).rstrip() + "\n"
+  """Alias for propose-run tool-call markdown (legacy name)."""
+  return proposal_tool_calls_to_markdown(calls)
 
 
 def bundle_checker_input(
@@ -193,35 +183,31 @@ def bundle_checker_input(
   propose_agent_outcome: str,
   calls: list[Any],
 ) -> str:
-  """Build grader message: ``<RATIONALIZE>``, ``<PROPOSAL>``, ``<CALLS>``. ``calls`` may be ``[]``."""
-  ra = (rationalize_agent_outcome or "").strip()
-  pa = (propose_agent_outcome or "").strip()
-  if not ra or not pa:
-    raise ValueError(
-      "rationalize_agent_outcome and propose_agent_outcome must be non-empty markdown strings."
-    )
-  if not isinstance(calls, list):
-    raise TypeError("calls must be a list (use [] if the propose row has no LLM round-trips).")
-  out = (
-    f"<RATIONALIZE>\n\n{ra}\n\n</RATIONALIZE>\n\n"
-    f"<PROPOSAL>\n\n{pa}\n\n</PROPOSAL>\n"
+  """Build grader bundle: ``<RATIONALIZE_1>``, ``<PROPOSAL>``, ``<PROPOSAL_TOOL_CALLS>``."""
+  return build_propose_next_steps_grader_bundle(
+    contexts=[{"rationalize_agent_outcome": rationalize_agent_outcome}],
+    propose_agent_outcome=propose_agent_outcome,
+    calls=calls,
   )
-  calls_md = calls_to_markdown(calls)
-  out += f"\n<CALLS>\n\n{calls_md}\n</CALLS>\n"
-  return out
 
 
-def _append_proposal_and_calls(out: str, propose_agent_outcome: str, calls: list[Any]) -> str:
+def build_propose_next_steps_grader_bundle(
+  *,
+  contexts: list[dict[str, Any]],
+  propose_agent_outcome: str,
+  calls: list[Any] | None = None,
+) -> str:
+  """Hermes-aligned checker input: ``<RATIONALIZE_N>`` …, ``<PROPOSAL>``, ``<PROPOSAL_TOOL_CALLS>``."""
+  ra_block = build_rationalize_blocks(contexts=contexts)
   pa = (propose_agent_outcome or "").strip()
   if not pa:
-    raise ValueError("propose_agent_outcome must be non-empty.")
-  if not isinstance(calls, list):
-    raise TypeError("calls must be a list (use [] if the propose row has no LLM round-trips).")
-  calls_md = calls_to_markdown(calls)
+    raise ValueError("propose_agent_outcome must be non-empty")
+  if calls is not None and not isinstance(calls, list):
+    raise TypeError("calls must be a list (use [] if the propose row has no tool invocations).")
   return (
-    out
-    + f"<PROPOSAL>\n\n{pa}\n\n</PROPOSAL>\n\n"
-    + f"<CALLS>\n\n{calls_md}\n</CALLS>\n"
+    f"{ra_block}\n\n"
+    f"<PROPOSAL>\n\n{pa}\n\n</PROPOSAL>\n\n"
+    + proposal_tool_calls_xml(calls if isinstance(calls, list) else [])
   )
 
 
@@ -232,48 +218,19 @@ def bundle_checker_input_multi(
   calls: list[Any],
 ) -> str:
   """
-  Grader bundle for ``propose_next_steps_multi``: ``CONTEXTS`` (same outer shape as Hermes), then ``<PROPOSAL>``, ``<CALLS>``.
-  Each context dict: ``rationalize_agent_outcome`` (str), optional ``calls`` (list, rationalize row trace).
+  Multi-context grader bundle: numbered ``<RATIONALIZE_N>`` blocks, then ``<PROPOSAL>``, ``<PROPOSAL_TOOL_CALLS>``.
+  Each context dict: ``rationalize_agent_outcome`` (str). Optional ``calls`` (rationalize trace) is ignored.
   """
-  if not isinstance(contexts, list) or not contexts:
-    raise ValueError("contexts must be a non-empty list of dicts.")
-  inner_parts: list[str] = []
-  for i, ctx in enumerate(contexts, start=1):
-    if not isinstance(ctx, dict):
-      raise TypeError(f"contexts[{i - 1}] must be a dict")
-    ra = (ctx.get("rationalize_agent_outcome") or "").strip()
-    if not ra:
-      raise ValueError(f"contexts[{i - 1}].rationalize_agent_outcome must be non-empty")
-    body = ra.rstrip("\n")
-    chunks: list[str] = [
-      f'<CONTEXT index="{i}">\n\n',
-      "<RATIONALIZE>\n\n",
-      body,
-      "\n\n</RATIONALIZE>\n",
-    ]
-    calls_val = ctx.get("calls")
-    if isinstance(calls_val, list) and len(calls_val) > 0:
-      md = rationalize_calls_to_markdown(calls_val)
-      if md.strip():
-        chunks.append("\n<RATIONALIZE_CALLS>\n\n")
-        chunks.append(md.rstrip("\n") + "\n")
-        chunks.append("\n</RATIONALIZE_CALLS>\n")
-    chunks.append("\n</CONTEXT>")
-    inner_parts.append("".join(chunks))
-  inner = "\n\n".join(inner_parts)
-  head = (
-    "Multiple prior rationalize contexts:\n\n"
-    "<CONTEXTS>\n\n"
-    + inner
-    + "\n\n</CONTEXTS>\n\n"
+  return build_propose_next_steps_grader_bundle(
+    contexts=contexts,
+    propose_agent_outcome=propose_agent_outcome,
+    calls=calls,
   )
-  return _append_proposal_and_calls(head, propose_agent_outcome, calls)
 
 
 CHECKER_USER_MSG_PREFIX = (
   "Grade **completeness** only (one axis).\n"
-  "Input may be **single-context** (`<RATIONALIZE>` / `<PROPOSAL>` / `<CALLS>`) or **multi-context** "
-  "(`Multiple prior rationalize contexts:` + `<CONTEXTS>` …, then `<PROPOSAL>`, then `<CALLS>`).\n\n"
+  "Input is **`<RATIONALIZE_1>`** … **`<RATIONALIZE_N>`**, then **`<PROPOSAL>`**, then **`<PROPOSAL_TOOL_CALLS>`**.\n\n"
 )
 
 
@@ -295,54 +252,29 @@ OUTPUT_SCHEMA = types.Schema(
 )
 
 
-SYSTEM_PROMPT = """You are a strict rubric grader.
+SYSTEM_PROMPT = """You are a strict completeness-only grader. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
 
-Input order: evidence (`<RATIONALIZE>` in one or more `<CONTEXT>` blocks), then `<PROPOSAL>`, then propose-run `<CALLS>`.
-Treat all `<RATIONALIZE>` bodies across contexts as one combined evidence set. Do not use `<RATIONALIZE_CALLS>` for scoring.
-Grade only what is present; do not infer missing facts.
+**Bundle:** `<RATIONALIZE_N>` … `<PROPOSAL>` … `<PROPOSAL_TOOL_CALLS>` (this propose run only: `# Round N`, then `## Invoked tools` per round). Grade only visible text; do not invent facts. Ignore factual accuracy and whether tool choice is ideal.
 
-Return only JSON matching schema with one axis:
-- `completeness`: `score` 1-5 and one short `notes` sentence.
+**Penny limits (drive completeness; do not penalize correct human handoffs):**
+- **Uncategorized Penny cannot resolve:** Some transactions stay uncategorized because the spend is too vague or bundles many goods/services, so **Penny cannot assign one category without guessing.** User/manual categorization of those rows under **Open items** (or equivalent) is **complete and correct**; **do not** require `propose_*` categorization or recategorization tools for that work, and **do not** treat missing tools there as an automation gap.
+- **Final “are labels correct?”:** **Penny cannot fully verify categorical accuracy** the way the user ultimately can. Retrieval, heuristics, or bulk relabel proposals are **not** substitute for the user’s final attestation. If the proposal frames **definitive** verification that labels are **fully correct** as **only** Penny work under **Proposed next steps** (even with tools), treat that as **sectioning error → prefer score 4** when coverage otherwise holds; that confirmation belongs under **Open items** for the user.
 
-Notes-writing rules:
-- `notes` must be concise and direct.
-- For scores 1-4, list all major issues found in the proposal bundle (coverage gaps, misplaced open items, and call/proposal mismatches), not just one issue.
-- Prefer one sentence with compact clauses separated by semicolons.
-- Keep issue phrases short and concrete; avoid generic lead-ins like "The proposal fails to...".
-- For score 5, keep notes brief and do not add unnecessary justification.
-- Issue checklist for scores 1-4 (mention every applicable item):
-  - Missing impactful rationalize step(s) in proposed next steps (e.g., rule creation, recategorization, budgeting).
-  - Penny-executable actions parked under open items instead of proposed next steps.
-  - Missing propose-run calls when execution is required, or calls that are unrelated/misaligned.
-  - Name omitted impactful actions explicitly (e.g., missing rule creation, missing recategorization, missing budget creation) when they apply.
-  - When actions are parked in open items, name the parked actions explicitly.
+**Completeness:**
+1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE_N>` bodies; no silent drops. **Merged / synthesized** Proposed bullets count as mapping **all** rationalize candidates they subsume.
+2. **Automation:** If **Proposed next steps** assign Penny execution (goals, rules, retrieve/recategorize, **historical aggregates/patterns**), `<PROPOSAL_TOOL_CALLS>` must include matching tool invocations **across rounds** (scan every `# Round N` block). Steps covered by the two **Penny limits** bullets above do **not** need tools.
+3. **Structure:** Penny-executable work (including historical computation when proposed as Penny’s) belongs in **Proposed** unless a concrete blocker is stated; user-final steps in **Open**.
 
-Scoring rule for `completeness`:
-1) Coverage/execution fit:
-   - Important rationalize next steps must appear in `## Proposed next steps` (not only in open items).
-   - Only clearly non-impact items may be omitted without major penalty.
-   - Penny-executable actions (goals, categorization rules, recategorization, transaction-data analyses) should be proposed; keep in open items only when a concrete blocker is stated.
-2) Tool-trace consistency:
-   - `<CALLS>` must support proposed actions with relevant tools/args.
-   - If calls are unrelated to proposal actions, score low (usually 1-2).
-   - If calls are clearly unrelated to both proposal actions and rationalize priorities, assign score = 1.
-   - If no propose calls exist while proposal requires tool execution, score 3 when proposal is otherwise grounded; use 1-2 only when there are additional major grounding/coverage failures.
-3) Open-items quality:
-   - Open items should be truly unresolved dependencies, specific and useful.
+**Historical statistic vs goal:** Rationalize asks for (A) a **historical statistic** and (B) a **goal informed by** it. If (A) appears **only** under Open while (B) is under Proposed with matching goal tools, that is **one sectioning defect → 4** (statistic should be Proposed Penny work). If (A) is **missing** from PROPOSAL, coverage is weaker (**often 3**).
 
-Calibration:
-- 5: no meaningful completeness gap.
-- 4: minor omission/mismatch, no major execution gap.
-- 3: clear but fixable gap.
-- 2: multiple material issues.
-- 1: largely fails (major coverage miss and/or severe call mismatch).
+**Scoring anchors (worst match wins):**
+- **1** — Primary rationalize next step **wholly unaddressed** while PROPOSAL pursues **different** transaction subjects (e.g. wrong merchant vs named rule target), **or** primary step replaced by unrelated work—**use 1, not 2**, even if tools exist.
+- **2** — Whole context thread dropped, **or** **≥2** `## Next steps` bullets missing from both Proposed and Open while Open falsely says **none**, **or** several bullets missing.
+- **3** — Proposed Penny work without matching `<PROPOSAL_TOOL_CALLS>`, **or** a **primary** Penny ask only under Open with **no** Proposed mirror, **or** clear partial coverage (not the statistic-split case below).
+- **4** — Single sectioning issue, threads otherwise present: **(a)** user-only final label-truth check only under Proposed (see Penny limits); **(b)** historical metric only in Open next to a Proposed goal with tools—**4**, not 3, when the metric text exists in Open; **(c)** thin wording only.
+- **5** — Full coverage; tools match Proposed Penny work; Proposed/Open coherent, including **user** categorization for Penny-unmappable uncategorized charges under Open.
 
-Score anchors:
-- If proposal is mostly grounded but moves Penny-executable actions to open items, score 3 unless there are additional major failures.
-- If one or more impactful rationalize next steps are omitted but remaining parts are grounded, cap at 3.
-- Use 4 only for minor/non-impact omissions.
-- When key actionable items are present but parked under open items instead of proposed next steps, do not score below 3 solely for that mistake (even if calls are empty).
-- If grounded content is present and the primary defect is "actionable items parked as open items," assign score = 3.
+**`notes`:** One sentence (semicolons allowed); name gaps or affirm coverage, tools, and split. For multi-`<RATIONALIZE_N>` **5**, name each context theme checked.
 """
 
 

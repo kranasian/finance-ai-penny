@@ -502,9 +502,15 @@ SYSTEM_PROMPT = """You are a strict completeness-only grader. Return JSON `{scor
 - **Set categorization rules** — `propose_create_categorization_rule`.
 
 **Completeness:**
+<<<<<<< HEAD
 1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE_N>` bodies; no silent drops.
 2. **Automation:** If **Proposed next steps** assign Penny one of the **four capabilities** above, `<PROPOSAL_TOOL_CALLS>` must include matching tool invocations **across rounds** (scan every `# Round N` block). Steps that are **not** Penny capabilities do **not** need tools and belong under **Open items**.
 3. **Structure:** Only the four Penny capabilities belong in **Proposed**; everything else in **Open**.
+=======
+1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE_N>` bodies; no silent drops. **Merged / synthesized** Proposed bullets count as mapping **all** rationalize candidates they subsume.
+2. **Automation:** If **Proposed next steps** assign Penny execution (goals, rules, retrieve/recategorize, **historical aggregates/patterns**), `<PROPOSAL_TOOL_CALLS>` must include matching tool invocations **across rounds** (scan every `# Round N` block). Steps covered by the two **Penny limits** bullets above do **not** need tools.
+3. **Structure:** Penny-executable work (including historical computation when proposed as Penny’s) belongs in **Proposed** unless a concrete blocker is stated; user-final steps in **Open**.
+>>>>>>> a7d38c5e6b73f206173f7f90e7bd0d60ecda0590
 
 **Historical statistic vs goal:** Rationalize asks for (A) a **historical statistic** and (B) a **goal informed by** it. (A) is **not** a Penny capability—park it under **Open items** (complete and correct). (B) under **Proposed** with matching goal tools is expected even when the goal amount is provisional or not yet tied to (A). **Do not** score down because the goal omits recomputing history or uses a placeholder amount. If (A) is **missing** from PROPOSAL entirely, coverage is weaker (**often 3**).
 
