@@ -18,7 +18,7 @@ Run from `finance-ai-penny` repo root:
 - **max_output_tokens:** `384`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Rubric:** Grade **only** **`## Drivers`**. Use **`# Rationalize What`** for **which categories** to explain; use **`## Figures`** as **factual truth** (amounts, periods, merchants). Every referenced charge must name the merchant/source (e.g. **Amazon $50**, not “a $50 charge”). **`## Next steps`** out of scope. **18 fixtures** in batches **1–5**; **`--batch N --check`**.
+**Rubric:** Grade **only** **`## Drivers`**. Use **`# Rationalize What`** for **which categories** to explain; use **`## Figures`** as **factual truth** (amounts, periods, charges). Every cited charge must name the **transaction** (ledger line label—not necessarily a business name). **Rounding:** Drivers amounts may differ slightly from What/Figures—acceptable. **`## Next steps`** out of scope. **18 fixtures** in batches **1–5**; **`--batch N --check`**.
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
 """
@@ -68,7 +68,7 @@ OUTPUT_SCHEMA = types.Schema(
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "One sentence on **## Drivers only**: why for each required category, merchant-named transaction(s), clarity, and coverage. Do not critique Figures-table formatting."
+        "One sentence on **## Drivers only**: why for each required category, named transaction(s) (ledger line labels), clarity, and coverage. Do not critique Figures-table formatting."
       ),
     ),
   },
@@ -78,12 +78,15 @@ OUTPUT_SCHEMA = types.Schema(
 SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness**.
 
 ## Sources of truth
-- **`## Figures`** = **factual ground truth** for amounts, date windows, period-over-period comparisons, and which merchants/charges exist. When Figures and **`# Rationalize What`** disagree, **trust Figures** for grading Drivers.
+- **`## Figures`** = **factual ground truth** for amounts, date windows, period-over-period comparisons, and which charges/transactions exist. When Figures and **`# Rationalize What`** disagree, **trust Figures** for grading Drivers.
 - **`# Rationalize What`** = **scope only**: which categories must be explained. **Do not** treat What’s up/down/$0 headline or dollar amount as truth when **Figures** disagree—use Figures for direction, totals, and comparisons.
 - **`## Next steps`** — out of scope.
 
+**Amounts:** Drivers may cite rounded totals or line amounts that differ slightly from **What** or **Figures**—**acceptable**; do not penalize or mention rounding-only gaps in `notes`. Use Figures for **direction**, **which charges exist**, and **material** amount differences—not penny-perfect parity with Drivers.
+
 ## Out of scope (never affects score)
 - **`## Figures`** table formatting, labels, or grain.
+- **Rounding-only amount gaps** between Drivers and What/Figures.
 - Whether the What headline “should” match Figures—do not mention What/Figures doc mismatches in `notes` unless Drivers repeat a wrong What direction or total **instead of** Figures-backed facts.
 - **What vs Figures direction/amount conflicts** — **trust Figures**. Grade whether Drivers explain the **Figures** move for each required category, not whether they parrot a wrong What headline.
 
@@ -91,53 +94,55 @@ SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness**.
 For **each category listed in What**, judge whether **`## Drivers`** explains **why that move happened** vs a relevant prior period, using **Figures** for the underlying facts.
 
 ## Period windows
-- What date lines may be a **subset** of the period in Figures (e.g. partial month). Follow **Figures** for comparison windows when they are clearer.
+- What date lines may be a **subset** of the period in Figures. Follow **Figures** for comparison windows when they are clearer.
 - Drivers may compare to **full prior months** or **matching subsets** when that supports the movement story.
 - Score from the **weakest** required category when several are listed in What.
 
-## Name every transaction
-When Drivers cite a charge, refund, hold, or deposit, name the **merchant or identifiable source**—not only an amount.
-- **Bad:** “There was a **$50** charge.” / “a large purchase” / “an overage fee”
-- **Good:** “**Amazon $50.00**” / “**T-Mobile roaming overage $67.31**” / “**Payroll deposit $3,250.00**”
-Unnamed or generic charges → **partial (~3) or weaker**, even if amounts and direction are right.
+## Transaction naming
+When Drivers cite a charge, refund, hold, or deposit, name the **transaction** as it appears on the ledger line (label/description)—not only an amount or generic fee/category wording.
+
+**Transaction name ≠ business name.** Fee labels, loan payee names, interest lines, P2P memos, and similar ledger text all satisfy naming.
+
+**Unnamed or generic references** (amount-only, category-only, vague fee type with no specific line) → **partial (~3) or weaker**, even when amounts and direction are right. **Amount-only with correct direction and window → ~3, not ~2**—reserve **~2** for skipped categories, denied moves, or timing-only/vague activity when Figures list specific charges.
 
 ## Insight in Drivers
-Insightful **Drivers** explain **why** each required category moved. That can be:
-- **Period-over-period change** — why spend/income **rose, fell, restarted, or stayed $0** vs a relevant prior week/month; or
-- **Composition of the focal total** — **sufficient** when Drivers **identify which transaction(s)** drove the increase or decrease (merchant names, specific charges, refunds, holds, etc.).
+Insightful **Drivers** explain **why** each required category moved via:
+- **Period-over-period change** — why spend/income rose, fell, restarted, or stayed $0 vs a relevant prior week/month; or
+- **Driver identification** — which specific transaction(s) caused the increase or decrease vs the prior period (new, larger, absent, or resumed lines).
 
-**Each What category:** Explain that category **per Figures** (direction, amounts, merchants).
+**Each What category** must be explained **per Figures** (direction, amounts, named charges where cited).
 
-**What/Figures conflict (critical):** If What says **“significantly up”** but Figures show **down** week-over-week, grade Drivers on whether they explain the **Figures decrease** with merchant-named drivers. **Do not** penalize Drivers for “contradicting” What—**penalize** Drivers that parrot What’s wrong direction while Figures show the opposite. A **5** is possible when Drivers correctly explain the Figures move even though What said up.
+**What/Figures conflict:** Grade on whether Drivers explain the **Figures** move with named transactions. **Do not** penalize Drivers for diverging from a wrong What headline. **Do** penalize Drivers that parrot What’s wrong direction when Figures show the opposite. A **5** is possible when Drivers correctly explain the Figures move despite conflicting What.
 
-- **Up/down moves:** name the **merchant-named transaction(s)** that **drove** the increase or decrease vs the prior period (new this period, larger than last period, absent last period, etc.).
-- **Listing focal composition ≠ identifying drivers → partial (~3), not 5.** Naming every August line (e.g. **Bright Smiles**, **root canal**, **copay**) **without** saying which **drove** the up move vs July is **~3**, not 5—even when all charges are merchant-named. Contrast: “the jump is from **T-Mobile roaming overage $67.31**” or “**Sam’s Club $198** restock with **no warehouse trip last week**.”
-- **Amount-only or generic references → partial (~3).** “**Subscriptions** is down after a single lower **$28** charge during **Jul 6–12**” names category, amount, and window but **no establishment**—**~3**, not 5. Same for “a **$50** charge” without a merchant name.
-- **$0 focal period:** If the What move is **$0** and prior periods had activity, stating **no transactions / no new charges / no activity** in the focal window is a **complete** explanation—do not demand extra mechanisms.
-- **Refunds in the What:** treat as net credit aggregates; name mechanisms in Drivers when stated.
-- **Prior-period narrative alone** in Drivers (e.g. last month’s trip/gym charges) **without** why the **focal** window is $0/up/down → **weak (~2)** for that move; cannot score **5**.
-- **Denying a Figures move** (e.g. Figures show down, Drivers say “not really down”) → **weak (~2)**. **Following Figures when What is wrong** (What says up, Figures down, Drivers explain down) → **not** denial; score on Figures insight.
-- **Hollow tautology** in Drivers (“up because you bought more groceries”) with **no transaction names** and no vs-prior contrast → **1**, same as pure restatement.
-- **Several What lines:** score from the **weakest**; a strong explanation for one category does **not** excuse another where Drivers only restate totals with **no** named transaction driving that line’s direction → **partial (~3)**; overall **≤3**.
+- **Up/down moves:** identify transaction(s) that **drove** the change vs the prior period—not merely list all focal-period lines.
+- **Composition without drivers → ~3, never 4–5:** naming every focal charge (with transaction labels) but **not** stating which line(s) drove the delta vs the comparison period caps at **~3** even when all lines are named. Restating focal vs prior totals while listing focal lines is **not** driver identification unless Drivers tie specific line(s) to the delta (new, absent last period, larger than last period).
+- **Amount-only or generic references → ~3:** category + amount + window but no transaction name; direction correct → **~3**, not **~2**.
+- **$0 focal period:** If prior periods had activity, stating **no transactions / no new charges / no activity** in the focal window is **complete**—do not demand extra mechanisms. **Prior-period charges only → ~2:** naming prior-window transactions without explaining why the **focal** window is $0 does **not** satisfy a $0 What line—never score **4–5**.
+- **Refunds in What:** treat as net credit aggregates; name refund/charge lines in Drivers when explaining the move.
+- **Timing-only or vague activity → ~2, not 1:** generic timing language or vague refund/activity wording with correct direction but **no transaction names** when Figures list specific charges → **~2**. **1** only when Drivers purely echo headlines and dollar totals with **no** mechanism, contrast, or activity claim.
+- **Prior-period narrative without focal explanation → ~2:** discussing only prior-window charges without explaining why the **focal** window is $0/up/down; cannot score **5**.
+- **Denying a Figures move → ~2.** Following Figures when What is wrong is **not** denial—score on Figures insight.
+- **Hollow tautology** (restate direction with no transaction names and no vs-prior contrast) → **1**, same as pure restatement.
+- **Several What lines:** score from the **weakest**; one strong category does not excuse another with only restated totals → overall **≤3**.
 
 ## Scoring process
 1. From **What**, list each category that must be explained.
-2. From **Figures**, note amounts, windows, and merchants for each category.
-3. Read **only** Drivers: does each required category get a **why vs prior period** story with **merchant-named** transactions?
+2. From **Figures**, note amounts, windows, and charges for each category.
+3. Read **only** Drivers: does each required category get a **why vs prior period** story with **named transactions** where charges are cited?
 4. One integer **1–5** from holistic impact (weakest category + severity).
 
 ## Scores (integer 1–5)
-- **5** — Every required category: clear **why**, every cited charge **merchant-named**, with driver(s) vs prior period (or absence/pause/restart for $0).
+- **5** — Every required category: clear **why**, every cited charge **named** (transaction label), with driver(s) vs prior period (or absence/pause/restart for $0). **Never 5** when focal lines are listed without identifying which drove the move.
 - **4** — Strong; one category thin or one charge referenced by amount only.
-- **3** — **Partial:** merchants listed but **not which drove** the move; or generic/amount-only references mixed with some names; one category thin in a multi-line What.
-- **2** — **Weak:** category **skipped**; **denies** the move; **timing-only** with **no merchant names** in Drivers when Figures list specific charges; vague refunds/activity with no merchant names.
-- **Multi-line What:** one category strong (merchant-named drivers) and another only restates direction with no merchants → overall **3**, not 2.
-- **1** — Drivers **only** echo What/Figures headlines and **recite dollar amounts**—**no** merchant-named transactions (e.g. “down to $12; July was $48” only).
+- **3** — **Partial:** transactions listed but not which drove the move; amount-only/generic references with correct direction; one category thin in multi-line What.
+- **2** — **Weak:** category skipped; denies the move; timing-only or vague activity/refunds with **no transaction names** when Figures list specific charges; prior-period-only narrative with no focal-window story.
+- **Multi-line What:** one category strong and another only restates direction with no named lines → overall **3**, not 2.
+- **1** — Drivers **only** echo What/Figures headlines and recite dollar amounts—**no** mechanism, contrast, or activity claim of any kind.
 
-**Weakest-category cap:** Score from the weakest required category. Any up/down category with only composition lists or unnamed charges → overall **≤3**. **Focal skip** (prior-period merchants only) → **~2**.
+**Weakest-category cap:** Score from the weakest required category. Any up/down category with only composition lists or unnamed charges → overall **≤3**. **Focal skip** (prior-period charges only with no focal-window $0/up/down story) → **~2**, never **4–5**.
 
 ## `notes`
-One sentence on **Drivers-only** insight: coverage of What categories, merchant-named transactions, movement explanation. Do not critique Figures formatting.
+One sentence on **Drivers-only** insight: coverage of What categories, named transactions, movement explanation. Do not critique Figures formatting.
 
 Return **only** JSON `{score, notes}`.
 """

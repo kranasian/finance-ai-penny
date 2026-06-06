@@ -54,8 +54,198 @@ def _parse_expected_output(raw: str | None) -> dict[str, Any] | None:
 
 TEST_CASES: list[dict[str, Any]] = [
   {
-    "name": "target_rule_tools_match_costco",
+    "name": "zelle_maria_rule_no_category_dining_out_inappropriate",
     "batch": 1,
+    "input": """<RATIONALIZE_1>
+
+# Rationalize What
+
+Explain: Several Zelle payments to Maria are sitting in uncategorized spend this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- **Current Month (Apr 1–30, 2026) — uncategorized Zelle to Maria:** $840.00 across 6 posted transfers in `miscellaneous`.
+- **Prior Month (Mar 1–31, 2026) — same payee pattern:** $600.00 across 4 transfers, also uncategorized.
+
+## Drivers
+
+The April activity is concentrated in repeatable peer-to-peer outflows where memos consistently include **"Zelle"** and **"Maria"** (for example **Zelle payment to Maria: $140.00** on April 6 and **Zelle to Maria — thank you: $200.00** on April 19). Nothing in the descriptions suggests merchant card spend or dining; the pattern looks like personal transfers rather than dining or shopping.
+
+## Next steps
+
+1. Set a categorization rule for **Zelle to Maria** (past and future).
+
+</RATIONALIZE_1>
+
+<PROPOSAL>
+
+# Proposal
+
+## Proposed next steps
+
+1. **Create** a categorization rule so merchant substring “zelle to maria” maps to `meals_dining_out` for past and future.
+
+## Open items (not addressed)
+
+1. None.
+
+</PROPOSAL>
+
+<PROPOSAL_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`propose_create_categorization_rule`**
+
+```json
+{
+  "rule": {
+    "name_sub_eq": "zelle to maria"
+  },
+  "ai_category_id": 2,
+  "scope": "future_and_past",
+  "rationale": "Encode the Zelle-to-Maria payee pattern as dining out."
+}
+```
+
+</PROPOSAL_TOOL_CALLS>
+""",
+    "output": '{"score": 3, "notes": "Rationalize asks for a Zelle-to-Maria rule without a category and Drivers describe generic P2P transfers, so assigning `meals_dining_out` contradicts the evidence."}',
+  },
+  {
+    "name": "zelle_maria_dinner_rule_dining_out_correct",
+    "batch": 2,
+    "input": """<RATIONALIZE_1>
+
+# Rationalize What
+
+Explain: Several Zelle payments to Maria are sitting in uncategorized spend this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- **Current Month (Apr 1–30, 2026) — uncategorized Zelle to Maria:** $840.00 across 6 posted transfers in `miscellaneous`.
+- **Prior Month (Mar 1–31, 2026) — same payee pattern:** $600.00 across 4 transfers, also uncategorized.
+
+## Drivers
+
+April memos mix purposes, but several lines carry an explicit dining cue: **Zelle to Maria: Dinner $85.00** on April 8 and **Zelle payment to Maria — dinner split $62.00** on April 21 read like shared-meal reimbursements. Other lines such as **Zelle to Maria — thank you: $120.00** on April 22 remain general P2P transfers with no dining signal.
+
+## Next steps
+
+1. Set a categorization rule for **Zelle to Maria: Dinner** (past and future).
+
+</RATIONALIZE_1>
+
+<PROPOSAL>
+
+# Proposal
+
+## Proposed next steps
+
+1. **Create** a categorization rule so merchant substring “zelle to maria: dinner” maps to `meals_dining_out` for past and future.
+
+## Open items (not addressed)
+
+1. **Review** remaining generic **Zelle to Maria** lines that lack a dinner memo before applying any broader payee rule.
+
+</PROPOSAL>
+
+<PROPOSAL_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`propose_create_categorization_rule`**
+
+```json
+{
+  "rule": {
+    "name_sub_eq": "zelle to maria: dinner"
+  },
+  "ai_category_id": 2,
+  "scope": "future_and_past",
+  "rationale": "Dinner memo lines are clearly shared-meal reimbursements."
+}
+```
+
+</PROPOSAL_TOOL_CALLS>
+""",
+    "output": '{"score": 5, "notes": "The Dinner-scoped rule and `meals_dining_out` target match the stated payee purpose and the matching categorization tool."}',
+  },
+  {
+    "name": "walmart_rule_no_category_groceries_acceptable",
+    "batch": 3,
+    "input": """<RATIONALIZE_1>
+
+# Rationalize What
+
+Explain: Groceries looks low because Walmart runs are still uncategorized this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+- **Current Month (Apr 1–30, 2026) — `meals_groceries`:** $318.00.
+- **Current Month — uncategorized Walmart-tagged spend:** $186.50 across 7 posted lines flagged on import.
+- **Prior Month (Mar 1–31, 2026) — Walmart eventually coded to groceries after review:** $142.00 across 5 lines.
+
+## Drivers
+
+April's uncategorized Walmart charges mostly read like food and pantry purchases (**Walmart Grocery pickup: $64.22** on April 4, **Walmart Supercenter — groceries: $38.15** on April 11, **Walmart.com grocery delivery: $29.88** on April 19). A minority of lines lack item detail, but the dominant signal is grocery-like; Walmart is ~70% likely to be groceries in this household's history.
+
+## Next steps
+
+1. Set a categorization rule for **Walmart** (past and future).
+
+</RATIONALIZE_1>
+
+<PROPOSAL>
+
+# Proposal
+
+## Proposed next steps
+
+1. **Create** a categorization rule so merchant substring “walmart” maps to `meals_groceries` for past and future.
+
+## Open items (not addressed)
+
+1. None.
+
+</PROPOSAL>
+
+<PROPOSAL_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`propose_create_categorization_rule`**
+
+```json
+{
+  "rule": {
+    "name_sub_eq": "walmart"
+  },
+  "ai_category_id": 4,
+  "scope": "future_and_past",
+  "rationale": "Walmart memos are predominantly grocery-like in this household."
+}
+```
+
+</PROPOSAL_TOOL_CALLS>
+""",
+    "output": '{"score": 5, "notes": "Walmart is a mixed retailer but `meals_groceries` is an acceptable default given the grocery-heavy memo profile Drivers describe."}',
+  },
+  {
+    "name": "duplicate_proposed_steps_non_factor",
+    "batch": 4,
     "input": """<RATIONALIZE_1>
 
 # Rationalize What
@@ -85,6 +275,7 @@ Create a categorization rule so Costco is always `meals_groceries`.
 ## Proposed next steps
 
 1. **Add** a categorization rule so merchant substring “costco” maps to `meals_groceries` for past and future.
+2. **Add** a categorization rule so merchant substring “costco” maps to `meals_groceries` for past and future.
 
 ## Open items (not addressed)
 
@@ -113,680 +304,7 @@ Create a categorization rule so Costco is always `meals_groceries`.
 
 </PROPOSAL_TOOL_CALLS>
 """,
-    "output": '{"score": 5, "notes": "Proposal stays inside the rationalize facts and the rule tool matches the stated `meals_groceries` intent."}',
-  },
-  {
-    "name": "rule_intent_only_inappropriate_tools_called",
-    "batch": 1,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Target REDcard charges keep landing in `shopping` instead of `shopping_clothing`. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- About $310 across Target runs still tagged to the parent `shopping` bucket.
-
-## Drivers
-
-Descriptions look like apparel and home goods mixed; the clothing-heavy pattern is stable.
-
-## Next steps
-
-Add a categorization rule so Target REDcard lines default to `shopping_clothing` unless the memo clearly says grocery pickup.
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Create** a categorization rule so merchant text matching “TARGET REDCARD” maps to `shopping_clothing` for past and future.
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-## Invoked tools
-
-1. **`propose_retrieve_transactions`**
-
-```json
-{
-  "date_range": {
-    "start": "2026-04-01",
-    "end": "2026-04-30"
-  },
-  "ai_category_id_in": [
-    21,
-    44
-  ],
-  "rationale": "Scan shopping parents before edits."
-}
-```
-
-2. **`propose_create_goal`**
-
-```json
-{
-  "category": "shopping_clothing",
-  "goal_type": "spending_budget",
-  "goal_title": "Cap Target apparel",
-  "target_amount": 400,
-  "time_horizon": "monthly",
-  "rationale": "Reduce mis-tagged apparel drift."
-}
-```
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 3, "notes": "The rationalize thread calls for a categorization rule, but every listed tool is the wrong family (retrieve + goal), so the trace is materially inappropriate."}',
-  },
-  {
-    "name": "rule_intent_no_tools_in_calls",
-    "batch": 1,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Groceries is significantly down this month at $120. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Groceries: $120 this month (Apr 1–30, 2026).
-
-## Drivers
-
-Several Costco transactions appear miscategorized as `miscellaneous`.
-
-## Next steps
-
-Create a categorization rule so Costco is always `meals_groceries`.
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Add** a categorization rule so merchant substring “costco” maps to `meals_groceries` for past and future.
-
-## Open items (not addressed)
-
-1. **Review** whether any non-Costco groceries are still landing in `miscellaneous`.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-_No tool calls this round._
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 5, "notes": "Grounding and category intent are sound; missing rule automation is a completeness gap, not an accuracy defect."}',
-  },
-  {
-    "name": "categorization_rule_targets_invalid_investments_slug",
-    "batch": 2,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Recurring “FIDELITY WITHDRAWAL” debits still tagged as `transfers` this month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Four $400 pulls labeled “FIDELITY WITHDRAWAL” sitting in `transfers`.
-
-## Drivers
-
-Memo text looks like brokerage cash movements rather than peer-to-peer transfers.
-
-## Next steps
-
-If the user confirms these are reinvestment sweeps, add a narrow merchant rule so “FIDELITY WITHDRAWAL” maps to the user-chosen leaf (not `transfers`).
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Create** a categorization rule so merchant substring “FIDELITY WITHDRAWAL” maps to **`investments`** for past and future.
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-_No tool calls this round._
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 4, "notes": "Otherwise tied to the stated Fidelity pattern, but `investments` is not a canonical Penny slug, so the stated rule target cannot be executed as written."}',
-  },
-  {
-    "name": "categorization_rule_targets_invalid_bills_general_slug",
-    "batch": 2,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Uncategorized ACH pulls from the college bursar this month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Two “STATECOLLE BURSAR ONLINE” debits totaling $1,240 remain in `uncategorized`.
-
-## Drivers
-
-Descriptions look like tuition-related school charges rather than generic transfers.
-
-## Next steps
-
-Add a narrow categorization rule so merchant substring “STATECOLLE BURSAR ONLINE” stops posting as `uncategorized`.
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Create** a categorization rule so merchant substring “STATECOLLE BURSAR ONLINE” maps to **`bills_general`** for past and future.
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-_No tool calls this round._
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 4, "notes": "Grounding matches the bursar pattern, but `bills_general` is not a canonical Penny slug, so the rule target cannot be executed as stated."}',
-  },
-  {
-    "name": "zelle_example_pairing_without_user_confirmation",
-    "batch": 2,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Uncategorized spend is elevated this month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Uncategorized volume is elevated vs prior month.
-
-## Drivers
-
-Uncategorized is high because of several Zelle to Jose transactions that require the user to confirmation of their categorizations.
-
-## Next steps
-
-(1) Confirm Zelle to Jose category, (2) Set categorization rule for Zelle to Jose -> Transfer.
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **(1) Confirm** Zelle to Jose category (user).
-2. **(2) Set** categorization rule for Zelle to Jose -> `transfers` (Penny: create rule for past and future).
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-## Invoked tools
-
-1. **`propose_create_categorization_rule`**
-
-```json
-{
-  "rule": {
-    "name_sub_eq": "zelle to jose"
-  },
-  "ai_category_id": 45,
-  "scope": "future_and_past",
-  "rationale": "Apply transfer mapping once pattern is confirmed."
-}
-```
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 4, "notes": "Rationalize sequences confirm-then-rule; treating the `transfers` rule as immediate Penny work in parallel with confirmation skips the gate, so accuracy is slightly off."}',
-  },
-  {
-    "name": "venmo_example_rule_treated_as_mandatory",
-    "batch": 2,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Uncategorized peer-to-peer lines this month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Several Venmo to Maria charges remain uncategorized.
-
-## Drivers
-
-Determine categorization of Venmo to Maria and set a categorization rule (eg. Venmo to Maria -> `bills_service_fees`).
-
-## Next steps
-
-Determine categorization of Venmo to Maria and set a categorization rule (eg. Venmo to Maria -> `bills_service_fees`).
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **(1) Set** categorization rule for Venmo to Maria -> `bills_service_fees` for past and future.
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-## Invoked tools
-
-1. **`propose_create_categorization_rule`**
-
-```json
-{
-  "rule": {
-    "name_sub_eq": "venmo to maria"
-  },
-  "ai_category_id": 13,
-  "scope": "future_and_past",
-  "rationale": "Encode the example mapping as production."
-}
-```
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 4, "notes": "The Venmo → `bills_service_fees` pairing was introduced with eg. as an illustration, not a mandate; implementing it as a definitive rule over-reads the rationalize text."}',
-  },
-  {
-    "name": "hallucinated_wire_amount",
-    "batch": 3,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: `bills_service_fees` are flat month over month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Service fees: $88 this month vs $86 last month.
-
-## Drivers
-
-Bank maintenance line items repeat at similar amounts.
-
-## Next steps
-
-Create a monthly cap goal for `bills_service_fees` if the user wants tighter control.
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Recategorize** the $9,400 international wire on 2026-04-11 from `miscellaneous` into `bills_service_fees` before setting any cap goal.
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-## Invoked tools
-
-1. **`propose_recategorize_transactions`**
-
-```json
-{
-  "transaction_ids": [
-    888001
-  ],
-  "target_category": "bills_service_fees",
-  "rationale": "Align the wire with service-fee narrative."
-}
-```
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 1, "notes": "Invents a large wire and transaction id that never appear in rationalize, so grounding fails outright."}',
-  },
-  {
-    "name": "service_fees_goal_tools_match",
-    "batch": 3,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Service Fees are significantly down this month. (credit card interest charges) (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Service Fees / interest charges: down vs last month.
-
-## Drivers
-
-Credit card interest charges decreased.
-
-## Next steps
-
-1. Consider setting a budget for service fees to keep interest charges low.
-2. Review APR / statement details to confirm why interest changed.
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Create** a monthly spending budget of $250 for `bills_service_fees` to support the current downward trend in credit card interest charges.
-
-## Open items (not addressed)
-
-1. **Review** credit card account statements and APR details to determine if the interest reduction resulted from a lower average daily balance or a rate change.
-2. **Explore** debt repayment strategies or balance transfer options to eliminate remaining recurring interest fees.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-## Invoked tools
-
-1. **`propose_create_goal`**
-
-```json
-{
-  "category": "bills_service_fees",
-  "goal_type": "spending_budget",
-  "rationale": "Based on the recent reduction in credit card interest charges, a $250 monthly budget for service fees will help sustain this positive trend and encourage continued debt management.",
-  "time_horizon": "monthly",
-  "goal_title": "Limit Service Fees",
-  "target_amount": 250
-}
-```
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 5, "notes": "Figures and drivers stay consistent with the proposal, and the goal tool matches the `bills_service_fees` automation described."}',
-  },
-  {
-    "name": "dual_context_service_fees_thread_only",
-    "batch": 4,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Service Fees are significantly down this month. (credit card interest charges) (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Service Fees / interest charges: down vs last month.
-
-## Drivers
-
-Credit card interest charges decreased.
-
-## Next steps
-
-1. Consider setting a budget for service fees to keep interest charges low.
-2. Review APR / statement details to confirm why interest changed.
-
-</RATIONALIZE_1>
-
-<RATIONALIZE_2>
-
-# Rationalize What
-
-Explain: Kids education spending this month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-- Kids education: $180 this month.
-
-## Next steps
-
-Review recurring tutoring charges for consistency.
-
-</RATIONALIZE_2>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Create** a monthly spending budget of $250 for `bills_service_fees` to sustain the downward trend in interest charges.
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-## Invoked tools
-
-1. **`propose_create_goal`**
-
-```json
-{
-  "category": "bills_service_fees",
-  "goal_type": "spending_budget",
-  "goal_title": "Limit Service Fees",
-  "target_amount": 250,
-  "time_horizon": "monthly",
-  "rationale": "Align with reduced interest narrative."
-}
-```
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 5, "notes": "Service-fees narrative and goal tool stay faithful to context 1; skipping the tutoring thread is completeness, not an accuracy error here."}',
-  },
-  {
-    "name": "food_budget_applebees_rule_and_recategorize",
-    "batch": 1,
-    "input": """<RATIONALIZE_1>
-
-# Rationalize What
-
-Explain: Groceries is significantly up this month at $1028.  Delivered Food is significantly up this month at $343.  Food is thus significantly up this month to $2362. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-*   **Groceries (meals_groceries)**: $1028.37 (Apr 1–30, 2026) vs $804.48 (Mar 1–31, 2026) vs $679.14 (Feb 1–28, 2026).
-*   **Delivered Food (meals_delivered_food)**: $343.01 (Apr 1–30, 2026) vs $313.47 (Mar 1–31, 2026).
-*   **Dining Out (meals_dining_out)**: $990.15 (Apr 1–30, 2026) vs $875.62 (Mar 1–31, 2026).
-*   **Total Food Spend**: $2361.53 (Apr 1–30, 2026) vs $1993.57 (Mar 1–31, 2026).
-
-## Drivers
-
-Your total food spending increased by $367.96 compared to last month. The largest driver is the **Groceries** category, which rose by $223.89; this was driven by frequent, evenly distributed trips to stores like Safeway ($331.97 total), Trader Joe's ($196.43), Publix ($176.29), and Whole Foods ($175.63). **Dining Out** also saw a notable increase of $114.53, while **Delivered Food** saw a smaller rise of $29.54. It appears you have increased your spending across all three food categories this month.
-
-## Next steps
-
-1.  **Budgeting**: Set a combined monthly food budget of $2,000 to help bring spending back toward your Q1 levels.
-2.  **Categorization Review**: Note that "Applebee's" is currently categorized under `meals_groceries` in your system; if you prefer this to be `meals_dining_out`, please update the categorization rule.
-3.  **Rule**: Applebee's → meals_dining_out.
-
-</RATIONALIZE_1>
-
-<PROPOSAL>
-
-# Proposal
-
-## Proposed next steps
-
-1. **Establish** a combined $2,000 monthly budget for all food-related categories (groceries, dining out, delivered food).
-2. **Apply** a categorization rule to automatically tag future "Applebee's" transactions as `meals_dining_out`.
-3. **Recategorize** past "Applebee's" transactions from `meals_groceries` to `meals_dining_out` to clean up your historical spending data.
-
-## Open items (not addressed)
-
-1. None.
-
-</PROPOSAL>
-
-<PROPOSAL_TOOL_CALLS>
-
-# Round 1
-
-## Invoked tools
-
-1. **`retrieve_user_spending_transactions_by_sql`**
-
-```json
-{
-  "sql_query": "SELECT transaction_id, name, amount, date FROM user_spending_transactions WHERE name LIKE '%Applebee%' AND category = 'meals_groceries' ORDER BY date DESC LIMIT 10"
-}
-```
-
-2. **`propose_create_goal`**
-
-```json
-{
-  "target_amount": 2000,
-  "category": "meals_groceries, meals_dining_out, meals_delivered_food",
-  "goal_title": "Combined Food Monthly Budget",
-  "goal_type": "spending_budget",
-  "time_horizon": "monthly",
-  "rationale": "Limit total food spending to $2,000 per month to align with Q1 levels."
-}
-```
-
-# Round 2
-
-## Invoked tools
-
-1. **`propose_create_categorization_rule`**
-
-```json
-{
-  "scope": "future_and_past",
-  "rule": {
-    "name_sub_eq": "applebee's"
-  },
-  "rationale": "Correct miscategorized Applebee's transactions to dining out.",
-  "ai_category_id": 2
-}
-```
-
-2. **`propose_recategorize_transactions`**
-
-```json
-{
-  "transaction_ids": [
-    1789787,
-    1789746,
-    1789658,
-    1789267,
-    1789630,
-    1789488,
-    1789092,
-    1789442
-  ],
-  "rationale": "Correcting historical Applebee's transactions incorrectly categorized as groceries.",
-  "new_category": "meals_dining_out"
-}
-```
-
-# Round 3
-
-_No tool calls this round._
-
-</PROPOSAL_TOOL_CALLS>
-""",
-    "output": '{"score": 4, "notes": "Grounded on rationalize figures and merchants; combined food goal category string is not a single canonical slug."}',
+    "output": '{"score": 5, "notes": "Grounding, category intent, and the rule tool match rationalize; repeating the same proposed step is out of scope for accuracy."}',
   },
 ]
 
@@ -796,96 +314,53 @@ def _build_output_schema(_types: Any) -> Any:
     type=_types.Type.OBJECT,
     required=["score", "notes"],
     properties={
-      "score": _types.Schema(type=_types.Type.INTEGER, description="Integer 1–5."),
-      "notes": _types.Schema(type=_types.Type.STRING, description="One short sentence."),
+      "score": _types.Schema(
+        type=_types.Type.INTEGER,
+        description="Accuracy 1–5 per rubric (5 = no meaningful gap).",
+      ),
+      "notes": _types.Schema(
+        type=_types.Type.STRING,
+        description=(
+          "Semicolon-separated list of every distinct accuracy issue found, regardless of severity; "
+          "cite slug tokens in backticks when relevant. Score 5: one brief affirmation only. Never omit "
+          "a rubric violation to keep notes short. Never mention duplicates, completeness, or missing tools."
+        ),
+      ),
     },
   )
 
 
-SYSTEM_PROMPT = """Grade **accuracy** only.
+SYSTEM_PROMPT = """Grade **accuracy** only. Return `{score, notes}`.
 
-You are a **strict rubric grader** for the checker bundle below (XML-style role wrappers; do not require table/column names).
+**Input:** `<RATIONALIZE_N>` (figures, drivers, next steps) → `<PROPOSAL>` (`## Proposed next steps`, `## Open items`) → `<PROPOSAL_TOOL_CALLS>` (`# Round N`, `## Invoked tools`). Grade only visible text.
 
-You receive **evidence** (`<RATIONALIZE_1>`, `<RATIONALIZE_2>`, …), then **`<PROPOSAL>`**, then **`<PROPOSAL_TOOL_CALLS>
+**Notes:** Audit Accuracy items 1–9 below; list **every** distinct violation in `notes`, regardless of severity or whether it alone sets the score. Use semicolon-separated clauses; cite slug tokens in backticks. Score **5** → one brief affirmation only. Never omit a rubric violation to keep notes short—even when other violations already justify a lower score.
 
-# Round 1
+**Next steps — binding when** a direct Penny/user instruction, not optional/hypothetical/illustrative (e.g., eg., consider, if user confirms) and not gated on confirmation or order ((1) before (2)). Automating an example or step (2) before prerequisite (1) → typically **4**.
 
-## Invoked tools
+**Grounding:** All `<RATIONALIZE_N>` bodies are combined evidence. Invented merchants, amounts, dates, or transaction ids → **1**.
 
-`**.
+**Slugs vs IDs:** Slugs in `<PROPOSAL>` and tool `new_category` args must be Category List tokens exactly. Numeric `ai_category_id` in tool calls is always valid—**never** list, penalize, or suggest replacing it with a slug.
 
-**Evidence:**
+**Category choice:** When next steps name a payee/merchant rule but no category, the proposed category must follow Drivers/Figures—not stereotypes. Contradicting evidence → **3**. Explicit purpose in the rule scope or a dominant memo signal (including mixed merchants) → **5** when otherwise aligned. Parent rollups and leaves are both valid—pick the level Drivers support (see item 9).
 
-- **`<RATIONALIZE_N>`** blocks: markdown from prior rationalize runs (figures, drivers, next steps).
-
-**How to read `## Next steps` in `<RATIONALIZE_N>`:** Treat each bullet as **mandatory for the proposal only if** it reads as a direct instruction to Penny or the user without being framed as optional, hypothetical, or illustrative. **Do not** treat lines as binding when they are clearly **examples** ("example only", "e.g.", "eg.", "for instance", "illustration", "if the user decides…", parenthetical "(Example: …)"), **exploratory** ("consider…", "think about…"), or **explicitly gated** on **user confirmation** or **ordering** ("after the user confirms…", "once the user picks…", "only after that…", "(1) … (2) …" where **(1)** must precede **(2)**). **Before scoring 5:** scan for those cues; if **`<PROPOSAL>`** turns an **example** pairing, an **eg.** illustration, or a **(2) rule** into **immediate** Penny automation **without** satisfying the prerequisite or **(1)** step, that is **not** faithful reading of the evidence → **typically 4** (axis 5), not 5.
-
-For **grounding**, treat **all** **`<RATIONALIZE_N>`** bodies as the **combined** evidence. **`<PROPOSAL>`** must not assert facts (merchants, amounts, dates, transaction ids) that are absent from or contradicted by that evidence. **Fabricated** concrete transactions, wires, or ids invented in **`<PROPOSAL>`** or **`<PROPOSAL_TOOL_CALLS>`** that never appear in rationalize → **score 1**; do **not** soften invented facts to **3** just because a tool was invoked.
-
-**Numeric `ai_category_id` vs slugs:** `propose_create_categorization_rule` and similar tools often use **`ai_category_id`** (integer). That is **not** an error by itself when it maps to the same leaf as the slug in **`<PROPOSAL>`** (see `categories.py` / `penny/tools/utils.py`, e.g. **4 ↔ `meals_groceries`**, **22 ↔ `shopping_clothing`**, **17 ↔ `shelter_upkeep`**, **45 ↔ `transfers`**). **Do not** mark a bundle inaccurate solely because JSON used an integer ID. **However:** any **slug spelled out in `<PROPOSAL>`** (including in backticks) must still be **word-for-word** one entry from the **Category List** below—IDs do not excuse invented slug strings in the proposal text.
-
-**Then:**
-
-1. **`<PROPOSAL>` … `</PROPOSAL>`** — Markdown from the **propose** outcome (`agent_outcome`): normally **only** the **`# Proposal`** block with **`## Proposed next steps`** and **`## Open items (not addressed)`** (or equivalent **`##`** headings if `# Proposal` was omitted).
-
-2. **`<PROPOSAL_TOOL_CALLS>` … `
-
-</PROPOSAL_TOOL_CALLS>`** — Markdown for **this** propose run (`calls` field): `# Round N`, then `## Invoked tools` with numbered tools and fenced argument blocks when present (no token/latency lines).
-
-Grade tool consistency for the propose run using **`<PROPOSAL_TOOL_CALLS>`** only.
-
-Grade **only** what is in the message. Do not invent missing data.
-
-**Out of scope — never lower accuracy solely for these (non-factors; keep score at 5 if nothing else is wrong):**
-- Whether every rationalize **Next steps** bullet is reflected in **`<PROPOSAL>`** (completeness).
-- Whether **`<PROPOSAL>`** describes Penny automation (rules, goals, retrieve, recategorize) while **`<PROPOSAL_TOOL_CALLS>`** lists **no** matching tool invocations (`_No tool calls._`, etc.). Missing tools vs proposal text is **completeness**, **not** accuracy—**do not** reduce the score for that gap alone; when grounding and category intent otherwise match rationalize, **prefer score 5** unless another accuracy defect applies.
-- Sectioning between **Proposed next steps** vs **Open items** except where it creates a **factual** contradiction with **`<RATIONALIZE_N>`** text.
-
-**Axis (return ONLY `{score, notes}`):**
+**Out of scope (never lower score, never list in notes):** uncovered next steps; **missing** tool calls for proposed steps; numeric `ai_category_id` in tool calls; Proposed/Open sectioning unless factual contradiction; **duplicate identical proposed bullets—ignore entirely, score 5 if otherwise sound**.
 
 **Accuracy**
-1. **Grounding:** No invented merchants/amounts/dates/transaction ids; no contradictions vs **any** **`<RATIONALIZE_N>`** body.
-2. **Penny fit:** Proposed steps align with Penny's capabilities and the **mandatory** (non-example) drivers and next steps.
-3. **Tool appropriateness (when `<PROPOSAL_TOOL_CALLS>` lists at least one concrete tool invocation):** Tools must support the **Proposed next steps** (right family and sensible args). If **`<PROPOSAL>`** clearly calls for a **categorization rule** (merchant/payee → category automation) but **every** tool in **`<PROPOSAL_TOOL_CALLS>`** is from **other** families only (e.g. **only** `propose_retrieve_transactions` + `propose_create_goal`, with **no** `propose_create_categorization_rule`), that mismatch is **always score 3**—do **not** soften to **4** or **5**. **If `<PROPOSAL_TOOL_CALLS>` has no tool invocations at all, skip this axis item** (missing tools are completeness); an invalid slug in **`<PROPOSAL>`** alone is then axis **4**, not **3**. When **no** tools are listed, **no** tool-appropriateness penalty.
-4. **Invalid categorization (text only):** If the **only** substantive defect is a **string** in **`<PROPOSAL>`** that is **not** one of the Category List tokens **exactly** (character-for-character), e.g. `investments`, `bills_general`, while the narrative is otherwise grounded, **cap** at **4** for one slip, **3** only for multiple invalid labels—**never 1 or 2** for invalid-label-only cases. This rule does **not** apply to valid numeric `ai_category_id` that match the intended leaf. **Anchor (invalid slug only):** If your **only** reason to dip below **5** is a **single** made-up label **not** in the Category List (e.g. `bills_general`, `investments`), choose **4**, not **3**—**3** is for wrong-tool traces or **several** stacked problems. **Do not** use this anchor for confirmation-order / example issues (axis 5).
-5. **Illustrative / confirmation-gated next steps:** As in the reading rules above—immediate rule that copies an example or skips required user confirmation → **typically 4**. **Ordered confirm-then-rule:** If rationalize lists **(1) confirm category** then **(2) set categorization rule** and **`<PROPOSAL>`** still schedules **(2)** as immediate Penny rule automation **alongside** **(1)** without stating the rule runs **only after** confirmation, treat that as a **gate / sequencing** error → **4**, not **5**, even when the target slug (e.g. `transfers`) is valid.
+1. Grounding — no contradictions vs any `<RATIONALIZE_N>`.
+2. Penny fit — steps match mandatory (non-example) drivers and next steps.
+3. Tools — **always check** when calls exist. Families/args must support Proposed steps: `propose_create_categorization_rule` for rule-creation steps; `propose_recategorize_transactions` for one-off recategorize. A proposed "create rule" step with only recategorize tools → flag tool-family mismatch. Wrong family → typically **3–4**. Also flag item 6 separately when that "create rule" step targets a one-off P2P refund/gift from a named counterparty. Invalid slug in tool args → flag per slug rules (separate clause per slug).
+4. Invalid proposal slug — one non-list token → cap **4**; several → **3**; never 1–2 for slug-only.
+5. Example/gated/ordered violations → typically **4**.
+6. Rule scope — **always check** when proposed-step text requests a payee/merchant/P2P rule (e.g. "create rule", "categorization rule", payee + past/future)—even if tools only recategorize one ID. Overbroad when Drivers cite one transaction, a unique memo (gift, refund, reimbursement), or no repeatable payee pattern. Never propose a payee-wide categorization rule for a single named P2P/Venmo/Zelle counterparty on one refund, gift, or reimbursement line—one-off `propose_recategorize_transactions` is the right scope. Flag separately from tool-family errors (item 3). → typically **4**.
+7. Over-commitment — **always check** when rationalize next steps use ensure, verify, consider, or either/or. Proposal mandates a settled rule, category, or action → flag. Typically **4**.
+8. Internal contradiction — **always check** when multiple proposed steps target the same merchant/transaction. Incompatible category or action → flag. Typically **3–4**.
+9. Parent vs leaf — **always check** when taxonomy or Category List exposes leaves under a parent. Both parent rollups and leaves are valid tokens—judge which level fits Drivers. Flag parent rollup when Drivers/name identify a specific leaf (e.g. connectivity charge → `bills_connectivity`, not `bills`). Flag a specific leaf when Drivers show mixed or unknown subtypes and no memo justifies that leaf—parent rollup may be the better fit. Generic opaque memos spanning multiple leaves (e.g. "Bill Payment") → `bills` parent is acceptable when no leaf is evidenced; flag a forced leaf without support. → typically **4**.
 
-**Category List** — **exact tokens only** (lowercase, underscores as shown). A categorization target in **`<PROPOSAL>`** or a string `category` / slug in tools must be **identical** to one line below—no paraphrase, no Title Case, no human labels ("Groceries", "Service Fees"), no invented compounds (`bills_general`, `investments`, `dining_coffee`). If it is not on this list **character-for-character**, it is invalid for axis 4.
+**Category List** (exact tokens; no paraphrase or invented compounds; parents roll up leaves—both levels are valid):
+`meals`, `meals_dining_out`, `meals_delivered_food`, `meals_groceries`, `leisure`, `leisure_entertainment`, `leisure_travel`, `shopping`, `shopping_pets`, `bills`, `bills_connectivity`, `bills_insurance`, `bills_tax`, `bills_service_fees`, `shelter`, `shelter_home`, `shelter_utilities`, `shelter_upkeep`, `education`, `education_kids_activities`, `education_tuition`, `shopping_clothing`, `shopping_gadgets`, `shopping_kids`, `transportation`, `transportation_car`, `transportation_public`, `health`, `health_medical_pharmacy`, `health_gym_wellness`, `health_personal_care`, `donations_gifts`, `miscellaneous`, `income`, `income_salary`, `income_sidegig`, `income_business`, `income_interest`, `transfers`
 
-- `meals_dining_out`
-- `meals_delivered_food`
-- `meals_groceries`
-- `leisure_entertainment`
-- `leisure_travel`
-- `shopping_pets`
-- `bills_connectivity`
-- `bills_insurance`
-- `bills_tax`
-- `bills_service_fees`
-- `shelter_home`
-- `shelter_utilities`
-- `shelter_upkeep`
-- `education_kids_activities`
-- `education_tuition`
-- `shopping_clothing`
-- `shopping_gadgets`
-- `shopping_kids`
-- `transportation_car`
-- `transportation_public`
-- `health_medical_pharmacy`
-- `health_gym_wellness`
-- `health_personal_care`
-- `donations_gifts`
-- `miscellaneous`
-- `income_salary`
-- `income_sidegig`
-- `income_business`
-- `income_interest`
-- `transfers`
-
-**Calibration:** **5** = no meaningful gap on that axis. **4** = one minor gap. **3** = clear but fixable issue. **2** = several problems. **1** = axis largely failed. **3 vs 4:** Do **not** use **3** when the sole defect is one invalid categorization **text** slug (see axis 4 anchor)—that case is **4**.
-
-Return **only** the JSON object matching the schema (`score`, `notes`).
+**Calibration:** 5 none · 4 minor · 3 clear fixable · 2 several · 1 failed. Sole single invalid slug → **4**, not 3. `score` reflects the worst applicable band across all listed issues.
 """
 
 
@@ -894,7 +369,7 @@ class ProposeNextStepsAccuracyCheckerOptimizer:
     self,
     model_name: str = "gemini-flash-lite-latest",
     *,
-    max_output_tokens: int = 256,
+    max_output_tokens: int = 512,
     thinking_budget: int = 0,
   ):
     if genai is None or types is None:
@@ -963,7 +438,7 @@ def main() -> None:
   parser.add_argument("--test", type=str, default=None, help="Test name, index, or 'all'.")
   parser.add_argument("--batch", type=int, default=None, help="Run all tests in batch N.")
   parser.add_argument("--model", type=str, default="gemini-flash-lite-latest")
-  parser.add_argument("--max-output-tokens", type=int, default=256)
+  parser.add_argument("--max-output-tokens", type=int, default=512)
   parser.add_argument("--thinking-budget", type=int, default=0)
   parser.add_argument(
     "--check",

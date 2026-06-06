@@ -18,7 +18,7 @@ Run from `finance-ai-penny` repo root:
 - **max_output_tokens:** `128`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Rubric:** Grade **`## Figures`** vs **`# Rationalize What`**. Read **`## Drivers`** only for **What–Figures** discrepancy acknowledgment. **`notes` always non-empty** (including score 5). **11 fixtures** (batches **1–11**); use **`--batch N --check`**.
+**Rubric:** Grade **`## Figures`** vs **`# Rationalize What`**. Read **`## Drivers`** only for **What–Figures** discrepancy acknowledgment. **`notes` always non-empty** (including score 5). **9 fixtures** (batches **1–9**); use **`--batch N --check`**.
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / insightful optimizer).
 """
@@ -64,25 +64,25 @@ OUTPUT_SCHEMA = types.Schema(
     "score": types.Schema(
       type=types.Type.INTEGER,
       description=(
-        "1-5 by impact magnitude only: how much the data issues would mislead reader."
+        "1-5 weakest-claim impact. Trend at claim grain only. Grain-family mix → ≤3. Thin trend sole defect: 2 periods=4, 1 period=3. Parent-only or parent+sub partial sub breakdown, or parent+sub missing claimed sub → ≤3."
       ),
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "Always non-empty. score=5: one concise phrase on-scope rows, period count, label fit, scope OK; note Drivers/Figures $-gap acknowledgment if relevant (no “fully supported” filler). score≤4: semicolon-separated issues (all, regardless of impact); name each claim when the What lists several. No praise fluff; never mention Next steps."
+        "Always non-empty; semicolon-separated. score=5: '{Category} {scope} claim; three {grain} periods; {detail}; figure label and {grain} grain OK.' score≤4: issues only—never cite acknowledged discrepancies; use parent+sub OR parent-only template, not both. Parent+sub missing claimed sub: '{Sub} and {Parent} claims present but Figures omit {Sub} row.' Parent+sub partial unclaimed subs: '{Parent} parent+sub claim but Figures show parent row plus partial unclaimed subs; {missing} subcategory missing from breakdown.' Parent-only incomplete: '{Parent} parent-only claim but Figures show only sub rows without parent row; {missing} subcategory missing.' or '{Parent} parent-only claim but Figures show parent row plus partial subs; {missing} subcategory missing from breakdown.' Never fault absent unclaimed subs when Figures contain only parent row plus claimed sub rows."
       ),
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Grade **`## Figures`** against **`# Rationalize What`**. Evidence is **Figures** only (row labels, windows, amounts, stated derivations). Skim **`## Drivers`** only where **Discrepancies** allows; ignore **Drivers** narrative and **`## Next steps`** for scoring.
+SYSTEM_PROMPT = """Grade **`## Figures`** vs **`# Rationalize What`**. Evidence = Figures only (labels, windows, amounts, derivations). Skim **Drivers** only per **Discrepancies**; ignore Drivers narrative and **Next steps**.
 
-For **`notes`**: if **score 5**, state adequacy—label fit, period depth, scope, grain—always non-empty. If **score ≤4**, **issues only**: semicolon-separated defects; do **not** mention what passed, satisfied trend, acceptable labels, scope OK, or other mitigating context. Use defect vocabulary where relevant: **mash**, **conflated**, **ambiguous**, **thin trend**, **off-scope**, **invalid derivation**.
+**Notes:** semicolon-separated; use "three monthly periods" / "month grain" (not monthly). score 5 uses template above; score ≤4 issues only. Name the specific category in notes.
 
 ## Category taxonomy (parent → subcategories)
-Synonyms may appear in inputs. A **parent** rolls up its **subcategories**; a subcategory is **not** interchangeable with its parent for labeling rules.
+Synonyms allowed. Parent rolls up subs; sub ≠ parent for labeling.
 - **Bills**: Connectivity, Insurance, Taxes, Service Fees
 - **Donations & Gifts**
 - **Education**: Kids Activities, Tuition
@@ -97,57 +97,40 @@ Synonyms may appear in inputs. A **parent** rolls up its **subcategories**; a su
 - **Transport**: Car & Fuel, Public Transit
 - **Uncategorized**
 
-## What Scope (parent vs subcategory)
-Use the **Category taxonomy** section.
-- **Parent-Only What:** Claim/s name a **parent** only (**no** subcategories).
-- **Subcategory-Only What:** Claim/s name a **subcategory/ies** only (**no** parent categories).
-- **Parent + Subcategory What:** Claims name parent and **subcategory/ies** (not necessarily all).
+## What scope
+Classify from **What text only**—Figure rows never change scope.
+- **Parent-only:** parent node named—no sub tokens in What.
+- **Subcategory-only:** only sub(s) named—sub name alone is never parent-only.
+- **Parent + sub:** parent token **and** sub token both appear in What—never reclassify as parent-only when both are named.
 
-**Amounts**
-- $ amounts are rounded, and may not be exactly equal to Figures. This is acceptable.
+**Amounts:** rounded $ vs What is OK. **Sign:** spending negative = net inflow; Income negative = net outflow—valid, never a defect or Drivers discrepancy.
 
-## Figures Scope:
+## Figures scope
 **Categories**
-- **Parent-Only What:** Figures should show (1) **parent row**, (2) all **subcategories** under that parent (even subcategories **not** named in the What), or (3) **both**.
-- **Subcategory-Only What:** **No** Parent rows allowed. Figures should be about **claimed** subcategories. Flag row when category referred to is not claimed in the What.
-- **Parent + Subcategory What:** Figures should show either (1) **parent** row AND **claimed subcategory/ies** row/s, or (2) **parent** row, **claimed subcategory/ies** row/s, and all **subcategories** under the parent (even subcategories **not** named in the What).
+- **Parent-only What:** **parent row only** (sub rows may be absent—never fault missing subs when a parent row is present), or **parent row plus all taxonomy subs** together. **Sub rows without parent row → score 3—every taxonomy sub required; partial subs never satisfy parent-only.** **Parent row plus partial subs → score 3—when subs appear, all taxonomy subs must accompany the parent row.**
+- **Subcategory-only What:** claimed sub rows only; no parent rows.
+- **Parent + sub What:** parent row when parent is claimed; each **claimed sub** needs its own figure row—a parent rollup row does **not** substitute for a claimed sub. Permitted shapes: **parent row plus claimed sub rows only**, or **parent row plus all taxonomy subs**. **Parent row plus claimed subs plus partial unclaimed subs → score 3.** Absent unclaimed subs are valid when Figures contain only the parent row and claimed sub rows. **Do not apply parent-only completeness gates to parent+sub What.**
 
-**Time Grain**
-- **Week** Claim → Figures must stay in the **week family** (~7-day weekly and/or WTD windows only). **Current WTD compared to prior full ~7-day weeks is valid**—unlike window lengths within the week family are **not** a fault. **Month**-family rows on a week What → major fault (~2).
-- **Month** Claim → Figures must stay in the **month family** (calendar months and/or MTD windows only). **Current MTD compared to prior full calendar months is valid**—unlike window lengths within the month family are **not** a fault. **Week**-family rows on a month What → major fault (~2).
+**Grain:** week claim → week family only (~7-day/WTD); month claim → month family only (calendar/MTD). **If Figures contain both families on a week/month What → score ≤3 (grain mix beats thin-trend 4).** Month rows never satisfy week-claim depth. Unlike lengths within same family are OK.
 
-**Trend Depth**
-- ≥3 distinct periods at claim grain. WTD/MTD each count as **one** period at that grain. **MTD focal period + two prior full calendar months**, or **WTD focal period + two prior full ~7-day weeks**, satisfies depth—do **not** list partial-vs-full compares as an issue. Fewer than 3 periods at claim grain → thin trend (~3–4). Two periods only → thin trend (**minor**) when trend language applies. Three weekly rows for the claim (including **$0**) = satisfied.
+**Trend:** count periods **at claim grain only** by date windows (each amount clause counts, regardless of sign). Cross-family rows do not count toward depth. ≥3 at claim grain satisfies depth. Sole defect: 2 periods → **4**; 1 period → **3**. Never assign 3 when count is exactly 2 and no other defect.
 
-**Stated Math**
-- When Figures show that pulled data was used to compute a row, computation should be logical given the category taxonomy
-- Parent Figures should always be a sum of **ALL** subcategories and not only those identified in What and/or Figures.
+**Stated math:** derivations must match taxonomy; partial subs cannot substitute for parent or missing subs.
 
-**Labels**
-- Each figure row label must map to **one** taxonomy target for the claim in the What: claimed **parent**, claimed **subcategory**, or a **standalone** line (no subs in taxonomy).
-- **Standalone lines** (no subcategories listed under that node in taxonomy): alternate wording is an **acceptable synonym** when it cannot be read as a different taxonomy node—**not** a label defect, **not ambiguous**. When the What names that **standalone** node and the figure label maps **only** to it (cannot map to any **parent-with-subs** node), overall **5** on labels—**never 4** for synonym wording alone. Informal shortenings are **acceptable**—never downgrade for "non-standard taxonomy string" or missing namespace alone.
-- **Parent-only What — acceptable:** (a) parent name or clear parent synonym; (b) **Total** (or equivalent whole-parent rollup qualifier) **+ parent family name only**—no listed sub token in the label; (c) for **Income**, earnings-style wording that denotes **full Income parent**, not one sub-line; (d) **only when What is parent-only:** **parent token**, then **single space**, then **one listed sub token**—**or** parent and sub **stacked with no coordinator**—**no** **and**/**&**/**+**/**/comma between them: **acceptable parent-facing label** and **parent-claim figure row**. **(d) never applies to subcategory-only What.** Same **parent + space + sub** surface shape as sub path-style, but on **parent-only What** read it as **parent claim row**, **not** subcategory-only label misfit. When **(d)** applies: overall **5** if month grain and **≥3** periods satisfied and no other rubric axis fails.
-- **Subcategory-only What — acceptable:** (a) exact sub name or clear sub synonym; (b) **Total** **immediately before** the **claimed sub** name—no second category token, no coordinator; (c) **path-style**: parent-family namespace token, **single space**, **claimed sub name only**—ledger/slug style for **that sub row**; applies **only** when What is **subcategory-only**; **not** a parent mash.
-- **Subcategory-only What — moderate label defect:** label **coordinates** or **pairs** parent-branch scope with the claimed sub using **and**, **&**, **+**, **/**, or comma-separated dual categories—**mash** / **ambiguous**; **any coordinator present overrides path-style or synonym readings**; overall **3**, **never 4 or 5**, when this coordinator mash is the sole defect.
-- **Parent-only What — moderate label defect:** applies **only** when a **coordinator** (**and**, **&**, **+**, **/**, comma) **joins** parent token to one listed sub token—**conflated**; **adjacent-only** parent+sub compounds are **excluded**; overall **3**, **never 4**, when this is the sole defect.
-- When score **≤4** for label reasons only, **`notes`** use **mash**, **conflated**, or **ambiguous**; for **~3** label faults add a second **issue** clause on **misread risk** (subset vs full parent, or **subcategory-only** vs widened scope). Do **not** cite scope, trend, or grain in **`notes`** when the only problem is label form.
+**Labels:** each row maps to one taxonomy target. Synonyms allowed. Parent rollup labels valid for parent rows; sub labels valid for sub rows. **Defects (~3):** one row label coordinating parent and sub → ambiguous; add misread-risk clause for label-only faults.
 
-**Discrepancies**
-- If **Drivers** acknowledge any mismatch between **What** claims and **Figures** (amounts, direction/trend language, or date window), **do not fault**—overall **5** when Figures otherwise satisfy scope, grain, trend depth, labels, and stated math. **Do not** score for "factually incorrect claim," "invalid derivation," or unstated trend direction when **Drivers** disclose the gap.
-- **Fault** only when the mismatch is **not** acknowledged in **Drivers** or **Figures**.
+**Discrepancies:** $/direction/window gaps acknowledged in **Figures or Drivers** (including narrative figure rows) → no fault, omit from notes. Sign alone never counts. Fault only unacknowledged mismatches.
 
 ## Scores (1–5, weakest claim)
-- **5** — Every claim supported; scope/trend/labels/derivations OK. What-vs-Figures discrepancy **acknowledged in Drivers** is OK at **5**.
-- **4** — Trustworthy core; **one minor** issue
-- **3** — **Moderate** issue
-- **2** — **Major** issue
-- **1** — **Critical** issue
+5 = all claims supported; **never 5** if parent-only What has partial sub Figures (subs without parent row, or parent row with incomplete subs); **never 5** if parent+sub What has partial unclaimed sub Figures (some but not all unclaimed subs present); **never 5** if claim grain and figure rows mix week/month families. 4 = one minor issue (**exactly 2 periods** at claim grain = thin trend). 3 = moderate. 2 = major. 1 = critical.
 
 ## Process
-1. Classify What scope. Read Figures. If misaligned with the What, check if acknowledged in Drivers. Ignore issue if acknowledged.
-2. Check each claim: categories, time grain, trend depth, stated math, labels.
-3. **`notes`:** **Always non-empty** (never `""`). If **score 5**: one concise phrase on-scope rows, period count, label fit, scope OK, What-vs-Figures discrepancy (if any) acknowledged in Drivers; no need to note What vs. Figures discrepancy acknowledgment if because of rounding (no “fully supported” filler). If **score ≤4**: semicolon-separated issues (all, regardless of impact); name each claim when the What lists several.
-4. **`score`:** Weakest-claim impact.
+1. **Enumerate Figures rows**—list every category row present before scoring; never fault a missing row without confirming absence in Figures.
+2. Classify scope from What text only—both parent and sub named → **parent+sub** (skip parent-only gate).
+3. **Parent-only only:** **parent row only** (no sub rows) → category OK, continue. If **sub rows present:** require **parent row plus all taxonomy subs**; **no parent row** or **any missing sub → 3, stop**.
+4. **Parent+sub only:** parent row when parent is claimed; figure row per claimed sub—parent row does not replace a missing claimed sub → ≤3 if any claimed sub absent. If **only parent and claimed sub rows** → unclaimed subs need not appear. If **any unclaimed sub row appears** → require **parent row plus all taxonomy subs**; **any missing sub → 3, stop**.
+5. **Grain:** detect family mix first—both week and month rows present → **3**. Count trend at claim grain only.
+6. Thin trend sole defect: 2 periods → **4**. Weakest claim. Discrepancy OK if in Figures or Drivers.
 
 Return only JSON `{score, notes}`.
 """
@@ -155,60 +138,34 @@ Return only JSON `{score, notes}`.
 
 TEST_CASES: list[dict[str, Any]] = [
   {
-    "name": "donations_gifts_figures_labeled_giving_acceptable",
+    "name": "business_figures_negative_amounts_acceptable",
     "batch": 1,
     "output": (
-      '{"score": 5, "notes": "Giving is an acceptable synonym for Donations & Gifts; '
-      'three monthly periods; figure label and month grain OK."}'
+      '{"score": 5, "notes": "Business subcategory-only claim; three monthly periods; '
+      'negative May net reflects business expenses; figure label and month grain OK."}'
     ),
     "input": """# Rationalize What
 
-Explain: Donations & Gifts are up this month at $240. (2026-06-01 to 2026-06-30)
+Explain: Business income is up this month at $1,850. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Giving (Jun 1–30, 2026):** $240.00 vs $180.00 (May 1–31, 2026) vs $95.00 (Apr 1–30, 2026).
+* **Business (Jun 1–30, 2026):** $1,850.00 vs -$320.00 (May 1–31, 2026) vs $2,100.00 (Apr 1–30, 2026).
 
 ## Drivers
 
-A one-time charity pledge and holiday gifts drove June.
+June client invoices posted; May net was negative after equipment and supply purchases.
 
 ## Next steps
 
-1. Review donations_gifts budget.
+1. Track income_business vs business expense tags.
 """,
   },
   {
-    "name": "dining_out_figures_food_and_dining_out_label_unacceptable",
+    "name": "transport_figures_parent_only_acceptable",
     "batch": 2,
-    "output": (
-      '{"score": 3, "notes": "Food & Dining Out mashes parent Meals/Food with Dining Out sub; '
-      'ambiguous vs Dining Out subcategory-only claim."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Dining Out is significantly up this month at $420. (2026-06-01 to 2026-06-30)
-
-# Rationalize Response
-
-## Figures
-
-* **Food & Dining Out (Jun 1–30, 2026):** $420.00 vs $280.00 (May 1–31, 2026) vs $260.00 (Apr 1–30, 2026).
-
-## Drivers
-
-More restaurant and café spend in June.
-
-## Next steps
-
-1. Cap meals_dining_out if needed.
-""",
-  },
-  {
-    "name": "transport_figures_total_transport_acceptable",
-    "batch": 3,
     "output": (
       '{"score": 5, "notes": "Total Transport is an acceptable parent Transport label; '
       'three monthly periods; parent-only What scope OK."}'
@@ -221,7 +178,7 @@ Explain: Transport spending is up this month at $680. (2026-06-01 to 2026-06-30)
 
 ## Figures
 
-* **Total Transport (Jun 1–30, 2026):** $680.40 vs $412.00 (May 1–31, 2026) vs $390.00 (Apr 1–30, 2026).
+* **Total Transport (Jun 1–30, 2026):** $680.00 vs $412.00 (May 1–31, 2026) vs $390.00 (Apr 1–30, 2026).
 
 ## Drivers
 
@@ -233,103 +190,26 @@ Fuel and a maintenance bill posted in June.
 """,
   },
   {
-    "name": "income_figures_total_earnings_acceptable",
-    "batch": 4,
+    "name": "food_dining_out_parent_sub_figures_acceptable",
+    "batch": 3,
     "output": (
-      '{"score": 5, "notes": "Total Earnings is an acceptable paraphrase for parent Income; '
-      'three monthly periods; parent-only What scope OK."}'
+      '{"score": 5, "notes": "Food (Total) and Dining Out cover parent+sub claims; '
+      'three monthly periods; parent+sub What scope OK."}'
     ),
     "input": """# Rationalize What
 
-Explain: Income is up this month at $8,400. (2026-06-01 to 2026-06-30)
+Explain: Dining Out is significantly up this month at $320.  Food is thus up this month to $785. (2026-06-01 to 2026-06-30)
 
 # Rationalize Response
 
 ## Figures
 
-* **Total Earnings (Jun 1–30, 2026):** $8,400.00 vs $7,200.00 (May 1–31, 2026) vs $7,050.00 (Apr 1–30, 2026).
+* **Food (Total) (Jun 1–30, 2026):** $785.00 vs $590.00 (May 1–31, 2026) vs $545.00 (Apr 1–30, 2026).
+* **Dining Out (Jun 1–30, 2026):** $320.00 vs $210.00 (May 1–31, 2026) vs $195.00 (Apr 1–30, 2026).
 
 ## Drivers
 
-Salary and interest posted as expected; side-gig picked up slightly.
-
-## Next steps
-
-1. Track income_salary vs income_sidegig tags.
-""",
-  },
-  {
-    "name": "bills_figures_bills_and_connectivity_unacceptable",
-    "batch": 5,
-    "output": (
-      '{"score": 3, "notes": "Bills and Connectivity reads as parent Bills conflated with one sub; '
-      'misleading for a Bills parent-only claim."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Bills are up this month at $1,120. (2026-06-01 to 2026-06-30)
-
-# Rationalize Response
-
-## Figures
-
-* **Bills and Connectivity (Jun 1–30, 2026):** $1,120.00 vs $980.00 (May 1–31, 2026) vs $940.00 (Apr 1–30, 2026).
-
-## Drivers
-
-Phone and internet rose with a plan change.
-
-## Next steps
-
-1. Review bills_connectivity charges.
-""",
-  },
-  {
-    "name": "education_figures_education_tuition_acceptable",
-    "batch": 6,
-    "output": (
-      '{"score": 5, "notes": "Education Tuition is an acceptable label for Education parent spending; '
-      'three monthly periods; parent-only What scope OK."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Education spending is up this month at $2,400. (2026-06-01 to 2026-06-30)
-
-# Rationalize Response
-
-## Figures
-
-* **Education Tuition (Jun 1–30, 2026):** $2,400.00 vs $1,550.00 (May 1–31, 2026) vs $1,480.00 (Apr 1–30, 2026).
-
-## Drivers
-
-Summer camp deposits and a tuition installment hit in June.
-
-## Next steps
-
-1. Split education_kids_activities vs education_tuition in review.
-""",
-  },
-  {
-    "name": "dining_out_figures_total_dining_out_acceptable",
-    "batch": 7,
-    "output": (
-      '{"score": 5, "notes": "Total Dining Out is acceptable sub-row rollup for Dining Out; '
-      'three monthly periods; figure label and month grain OK."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Dining Out is significantly up this month at $320. (2026-06-01 to 2026-06-30)
-
-# Rationalize Response
-
-## Figures
-
-* **Total Dining Out (Jun 1–30, 2026):** $320.00 vs $210.00 (May 1–31, 2026) vs $195.00 (Apr 1–30, 2026).
-
-## Drivers
-
-More restaurant spend in June.
+More restaurant spend drove June Food and Dining Out totals.
 
 ## Next steps
 
@@ -337,131 +217,171 @@ More restaurant spend in June.
 """,
   },
   {
-    "name": "delivered_food_figures_meals_delivered_food_acceptable",
+    "name": "food_figures_partial_sub_breakdown_unacceptable",
+    "batch": 4,
+    "output": (
+      '{"score": 3, "notes": "Food parent-only claim but Figures show only Dining Out and '
+      'Groceries; Delivered Food subcategory missing from parent breakdown."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Food spending is up this month at $785. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Dining Out (Jun 1–30, 2026):** $320.00 vs $210.00 (May 1–31, 2026) vs $195.00 (Apr 1–30, 2026).
+* **Groceries (Jun 1–30, 2026):** $465.00 vs $380.00 (May 1–31, 2026) vs $350.00 (Apr 1–30, 2026).
+
+## Drivers
+
+More restaurant and grocery spend in June.
+
+## Next steps
+
+1. Review meals_dining_out and meals_groceries budgets.
+""",
+  },
+  {
+    "name": "groceries_figures_two_periods_thin_trend",
+    "batch": 5,
+    "output": (
+      '{"score": 4, "notes": "thin trend for Groceries—only two monthly periods, '
+      'no third period for trend comparison."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Groceries spending is up this month at $465. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Groceries (Jun 1–30, 2026):** $465.00 vs $380.00 (May 1–31, 2026).
+
+## Drivers
+
+More grocery trips and a Costco run posted in June.
+
+## Next steps
+
+1. Review meals_groceries budget.
+""",
+  },
+  {
+    "name": "food_weekly_what_monthly_figures_grain_mismatch",
+    "batch": 6,
+    "output": (
+      '{"score": 3, "notes": "Food weekly claim but Figures mix two week-grain periods with '
+      'month-family rows (Jun, May, Apr); thin weekly trend and off-scope monthly data."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Food spending is up this week at $125. (2026-06-09 to 2026-06-15)
+
+# Rationalize Response
+
+## Figures
+
+* **Food (Total) (Jun 9–15, 2026):** $125.00 vs $86.00 (Jun 2–8, 2026).
+* **Food (Total) (Jun 1–30, 2026):** $785.00 vs $590.00 (May 1–31, 2026) vs $545.00 (Apr 1–30, 2026).
+
+## Drivers
+
+More dining and delivery orders posted this week; Figures mix two weekly windows with three monthly calendar-month totals.
+
+## Next steps
+
+1. Review meals spending week over week.
+""",
+  },
+  {
+    "name": "income_sidegig_salary_figures_missing_salary",
+    "batch": 7,
+    "output": (
+      '{"score": 3, "notes": "Side-Gig and Income claims present but Figures omit Salary '
+      'row; Total Income cannot support Salary claim without Salary figures."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Side-Gig is significantly up this month at $2,158.  Salary is slightly down this month at $2,532.  Income is thus up this month to $4,690. (2026-06-01 to 2026-06-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Side-Gig (Jun 1–30, 2026):** $2,158.00 vs $1,420.00 (May 1–31, 2026) vs $980.00 (Apr 1–30, 2026).
+* **Total Income (Jun 1–30, 2026):** $4,690.00 vs $3,850.00 (May 1–31, 2026) vs $3,620.00 (Apr 1–30, 2026).
+
+## Drivers
+
+Frequent kiosk deposits drove June Side-Gig earnings; Salary payroll posted as expected.
+
+## Next steps
+
+1. Set aside 20–30% of Side-Gig income for taxes.
+""",
+  },
+  {
+    "name": "clothing_shopping_weekly_what_monthly_figures",
     "batch": 8,
     "output": (
-      '{"score": 5, "notes": "Meals Delivered Food is acceptable path-style label for Delivered Food; '
-      'three monthly periods; figure label and month grain OK."}'
+      '{"score": 3, "notes": "Shopping parent+sub weekly claim but Figures mix one week-grain '
+      'period with month-family rows; thin weekly trend and off-scope monthly data."}'
     ),
     "input": """# Rationalize What
 
-Explain: Delivered Food is up this month at $180. (2026-06-01 to 2026-06-30)
+Explain: Clothing received refunds last week, totaling $168.  Shopping thus received significantly more in refunds last week, totaling $168.
 
 # Rationalize Response
 
 ## Figures
 
-* **Meals Delivered Food (Jun 1–30, 2026):** $180.00 vs $95.00 (May 1–31, 2026) vs $88.00 (Apr 1–30, 2026).
+*   **Shopping (Clothing) Weekly Total**: $-168.37 (Apr 26–May 2, 2026).
+*   **Monthly Shopping (Clothing) Total**: $-111.19 (Apr 1–30, 2026).
+*   **Monthly Shopping (Clothing) Total**: $218.16 (Mar 1–31, 2026).
+*   **Current Month Shopping (Clothing) Total**: $0.00 (May 1–31, 2026).
 
 ## Drivers
 
-More delivery orders in June.
+The refund activity last week was primarily driven by a single transaction: Kohl's: $-215.17 on April 30. This was partially offset by a charge at Macy's: $46.80 on April 27, resulting in the net $-168.37 weekly figure.
+This large refund shifted your total April category spending to $-111.19, a significant reversal from the $218.16 spent in March.
 
 ## Next steps
 
-1. Review meals_delivered_food spending.
+1.  Create a recurring "Clothing" budget of $150 to account for these fluctuations.
+2.  If you would like to track future returns more consistently, we can set up a tag rule for "Kohl's" to ensure all transactions remain categorized correctly under "shopping_clothing".
 """,
   },
   {
-    "name": "groceries_food_parent_sub_week_drivers_ack_direction",
+    "name": "salary_income_figures_missing_salary_thin_trend",
     "batch": 9,
     "output": (
-      '{"score": 5, "notes": "Groceries and Food (Total) cover parent+sub claims; three weekly '
-      'periods; partial-week vs full-week grain OK; What direction vs Figures acknowledged in Drivers."}'
+      '{"score": 3, "notes": "Salary and Income claims present but Figures omit Salary row; '
+      'thin trend for Income—only two monthly periods, no third period for trend comparison."}'
     ),
     "input": """# Rationalize What
 
-Explain: Groceries is significantly up this week at $52.  Food is thus significantly up this week to $52. (2026-05-17 to 2026-05-18)
-
-Category Taxonomy: parent Food (meals: 1), with leaf categories Dining Out (meals_dining_out: 2), Delivered Food (meals_delivered_food: 3), Groceries (meals_groceries: 4)
+Explain: Salary is slightly up last month at $638.  Income is thus up last month to $638.
 
 # Rationalize Response
 
 ## Figures
 
-* **Groceries:** $52.20 this week (May 17–18) vs. $86.79 last week (May 10–16) and $0.00 two weeks ago (May 3–9).
-* **Food (Total):** $52.20 this week (May 17–18) vs. $125.04 last week (May 10–16) and $0.00 two weeks ago (May 3–9).
+*   **Total Income (Apr 1–30, 2026):** $638.15
+*   **Total Income (Mar 1–31, 2026):** $2,138.91
+*   **Income Change:** Your total income actually decreased by $1,500.76 in April compared to March, contrary to the suggestion that it increased.
 
 ## Drivers
 
-Groceries and total Food spending are not "significantly up" this week; rather, they have decreased significantly compared to the $86.79 spent on groceries and $125.04 total food spending from last week. The sole transaction for this period is:
-* **Trader Joe's:** $52.20 (2026-05-17)
+The reported figure of $638.15 for April represents the total income for that month, not an increase.
+In March, your total income was significantly higher at $2,138.91. The "Labor Force Group Payroll" transactions indicate that your income fluctuates based on the number and timing of paychecks received within each calendar month, which explains why the monthly totals vary so substantially.
 
 ## Next steps
 
-1. **Monitor weekly trends:** Since spending fluctuates (from $0 to $125), track if your weekly grocery visits are becoming more consistent or if this is just a single trip.
-2. **Set a weekly grocery budget:** Given your recent activity, consider setting a budget target of $70/week to manage these variations.
-""",
-  },
-  {
-    "name": "income_sidegig_salary_parent_sub_mtd_thin_trend",
-    "batch": 10,
-    "output": (
-      '{"score": 4, "notes": "thin trend for Side-Gig, Salary, and Total Income—only MTD '
-      'periods, no prior months for trend comparison."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Side-Gig is significantly up this month at $2158.  Salary is slightly down this month at $2532.  Income is thus up this month to $4690. (2026-05-01 to 2026-05-18)
-
-Category Taxonomy: parent Income (income: 47), with leaf categories Salary (income_salary: 36), Side-Gig (income_sidegig: 37), Business (income_business: 38), Interest (income_interest: 39)
-
-# Rationalize Response
-
-## Figures
-
-* **Side-Gig ($2,158.95):** May 1–18, 2026.
-* **Salary ($2,531.87):** May 1–18, 2026.
-* **Total Income ($4,690.82):** May 1–18, 2026.
-
-## Drivers
-
-The primary driver for your increased total income this month is a significant surge in **Side-Gig** earnings, which reached $2,158.95 so far. This category is exceptionally active with frequent deposits:
-* **Kiosk Deposit:** $475.00 (2026-05-17)
-* **Kiosk Deposit:** $300.00 (2026-05-18)
-* **Kiosk Deposit:** $250.00 (2026-05-09)
-
-**Salary** remains consistent at $2,531.87 for the month to date, reflecting two standard payroll deposits (each $1,265.93 or $1,265.94) on May 1st and May 15th, which is slightly lower than previous cycles where three payroll deposits occasionally occurred within a calendar month.
-
-## Next steps
-
-1. **Budget:** Consider setting aside 20-30% of your Side-Gig income for taxes, as this revenue is significantly higher than usual and typically lacks automatic withholding.
-2. **Goal:** Use the extra Side-Gig income to accelerate your primary savings or debt reduction goal.
-""",
-  },
-  {
-    "name": "bills_service_fees_taxes_parent_sub_mtd_thin_trend",
-    "batch": 11,
-    "output": (
-      '{"score": 4, "notes": "thin trend for Service Fees and Taxes (single May MTD row each); '
-      'Bills (Total) has three monthly periods; Drivers acknowledge partial-month vs full-month comparison."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Service Fees is significantly down this month at $170.  Taxes is significantly down this month at $100.  Bills is thus significantly down this month to $471. (2026-05-01 to 2026-05-18)
-
-Category Taxonomy: parent Bills (bills: 9), with leaf categories Connectivity (bills_connectivity: 10), Insurance (bills_insurance: 11), Taxes (bills_tax: 12), Service Fees (bills_service_fees: 13)
-
-# Rationalize Response
-
-## Figures
-
-* **Service Fees:** $170.00 (May 2026)
-* **Taxes:** $100.00 (May 2026)
-* **Bills (Total):** $470.66 (May 2026) vs. $1,239.21 (April 2026) vs. $1,322.99 (March 2026)
-
-## Drivers
-
-Service Fees and Taxes are lower for the first 18 days of May compared to full prior months, contributing to a significantly lower total in the Bills parent category ($470.66). The spending in Service Fees this month primarily consists of recurring overdraft coverage fees and small charges.
-
-**May 2026 Service Fees and Taxes Transactions:**
-* **ACH Withdrawal: IRS:** $100.00 (2026-05-15)
-* **Overdraft Coverage Fee:** $20.00 (2026-05-11, 2026-05-08, 2026-05-06, 2026-05-05, 2026-05-04)
-
-## Next steps
-
-1. Review account activity to address the frequency of **Overdraft Coverage Fees**, which are driving the Service Fees total.
-2. Set a monthly budget for **Bills** at $500 based on this month's current trend, or establish a goal to reduce overdraft charges by 50% next month.
+1.  **Budget Review:** Given the volatility in your monthly income, I recommend setting a "minimum monthly income" baseline based on your lowest recent month to better manage your spending.
+2.  **Income Goal:** Create a savings goal specifically for the higher-income months (like March) to create a buffer for months with fewer paychecks.
 """,
   },
 ]

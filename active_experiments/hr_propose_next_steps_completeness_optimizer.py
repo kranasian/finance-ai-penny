@@ -284,25 +284,11 @@ Several large electronics charges were auto-tagged; streaming merchants look con
 
 ## Invoked tools
 
-1. **`propose_retrieve_transactions`**
-
-```json
-{
-  "date_range": {
-    "start": "2026-04-01",
-    "end": "2026-04-30"
-  },
-  "ai_category_id_in": [
-    9,
-    21
-  ],
-  "rationale": "List candidates to review categorization."
-}
-```
+_No tool calls this round._
 
 </PROPOSAL_TOOL_CALLS>
 """,
-    "output": '{"score": 4, "notes": "Final confirmation that categorizations are correct belongs with the user under Open items; placing full verification only under Proposed is a minor structure gap despite retrieval support."}',
+    "output": '{"score": 4, "notes": "Verification is not a Penny capability and belongs under Open items for the user; placing it only under Proposed is a minor structure gap."}',
   },
   {
     "name": "historical_metric_in_open_not_proposed_four",
@@ -365,7 +351,7 @@ More café visits mid-month.
 
 </PROPOSAL_TOOL_CALLS>
 """,
-    "output": '{"score": 4, "notes": "Historical median computation belongs under Proposed with Penny data work; parking it only under Open while proposing the goal alone is a minor completeness/structure gap."}',
+    "output": '{"score": 5, "notes": "Historical median computation correctly parked under Open as non-Penny work; the evidence-based goal is proposed with a matching tool call."}',
   },
   {
     "name": "incomplete_dropped_rationalize_steps_two",
@@ -425,7 +411,7 @@ Explain: Household bills and subscriptions snapshot. (2026-04-01 to 2026-04-30)
 
 </PROPOSAL_TOOL_CALLS>
 """,
-    "output": '{"score": 3, "notes": "Delivers only the utilities rule while omitting streaming review and the streaming cap goal; Open items falsely list none despite remaining work."}',
+    "output": '{"score": 2, "notes": "Delivers only the utilities rule while omitting streaming review (Open) and the streaming cap goal (Proposed); Open items falsely list none despite two remaining steps."}',
   },
   {
     "name": "service_fees_budget_and_reviews_open_five",
@@ -507,25 +493,29 @@ def _build_output_schema(_types: Any) -> Any:
 
 SYSTEM_PROMPT = """You are a strict completeness-only grader. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
 
-**Bundle:** `<RATIONALIZE_N>` … `<PROPOSAL>` … `<PROPOSAL_TOOL_CALLS>` (this propose run only: `# Round N`, then `## Invoked tools` per round). Grade only visible text; do not invent facts. Ignore factual accuracy and whether tool choice is ideal.
+**Bundle:** `<RATIONALIZE_N>` … `<PROPOSAL>` … `<PROPOSAL_TOOL_CALLS>` (this propose run only: `# Round N`, then `## Invoked tools` per round). Grade only visible text; do not invent facts. Ignore factual accuracy, goal dollar amounts, and whether tool choice is ideal.
 
-**Penny limits (drive completeness; do not penalize correct human handoffs):**
-- **Uncategorized Penny cannot resolve:** Some transactions stay uncategorized because the spend is too vague or bundles many goods/services, so **Penny cannot assign one category without guessing.** User/manual categorization of those rows under **Open items** (or equivalent) is **complete and correct**; **do not** require `propose_*` categorization or recategorization tools for that work, and **do not** treat missing tools there as an automation gap.
-- **Final “are labels correct?”:** **Penny cannot fully verify categorical accuracy** the way the user ultimately can. Retrieval, heuristics, or bulk relabel proposals are **not** substitute for the user’s final attestation. If the proposal frames **definitive** verification that labels are **fully correct** as **only** Penny work under **Proposed next steps** (even with tools), treat that as **sectioning error → prefer score 4** when coverage otherwise holds; that confirmation belongs under **Open items** for the user.
+**Penny capabilities (only these belong under Proposed next steps with matching tools):**
+- **Track budgets** — spending caps via `propose_create_goal` (`spending_budget`).
+- **Track saving goals** — savings targets via `propose_create_goal` (saving-goal types).
+- **Re-categorize transactions** — `propose_recategorize_transactions`.
+- **Set categorization rules** — `propose_create_categorization_rule`.
 
 **Completeness:**
 1. **Coverage:** Every `## Next steps` line appears in Proposed or Open (paraphrase OK); combine all `<RATIONALIZE_N>` bodies; no silent drops.
-2. **Automation:** If **Proposed next steps** assign Penny execution (goals, rules, retrieve/recategorize, **historical aggregates/patterns**), `<PROPOSAL_TOOL_CALLS>` must include matching tool invocations **across rounds** (scan every `# Round N` block). Steps covered by the two **Penny limits** bullets above do **not** need tools.
-3. **Structure:** Penny-executable work (including historical computation when proposed as Penny’s) belongs in **Proposed** unless a concrete blocker is stated; user-final steps in **Open**.
+2. **Automation:** If **Proposed next steps** assign Penny one of the **four capabilities** above, `<PROPOSAL_TOOL_CALLS>` must include matching tool invocations **across rounds** (scan every `# Round N` block). Steps that are **not** Penny capabilities do **not** need tools and belong under **Open items**.
+3. **Structure:** Only the four Penny capabilities belong in **Proposed**; everything else in **Open**.
 
-**Historical statistic vs goal:** Rationalize asks for (A) a **historical statistic** and (B) a **goal informed by** it. If (A) appears **only** under Open while (B) is under Proposed with matching goal tools, that is **one sectioning defect → 4** (statistic should be Proposed Penny work). If (A) is **missing** from PROPOSAL, coverage is weaker (**often 3**).
+**Historical statistic vs goal:** Rationalize asks for (A) a **historical statistic** and (B) a **goal informed by** it. (A) is **not** a Penny capability—park it under **Open items** (complete and correct). (B) under **Proposed** with matching goal tools is expected even when the goal amount is provisional or not yet tied to (A). **Do not** score down because the goal omits recomputing history or uses a placeholder amount. If (A) is **missing** from PROPOSAL entirely, coverage is weaker (**often 3**).
+
+**Sectioning vs coverage:** A rationalize step that appears **only** under **Proposed** but describes **non-Penny** work is **covered** but **mis-sectioned** → **4**, not **3**, when no other bullets are missing. Do **not** treat non-Penny steps parked under Proposed as “missing automation”, “missing tools”, or partial coverage. Example: “verify categorizations are correct” only under Proposed with Open **none** → **4** (belongs in Open for the user), not **3**.
 
 **Scoring anchors (worst match wins):**
-- **1** — Primary rationalize next step **wholly unaddressed** while PROPOSAL pursues **different** transaction subjects (e.g. wrong merchant vs named rule target), **or** primary step replaced by unrelated work—**use 1, not 2**, even if tools exist.
-- **2** — Whole context thread dropped, **or** **≥2** `## Next steps` bullets missing from both Proposed and Open while Open falsely says **none**, **or** several bullets missing.
-- **3** — Proposed Penny work without matching `<PROPOSAL_TOOL_CALLS>`, **or** a **primary** Penny ask only under Open with **no** Proposed mirror, **or** clear partial coverage (not the statistic-split case below).
-- **4** — Single sectioning issue, threads otherwise present: **(a)** user-only final label-truth check only under Proposed (see Penny limits); **(b)** historical metric only in Open next to a Proposed goal with tools—**4**, not 3, when the metric text exists in Open; **(c)** thin wording only.
-- **5** — Full coverage; tools match Proposed Penny work; Proposed/Open coherent, including **user** categorization for Penny-unmappable uncategorized charges under Open.
+- **1** — Primary rationalize next step **wholly unaddressed** while PROPOSAL pursues **different** transaction subjects (e.g. rationalize names a **Costco rule** but PROPOSAL only **recategorizes Whole Foods**), **or** primary step replaced by unrelated work—**use 1, not 2**, even if recategorize tools exist.
+- **2** — Whole context thread dropped, **or** **≥2** `## Next steps` bullets missing from both Proposed and Open while Open falsely says **none** (e.g. rationalize lists utilities rule + streaming review + streaming cap goal but PROPOSAL only delivers the rule and Open says none)—**use 2, not 3**.
+- **3** — Proposed Penny-capability work without matching `<PROPOSAL_TOOL_CALLS>`, **or** a **primary** Penny-capability ask only under Open with **no** Proposed mirror, **or** exactly **one** rationalize bullet missing from both sections (not the ≥2 + Open-none case).
+- **4** — Single sectioning issue, threads otherwise present: **(a)** non-Penny work (verification, retrieval, historical stats, etc.) framed as **only** Penny work under **Proposed** when it belongs under **Open**; **(b)** thin wording only.
+- **5** — Full coverage; tools match Proposed Penny-capability work; non-capability steps correctly in **Open**, including **user** categorization for ambiguous uncategorized charges.
 
 **`notes`:** One sentence (semicolons allowed); name gaps or affirm coverage, tools, and split. For multi-`<RATIONALIZE_N>` **5**, name each context theme checked.
 """
