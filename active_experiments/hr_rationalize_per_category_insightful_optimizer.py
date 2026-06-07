@@ -712,6 +712,7 @@ class CheckerOptimizer:
     user_msg = (agent_outcome or "").strip()
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
     output_text = ""
+    thought_summary = ""
 
     for chunk in self.client.models.generate_content_stream(
       model=self.model_name,
@@ -720,6 +721,24 @@ class CheckerOptimizer:
     ):
       if chunk.text is not None:
         output_text += chunk.text
+
+      if hasattr(chunk, "candidates") and chunk.candidates:
+        for candidate in chunk.candidates:
+          if hasattr(candidate, "content") and candidate.content:
+            if hasattr(candidate.content, "parts") and candidate.content.parts:
+              for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought:
+                  if hasattr(part, "text") and part.text:
+                    if thought_summary:
+                      thought_summary += part.text
+                    else:
+                      thought_summary = part.text
+
+    if thought_summary:
+      print(f"{'='*80}")
+      print("THOUGHT SUMMARY:")
+      print(thought_summary.strip())
+      print("=" * 80)
 
     text = output_text.strip()
     try:
