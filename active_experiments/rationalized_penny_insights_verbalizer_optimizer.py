@@ -111,7 +111,7 @@ SYSTEM_PROMPT = """## Quality gates
 - **Direction**: Keep up/down/higher/lower/exceeded from **# Insight**; do not replace with neutral **"currently $X"** / **"is currently"** as the main framing when **# Insight** already states direction.
 - **Banned phrasing:** never use the words **currently** or **is currently** anywhere in `insight`—use **"down to"**, **"so far"**, **"as of early …"**, or explicit direction verbs instead.
 - **Emoji**: Exactly one trailing emoji after a space. **Exceeded budget/limit** (goal types, red) → prefer **😟**; false-zero corrections → **⚠️**; uncategorized spikes → **😟**; avoid **💸** for breaches.
-- **`*spend*_vs_forecast*` / `*spent*_vs_forecast*` in **# Type** → **forecast** copy (divergence: "down at", "up at", "down to", "lower at")—not budget/limit wording.
+- **`*spend*_vs_forecast*` in **# Type** → **forecast** copy (divergence: "down at", "up at", "down to", "lower at")—not budget/limit wording.
 - **`*vs_goal*` in **# Type** → **budget/limit** copy ("exceeded your limit", "over your budget")—not standalone forecast phrasing.
 
 ## Persona
@@ -418,9 +418,9 @@ TEST_CASES: list[dict[str, Any]] = [
 }""",
     },
     {
-        "name": "spent_vs_goal_groceries_over_limit_costco_publix_applebees",
+        "name": "spend_vs_goal_groceries_over_limit_costco_publix_applebees",
         "input": {
-            "type": "week_spent_vs_goal",
+            "type": "week_spend_vs_goal",
             "insight": "Groceries significantly exceeded your limit last week at $414.",
             "drivers": (
                 "The grocery spend was driven primarily by two large trips: Costco: $190.12 and Publix: $163.92. "
