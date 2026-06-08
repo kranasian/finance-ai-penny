@@ -64,25 +64,28 @@ OUTPUT_SCHEMA = types.Schema(
     "score": types.Schema(
       type=types.Type.INTEGER,
       description=(
-        "1-5 weakest-claim impact. Trend at claim grain only. Grain-family mix → ≤3. Thin trend sole defect: 2 periods=4, 1 period=3. Parent-only or parent+sub partial sub breakdown, or parent+sub missing claimed sub → ≤3."
+        "1–5, weakest claim. 5 = all claims supported without any unnecessary data. 4 = one minor issue. 3 = moderate. 2 = major. 1 = critical."
       ),
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "Always non-empty; semicolon-separated. score=5: '{Category} {scope} claim; three {grain} periods; {detail}; figure label and {grain} grain OK.' score≤4: issues only—never cite acknowledged discrepancies; use parent+sub OR parent-only template, not both. Parent+sub missing claimed sub: '{Sub} and {Parent} claims present but Figures omit {Sub} row.' Parent+sub partial unclaimed subs: '{Parent} parent+sub claim but Figures show parent row plus partial unclaimed subs; {missing} subcategory missing from breakdown.' Parent-only incomplete: '{Parent} parent-only claim but Figures show only sub rows without parent row; {missing} subcategory missing.' or '{Parent} parent-only claim but Figures show parent row plus partial subs; {missing} subcategory missing from breakdown.' Never fault absent unclaimed subs when Figures contain only parent row plus claimed sub rows."
+        "Brief and always non-empty; semicolon-separated. Score ≤4: List all issues, separating each with a semicolon. Name the specific category in notes. Should be self-explanatory (ie. understandable without having to refer to the rule list)."
       ),
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Grade **`## Figures`** vs **`# Rationalize What`**. Evidence = Figures only (labels, windows, amounts, derivations). Skim **Drivers** only per **Discrepancies**; ignore Drivers narrative and **Next steps**.
+SYSTEM_PROMPT = """Grade **`## Figures`** vs **`# Rationalize What`**.
 
-**Notes:** semicolon-separated; use "three monthly periods" / "month grain" (not monthly). score 5 uses template above; score ≤4 issues only. Name the specific category in notes.
+## Scope
+- **Figures**: Only evaluate this (labels, windows, amounts, derivations).
+- **Drivers**: Skim only if there are discrepancies between Figures and Rationalize What. Ignore otherwise.
+- **Next Steps**: Ignore.
 
-## Category taxonomy (parent → subcategories)
-Synonyms allowed. Parent rolls up subs; sub ≠ parent for labeling.
+## Category Taxonomy (parent → subcategories)
+Synonyms allowed if cannot be confused for another parent/subcategory. Parent rolls up subs and parent-only categorized transactions.
 - **Bills**: Connectivity, Insurance, Taxes, Service Fees
 - **Donations & Gifts**
 - **Education**: Kids Activities, Tuition
@@ -97,40 +100,39 @@ Synonyms allowed. Parent rolls up subs; sub ≠ parent for labeling.
 - **Transport**: Car & Fuel, Public Transit
 - **Uncategorized**
 
-## What scope
-Classify from **What text only**—Figure rows never change scope.
-- **Parent-only:** parent node named—no sub tokens in What.
-- **Subcategory-only:** only sub(s) named—sub name alone is never parent-only.
-- **Parent + sub:** parent token **and** sub token both appear in What—never reclassify as parent-only when both are named.
+## What Classifications
+Classify from **What text only**.
+- **Parent-only:** parent category named—no sub tokens in What.
+- **Subcategory-only:** only subcategory/ies named—no parent tokens in What.
+- **Parent + Subcategory:** parent category **and** subcategory/ies in What.
 
-**Amounts:** rounded $ vs What is OK. **Sign:** spending negative = net inflow; Income negative = net outflow—valid, never a defect or Drivers discrepancy.
+## Rules
+**Category Scope**
+- **Parent-only What:**
+   - Option 1: Parent row only
+   - Option 2: Parent row plus all taxonomy subs together
+   - Never sub rows without parent row, nor parent row plus partial subs. When subs appear, all taxonomy subs must accompany the parent row.
+- **Subcategory-only What:** Claimed sub rows only; no parent rows.
+- **Parent + Subcategory What:**
+   - Option 1: Parent row plus claimed sub rows only.
+   - Option 2: Parent row plus all taxonomy subs.
 
-## Figures scope
-**Categories**
-- **Parent-only What:** **parent row only** (sub rows may be absent—never fault missing subs when a parent row is present), or **parent row plus all taxonomy subs** together. **Sub rows without parent row → score 3—every taxonomy sub required; partial subs never satisfy parent-only.** **Parent row plus partial subs → score 3—when subs appear, all taxonomy subs must accompany the parent row.**
-- **Subcategory-only What:** claimed sub rows only; no parent rows.
-- **Parent + sub What:** parent row when parent is claimed; each **claimed sub** needs its own figure row—a parent rollup row does **not** substitute for a claimed sub. Permitted shapes: **parent row plus claimed sub rows only**, or **parent row plus all taxonomy subs**. **Parent row plus claimed subs plus partial unclaimed subs → score 3.** Absent unclaimed subs are valid when Figures contain only the parent row and claimed sub rows. **Do not apply parent-only completeness gates to parent+sub What.**
+**Amounts:** Rounded $ vs What is OK. Spending negative = net inflow; Income negative = net outflow.
 
-**Grain:** week claim → week family only (~7-day/WTD); month claim → month family only (calendar/MTD). **If Figures contain both families on a week/month What → score ≤3 (grain mix beats thin-trend 4).** Month rows never satisfy week-claim depth. Unlike lengths within same family are OK.
+**Grain:** week claim → week family only (~7-day/WTD); month claim → month family only (calendar/MTD). Month rows never satisfy week-claim depth, and vice-versa. Unlike lengths within same family are OK.
 
-**Trend:** count periods **at claim grain only** by date windows (each amount clause counts, regardless of sign). Cross-family rows do not count toward depth. ≥3 at claim grain satisfies depth. Sole defect: 2 periods → **4**; 1 period → **3**. Never assign 3 when count is exactly 2 and no other defect.
+**Trend:** Each parent and/or subcategory in What must have data on at least 3 weeks/months (depending on grain) to establish a trend. Count periods **at claim grain only** by date windows (each amount clause counts, regardless of sign). Cross-family rows do not count toward depth. Fault if data is less than 3 weeks/months for any category.
 
-**Stated math:** derivations must match taxonomy; partial subs cannot substitute for parent or missing subs.
+**Labels:** Each row maps to only one taxonomy target. Synonyms allowed if it cannot be confused for another subcategory/parent.
 
-**Labels:** each row maps to one taxonomy target. Synonyms allowed. Parent rollup labels valid for parent rows; sub labels valid for sub rows. **Defects (~3):** one row label coordinating parent and sub → ambiguous; add misread-risk clause for label-only faults.
+**Discrepancies:** Any gaps between Figures and What should be acknowledged in Drivers. If $/direction/window gaps are acknowledged in Drivers, no fault; omit from notes. Fault only unacknowledged mismatches.
 
-**Discrepancies:** $/direction/window gaps acknowledged in **Figures or Drivers** (including narrative figure rows) → no fault, omit from notes. Sign alone never counts. Fault only unacknowledged mismatches.
-
-## Scores (1–5, weakest claim)
-5 = all claims supported; **never 5** if parent-only What has partial sub Figures (subs without parent row, or parent row with incomplete subs); **never 5** if parent+sub What has partial unclaimed sub Figures (some but not all unclaimed subs present); **never 5** if claim grain and figure rows mix week/month families. 4 = one minor issue (**exactly 2 periods** at claim grain = thin trend). 3 = moderate. 2 = major. 1 = critical.
+Fault any unnecessary data (ie. parent row for subcategory-only what, weekly rows for monthly-only claim, monthly rows for weekly-only claim, etc.)
 
 ## Process
-1. **Enumerate Figures rows**—list every category row present before scoring; never fault a missing row without confirming absence in Figures.
-2. Classify scope from What text only—both parent and sub named → **parent+sub** (skip parent-only gate).
-3. **Parent-only only:** **parent row only** (no sub rows) → category OK, continue. If **sub rows present:** require **parent row plus all taxonomy subs**; **no parent row** or **any missing sub → 3, stop**.
-4. **Parent+sub only:** parent row when parent is claimed; figure row per claimed sub—parent row does not replace a missing claimed sub → ≤3 if any claimed sub absent. If **only parent and claimed sub rows** → unclaimed subs need not appear. If **any unclaimed sub row appears** → require **parent row plus all taxonomy subs**; **any missing sub → 3, stop**.
-5. **Grain:** detect family mix first—both week and month rows present → **3**. Count trend at claim grain only.
-6. Thin trend sole defect: 2 periods → **4**. Weakest claim. Discrepancy OK if in Figures or Drivers.
+1. Classify What based on What only.
+2. List every category row present in Figures.
+3. Evaluate whether Figures aligns with What classification based on the Figures scope.
 
 Return only JSON `{score, notes}`.
 """
