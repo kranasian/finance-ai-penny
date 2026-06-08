@@ -68,12 +68,8 @@ def _build_output_schema() -> "types.Schema":
         )
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["key", "insight", "insight_correct"],
+        required=["insight", "insight_correct"],
         properties={
-            "key": types.Schema(
-                type=types.Type.STRING,
-                description="Same string as input # Key (insight identifier); copy verbatim.",
-            ),
             "insight": types.Schema(
                 type=types.Type.STRING,
                 description=(
@@ -93,15 +89,15 @@ def _build_output_schema() -> "types.Schema":
 
 
 def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
-    """Build Markdown input for the model from structured fields (key, insight, drivers).
+    """Build Markdown input for the model from structured fields (type, insight, drivers).
 
-    Uses top-level Markdown headings `# Key`, `# Insight`, `# Drivers` (exact spellings).
+    Uses top-level Markdown headings `# Type`, `# Insight`, `# Drivers` (exact spellings).
     """
-    for k in ("key", "insight", "drivers"):
+    for k in ("type", "insight", "drivers"):
         if k not in insight:
             raise ValueError(f"insight missing required key: {k!r}")
     return (
-        f"# Key\n\n{insight['key']}\n\n"
+        f"# Type\n\n{insight['type']}\n\n"
         f"# Insight\n\n{insight['insight']}\n\n"
         f"# Drivers\n\n{insight['drivers']}"
     )
@@ -110,13 +106,13 @@ def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
 # Canonical system prompt for ``P:RationalizedPennyInsightsVerbalizer`` — paste into DB ``penny_templates`` when promoting changes.
 SYSTEM_PROMPT = """## Quality gates
 
-- JSON only: `key` must equal **# Key** verbatim.
+- JSON only.
 - **Timeframe**: Reuse **# Insight** wording ("this week", "last week", "this month", "last month"). The link uses `/weekly` or `/monthly` matching that period—never swap week ↔ month.
 - **Direction**: Keep up/down/higher/lower/exceeded from **# Insight**; do not replace with neutral **"currently $X"** / **"is currently"** as the main framing when **# Insight** already states direction.
 - **Banned phrasing:** never use the words **currently** or **is currently** anywhere in `insight`—use **"down to"**, **"so far"**, **"as of early …"**, or explicit direction verbs instead.
-- **Emoji**: Exactly one trailing emoji after a space. **Exceeded budget/limit** (goal keys, red) → prefer **😟**; false-zero corrections → **⚠️**; uncategorized spikes → **😟**; avoid **💸** for breaches.
-- **`spend_vs_forecast:` / `spent_vs_forecast:`** keys → **forecast** copy (divergence: "down at", "up at", "down to", "lower at")—not budget/limit wording.
-- **`_vs_goal:`** in **# Key** → **budget/limit** copy ("exceeded your limit", "over your budget")—not standalone forecast phrasing.
+- **Emoji**: Exactly one trailing emoji after a space. **Exceeded budget/limit** (goal types, red) → prefer **😟**; false-zero corrections → **⚠️**; uncategorized spikes → **😟**; avoid **💸** for breaches.
+- **`*spend*_vs_forecast*` / `*spent*_vs_forecast*` in **# Type** → **forecast** copy (divergence: "down at", "up at", "down to", "lower at")—not budget/limit wording.
+- **`*vs_goal*` in **# Type** → **budget/limit** copy ("exceeded your limit", "over your budget")—not standalone forecast phrasing.
 
 ## Persona
 
@@ -128,11 +124,10 @@ Compress **# Insight** + **# Drivers** into one rationalized, single-line messag
 
 ## Input
 
-Markdown with exactly three top-level headings in order: `# Key`, `# Insight`, `# Drivers`.
+Markdown with exactly three top-level headings in order: `# Type`, `# Insight`, `# Drivers`.
 
 ## Output
 
-- `key`: exactly **# Key**
 - `insight_correct`: **false** only if **# Drivers** contradicts **# Insight** on facts (e.g. claims $0 but drivers show spend). Early-month context that explains the same figures is **not** a contradiction → **true**.
 - `insight`: one line (no newlines). No `Drivers:` prefix.
 
@@ -142,10 +137,10 @@ Markdown with exactly three top-level headings in order: `# Key`, `# Insight`, `
 2. Target ≤320 characters; prefer whole dollars unless amount < $10.
 3. **Category link (required):** include **one** primary drill-down as `g{[Display](/slug/weekly)}` or `g{[Display](/slug/monthly)}` (or `r{…}`). **Never** color a bare category name without the markdown link inside the same wrapper (invalid: `r{Groceries}` alone; valid: `r{[Groceries](/meals_groceries/weekly)}`).
 4. Color the **main dollar amount** you feature with the **same** `g`/`r` as that link.
-5. **Umbrella `…:Food` keys:** for combined food totals or corrections, prefer **`[Meals](/meals/weekly)`** or **`[Meals](/meals/monthly)`**. Use a narrower slug (e.g. `meals_dining_out`) only when the sentence is **only** about that subcategory.
+5. **Food umbrella** in **# Insight** (e.g. "Food is thus…"): prefer **`[Meals](/meals/weekly)`** or **`[Meals](/meals/monthly)`**. Use a narrower slug (e.g. `meals_dining_out`) only when the sentence is **only** about that subcategory.
 6. **`insight_correct` false:** open with drivers' facts (correct totals). For Food umbrella wrong-$0 cases, use **`g{[Meals](/meals/…)}`** and an explicit correction such as **"— not $0"** when appropriate.
 7. **Forecast phrasing:** prefer **"down at / up at / down to / lower at / higher at"** plus timeframe words from **# Insight**; include merchants or drivers when space allows.
-8. **Goal phrasing:** budget/limit language; map Display from the segment after the last `:` in **# Key** to its slug (e.g. Dining Out → `meals_dining_out`). When **# Insight** contains **"exceeded your limit"** / **"over your budget"**, prefer opening **"You exceeded your budget for …"** with the linked category when it fits.
+8. **Goal phrasing:** budget/limit language; map Display from category names in **# Insight** to slugs (e.g. Dining Out → `meals_dining_out`). When **# Insight** contains **"exceeded your limit"** / **"over your budget"**, prefer opening **"You exceeded your budget for …"** with the linked category when it fits.
 9. If **# Drivers** lists multiple notable merchants or charges, prefer weaving **at least two** concrete items into `insight` when ≤320 chars allows (names/amounts verbatim).
 10. Never tautology on zero: do not write both "$0 spend" and "down to $0"; use **one** **down to g{$0}** (or `r{}`) clause with colored amount.
 
@@ -199,7 +194,7 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
     def generate_response(self, insight_input: str) -> Dict[str, Any]:
         if not isinstance(insight_input, str) or not insight_input.strip():
             raise ValueError(
-                "insight_input must be a non-empty string (Markdown with # Key / # Insight / # Drivers)."
+                "insight_input must be a non-empty string (Markdown with # Type / # Insight / # Drivers)."
             )
 
         request_text = types.Part.from_text(text=f"input:\n{insight_input.strip()}\n\noutput:")
@@ -275,171 +270,167 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
 TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "spend_vs_forecast_leisure_down",
-        "input": """# Key
-
-spend_vs_forecast:2026-05:Leisure
-
-# Insight
-
-Leisure is significantly down this month at $11.
-
-# Drivers
-
-The significant decrease in leisure spending is due to a reduction in the number and type of entertainment transactions compared to previous months. In April, you had four leisure transactions ($76.15 total) including streaming subscriptions and a cinema visit (AMC Theatres: $41.68). So far in May, the only leisure transaction is your monthly Spotify subscription ($10.99 on May 3). March saw notably higher spending ($584.50) due to a higher volume of transactions.""",
+        "input": {
+            "type": "month_spend_vs_forecast",
+            "insight": "Leisure is significantly down this month at $11.",
+            "drivers": (
+                "The significant decrease in leisure spending is due to a reduction in the number and type of "
+                "entertainment transactions compared to previous months. In April, you had four leisure transactions "
+                "($76.15 total) including streaming subscriptions and a cinema visit (AMC Theatres: $41.68). So far in "
+                "May, the only leisure transaction is your monthly Spotify subscription ($10.99 on May 3). March saw "
+                "notably higher spending ($584.50) due to a higher volume of transactions."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_forecast:2026-05:Leisure",
   "insight_correct": true,
   "insight": "g{Leisure is way down to g{$11} at g{[Leisure](/leisure/monthly)}}. April had streaming plus AMC ($41.68); May so far is just Spotify ($11), after a much higher March. 😊"
 }""",
     },
     {
         "name": "spend_vs_forecast_leisure_entertainment_zero_early_month",
-        "input": """# Key
-
-spend_vs_forecast:2026-05:Leisure
-
-# Insight
-
-Entertainment is significantly down this month at $0.
-
-# Drivers
-
-The $0 spent on entertainment so far in May is not necessarily a permanent change; it reflects the fact that no entertainment transactions have posted to your account in the first six days of the month. In April, you had multiple recurring and one-off charges, including Netflix ($116.40 and $112.80) and StubHub ($93.90). The drop simply indicates that these regular subscription cycles or discretionary purchases have not yet occurred or hit your account during the early part of this month.""",
+        "input": {
+            "type": "month_spend_vs_forecast",
+            "insight": "Entertainment is significantly down this month at $0.",
+            "drivers": (
+                "The $0 spent on entertainment so far in May is not necessarily a permanent change; it reflects the "
+                "fact that no entertainment transactions have posted to your account in the first six days of the month. "
+                "In April, you had multiple recurring and one-off charges, including Netflix ($116.40 and $112.80) and "
+                "StubHub ($93.90). The drop simply indicates that these regular subscription cycles or discretionary "
+                "purchases have not yet occurred or hit your account during the early part of this month."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_forecast:2026-05:Leisure",
   "insight_correct": true,
   "insight": "g{Entertainment is down at g{$0} this month at g{[Entertainment](/leisure_entertainment/monthly)}}, as usual subscriptions and discretionary purchases have not yet posted early in May. 📆"
 }""",
     },
     {
         "name": "spend_vs_forecast_food_weekly_mix",
-        "input": """# Key
-
-spend_vs_forecast:2026-05:Food
-
-# Insight
-
-Dining Out is significantly down this week at $84. Delivered Food is significantly up this week at $91. Food is thus significantly down this week to $231.
-
-# Drivers
-
-Your food spending this week is characterized by a shift toward convenience, despite an overall decline in total food expenditure compared to last week ($275). While **Dining Out** spending totaled $84 (e.g., Five Guys: $39, Wendy's: $23, McDonald's: $21), **Delivered Food** (DoorDash, Uber Eats, Grubhub) reached $91, suggesting that delivery services have overtaken dining out as your primary method for prepared meals this week.""",
+        "input": {
+            "type": "week_spend_vs_forecast",
+            "insight": (
+                "Dining Out is significantly down this week at $84. Delivered Food is significantly up this week at $91. "
+                "Food is thus significantly down this week to $231."
+            ),
+            "drivers": (
+                "Your food spending this week is characterized by a shift toward convenience, despite an overall decline "
+                "in total food expenditure compared to last week ($275). While **Dining Out** spending totaled $84 "
+                "(e.g., Five Guys: $39, Wendy's: $23, McDonald's: $21), **Delivered Food** (DoorDash, Uber Eats, Grubhub) "
+                "reached $91, suggesting that delivery services have overtaken dining out as your primary method for "
+                "prepared meals this week."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_forecast:2026-05:Food",
   "insight_correct": true,
   "insight": "Your total g{[Meals](/meals/weekly)} spend is down to g{$231} this week, as Dining Out decreased to $84 (e.g., Five Guys, Wendy's) while Delivered Food rose to $91 via services like DoorDash and Uber Eats. 📉"
 }""",
     },
     {
         "name": "spend_vs_forecast_food_week_dining_down_volume",
-        "input": """# Key
-
-spend_vs_forecast:2026-05:Food
-
-# Insight
-
-Dining Out is significantly down this week at $105.  Food is thus significantly down this week to $188.
-
-# Drivers
-
-The reduction in Dining Out is primarily due to a lower volume of transactions compared to the previous week. In the prior week (Apr 26–May 2), you had 6 Dining Out transactions totaling $299, whereas this week (May 3–9) you had only 2 transactions (Five Guys: $17, Chipotle: $88). The overall Food total is also lower because you had no Grocery spending this week, compared to $189 at Walmart in the prior week.""",
+        "input": {
+            "type": "week_spend_vs_forecast",
+            "insight": (
+                "Dining Out is significantly down this week at $105.  Food is thus significantly down this week to $188."
+            ),
+            "drivers": (
+                "The reduction in Dining Out is primarily due to a lower volume of transactions compared to the previous "
+                "week. In the prior week (Apr 26–May 2), you had 6 Dining Out transactions totaling $299, whereas this week "
+                "(May 3–9) you had only 2 transactions (Five Guys: $17, Chipotle: $88). The overall Food total is also "
+                "lower because you had no Grocery spending this week, compared to $189 at Walmart in the prior week."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_forecast:2026-05:Food",
   "insight_correct": true,
   "insight": "Your g{[Meals](/meals/weekly)} spend is down to g{$188} this week, with dining out at Five Guys ($17) and Chipotle ($88) significantly lower and no grocery spending recorded."
 }""",
     },
     {
         "name": "spend_vs_forecast_food_month_zero_vs_actual",
-        "input": """# Key
-
-spend_vs_forecast:2026-05:Food
-
-# Insight
-
-Delivered Food is significantly down this month at $0. Groceries is significantly down this month at $0. Food is thus significantly down this month to $0.
-
-# Drivers
-
-The insight indicating $0 spend is inaccurate. While spending on meals_delivered_food and meals_groceries has not been recorded yet in May, you have spent $24.00 on food so far this month, which is categorized as meals_dining_out (Merchant: AM PM Convenience, $24.00). The significant drop compared to April ($286.07) and March ($345.51) is due to the fact that we are only six days into May, and you have not yet made your typical recurring grocery or food delivery purchases for the month.""",
+        "input": {
+            "type": "month_spend_vs_forecast",
+            "insight": (
+                "Delivered Food is significantly down this month at $0. Groceries is significantly down this month at $0. "
+                "Food is thus significantly down this month to $0."
+            ),
+            "drivers": (
+                "The insight indicating $0 spend is inaccurate. While spending on meals_delivered_food and "
+                "meals_groceries has not been recorded yet in May, you have spent $24.00 on food so far this month, "
+                "which is categorized as meals_dining_out (Merchant: AM PM Convenience, $24.00). The significant drop "
+                "compared to April ($286.07) and March ($345.51) is due to the fact that we are only six days into May, "
+                "and you have not yet made your typical recurring grocery or food delivery purchases for the month."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_forecast:2026-05:Food",
   "insight_correct": false,
   "insight": "Your g{[Meals](/meals/monthly)} spend is down at g{$24} so far this month — not $0 — driven by a $24.00 charge at AM PM Convenience. This reflects a significant decrease compared to previous months as you have not yet made your typical grocery or delivery purchases. ⚠️"
 }""",
     },
     {
         "name": "spend_vs_forecast_food_zero_accurate_early_may_keeps_direction",
-        "input": """# Key
-
-spend_vs_forecast:2026-05:Food
-
-# Insight
-
-Dining Out is significantly down this month at $0. Groceries is significantly down this month at $0. Food is thus significantly down this month to $0.
-
-# Drivers
-
-The reported $0 spend for May 2026 accurately reflects that there have been no recorded dining out or grocery transactions processed for the month of May as of May 6th. In contrast, you spent $1,201.43 on food in April and $2,400.93 in March. The current \"significant drop\" is simply due to this being very early in the month.""",
+        "input": {
+            "type": "month_spend_vs_forecast",
+            "insight": (
+                "Dining Out is significantly down this month at $0. Groceries is significantly down this month at $0. "
+                "Food is thus significantly down this month to $0."
+            ),
+            "drivers": (
+                "The reported $0 spend for May 2026 accurately reflects that there have been no recorded dining out or "
+                "grocery transactions processed for the month of May as of May 6th. In contrast, you spent $1,201.43 on "
+                "food in April and $2,400.93 in March. The current \"significant drop\" is simply due to this being very "
+                "early in the month."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_forecast:2026-05:Food",
   "insight_correct": true,
   "insight": "As of early this month, your g{[Meals](/meals/monthly)} spend is down to g{$0} — not a significant drop, but simply because the month has just begun. ⚠️"
 }""",
     },
     {
         "name": "spend_vs_forecast_uncategorized_weekly_not_monthly",
-        "input": """# Key
-
-spend_vs_forecast:2026-05:Uncategorized
-
-# Insight
-
-Uncategorized is slightly up this week at $2988.
-
-# Drivers
-
-The spike in uncategorized spending this week is driven by a single large transaction: **Property Group LLC for $2,850.00**. This makes up the vast majority of the $2,988.42 currently listed as uncategorized. Smaller items contributing to the total include an ATM withdrawal ($100.00) and a charge at the School Cafeteria ($38.42), both from May 3rd.""",
+        "input": {
+            "type": "week_spend_vs_forecast",
+            "insight": "Uncategorized is slightly up this week at $2988.",
+            "drivers": (
+                "The spike in uncategorized spending this week is driven by a single large transaction: "
+                "**Property Group LLC for $2,850.00**. This makes up the vast majority of the $2,988.42 currently listed "
+                "as uncategorized. Smaller items contributing to the total include an ATM withdrawal ($100.00) and a "
+                "charge at the School Cafeteria ($38.42), both from May 3rd."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_forecast:2026-05:Uncategorized",
   "insight_correct": true,
   "insight": "r{[Uncategorized](/uncategorized/weekly)} is up this week at r{$2988}, primarily driven by a $2,850 property payment alongside smaller ATM and school cafeteria charges. 😟"
 }""",
     },
     {
         "name": "spend_vs_goal_dining_out_over_budget_penny_style",
-        "input": """# Key
-
-spend_vs_goal:2026-05-03:Dining Out
-
-# Insight
-
-Dining Out significantly exceeded your limit this week at $79.
-
-# Drivers
-
-Your spending in **Dining Out** reached $78.89 for the current week, an increase of $35.19 compared to last week, with purchases including Olive Garden and Dunkin' Donuts.""",
+        "input": {
+            "type": "week_spend_vs_goal",
+            "insight": "Dining Out significantly exceeded your limit this week at $79.",
+            "drivers": (
+                "Your spending in **Dining Out** reached $78.89 for the current week, an increase of $35.19 compared to "
+                "last week, with purchases including Olive Garden and Dunkin' Donuts."
+            ),
+        },
         "output": """{
-  "key": "spend_vs_goal:2026-05-03:Dining Out",
   "insight_correct": true,
   "insight": "You exceeded your budget for r{[Dining Out](/meals_dining_out/weekly)} this week at r{$79} due to spending at Olive Garden and Dunkin' Donuts. 😟"
 }""",
     },
     {
         "name": "spent_vs_goal_groceries_over_limit_costco_publix_applebees",
-        "input": """# Key
-
-spent_vs_goal:2026-04-26:Groceries
-
-# Insight
-
-Groceries significantly exceeded your limit last week at $414.
-
-# Drivers
-
-The grocery spend was driven primarily by two large trips: Costco: $190.12 and Publix: $163.92. Additionally, there was a $59.56 transaction at Applebee's that was categorized as meals_groceries. This appears to be a miscategorization, as dining out typically falls under meals_dining_out. Excluding this restaurant charge, your grocery spending would have been $354.04, which still exceeds your typical weekly spend of ~$180–$190 but is significantly closer to your average.""",
+        "input": {
+            "type": "week_spent_vs_goal",
+            "insight": "Groceries significantly exceeded your limit last week at $414.",
+            "drivers": (
+                "The grocery spend was driven primarily by two large trips: Costco: $190.12 and Publix: $163.92. "
+                "Additionally, there was a $59.56 transaction at Applebee's that was categorized as meals_groceries. "
+                "This appears to be a miscategorization, as dining out typically falls under meals_dining_out. Excluding "
+                "this restaurant charge, your grocery spending would have been $354.04, which still exceeds your typical "
+                "weekly spend of ~$180–$190 but is significantly closer to your average."
+            ),
+        },
         "output": """{
-  "key": "spent_vs_goal:2026-04-26:Groceries",
   "insight_correct": true,
   "insight": "You blew past your grocery budget at r{[Groceries](/meals_groceries/weekly)} last week at r{$414}: Costco ~$190 and Publix ~$164 carried most of it; Applebee's ~$60 is tagged groceries but reads like dining out — without it you're still ~$354 vs ~$180–190 typical. ⚠️"
 }""",
