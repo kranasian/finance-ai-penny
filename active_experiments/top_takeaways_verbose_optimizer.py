@@ -54,49 +54,31 @@ GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
 # Canonical prompt for **P:TopTakeawaysVerbose** (rollup instructions for multi-context top takeaways).
 SYSTEM_PROMPT = """You are **Penny**.
 
-You will be given multiple **top takeaway context** blocks as plain markdown, separated by blank lines. Each block contains:
-1. **Body** — **either** full prior rationalize markdown (``# {Category} Insight`` with ``Explain:``, then ``# {Category} Rationalization`` with ``## Figures`` / ``## Drivers``) **or** a **single non-rationalized insight string** (no Insight/Rationalization headings — e.g. uncategorized or large-transaction alerts).
-2. ``## Helpful Links to Information`` — bullet list of Markdown links ``- [display name](/cashflow/...)`` (one or more per block). Copy ``href`` paths verbatim from this section.
+Context blocks (markdown, blank-line separated): rationalize body (`Explain:`, `## Figures`, `## Drivers`) or plain insight, plus `## Helpful Links to Information` (`- [name](/cashflow/...)`).
 
-Your goal is to synthesize a **substantive rollup** across all contexts: **highlights** (positive patterns, wins, healthy habits) and **lowlights** (concerns, risks, drag, overspending, gaps). Each bullet should read as a **mini-briefing**—rich enough that a reader grasps the **what**, **how much**, **compared to what**, and **why** (drivers) without opening the drill-down, while staying within the bullet budget.
+Synthesize **# Top Takeaways** with **## Highlights** (stability, savings, flat costs) and **## Lowlights** (spikes, overspending, miscategorization). Omit **## Lowlights** when none apply.
 
-**What to use for Highlights / Lowlights:** For rationalize blocks, base bullets on **Figures and Drivers** plus the ``Explain:`` line under ``# {Category} Insight``. **Go deep:** weave in **multiple** concrete details from Figures (period labels, dollar amounts, prior-window comparisons) and Drivers (named payees, payroll or bonus lines, miscategorization examples, volume or timing mechanisms). Prefer **several connected sentences** per bullet when the source supports it—do **not** compress rich rationalize into a thin headline if the Figures/Drivers give more. Copy numbers and dates **exactly** as written. For plain insight blocks: the **only** ground truth is that insight text — there are no Figures/Drivers; do **not** invent amounts or merchants not stated there. For uncategorized / large-transaction insights, write in the same **observational** register as **vs-forecast** rationalize **Drivers** (declarative, third person: what the spend reflects, what is driven by, what posted when) — **no** invented action items or imperatives (e.g. no “confirm”, “verify”, “should”, “until you act”, “tidy”, “worth checking”).
+Each `- ` bullet: **Short headline:** + 2–4 sentences (what, amount, comparison, driver) from Figures/Drivers. The headline names the **story** (e.g. **Income Growth:**, **Utilities Spike:**, **Miscategorization:**)—not the category alone (**Salary:**, **Food:**). Put `[Category](/cashflow/...)` links in the sentence. If Explain disagrees with Figures or Drivers, Figures and Drivers prevail—state only their facts; never mention a conflict. ≤3 bullets per section; one primary context per bullet.
 
-Rules:
-- Ground every bullet in the provided body for that context. For rationalize blocks, ground claims in ``## Figures`` and ``## Drivers`` as well as ``Explain:``. Do not invent transactions, ids, or amounts.
-- **Depth (rationalize blocks):** Within each ``- `` bullet, use **as much relevant Figures/Drivers material as fits**—typically **two to four sentences** when the context is meaty. Include **at least two** concrete facts (e.g. two amounts, or an amount plus a named driver, or a comparison across periods plus the mechanism). If you only restate ``Explain:`` without Figures/Drivers specifics, the bullet is **too shallow**.
-- **Tap link anchor:** For rationalize blocks, choose the phrase you wrap in ``[...](path)`` **only** from ``# {Category} Insight`` / ``Explain:`` (ignore ``## Figures``, ``## Drivers``, and slugs like ``meals_groceries`` for this choice):
-  1. If Explain **names a parent / umbrella category** in that same line, use **that parent’s wording** (verbatim casing from Explain) as the **primary** linked label.
-  2. **Otherwise** use the **first leaf** category name in Explain (first such name in reading order).
-  3. For plain insight blocks, choose a **short natural phrase from the insight text itself** as the link anchor (e.g. merchant name like “Property Group LLC” or “Burger King”, the word **Uncategorized**, or **Clothing** when it names a likely category — pick the clearest single anchor that fits the sentence; use **that** visible text with a path from that block’s **Helpful Links** list).
-  4. At least one Markdown link per bullet that summarizes a context must use the chosen anchor and **exactly** one ``/cashflow/...`` path from that block’s **Helpful Links** section as ``href`` (add a second link only if another context is also summarized in the same bullet).
-- **Tap label vs Markdown anchor (hard rule):** When a helpful link is ``[Name](/cashflow/...)``, the ``[...]`` anchor you use in the rollup for **that** path must name the **same** category as **Name**—do not attach that URL to a different category label (e.g. do not write **Groceries** or **Dining** on a link whose helpful-link line says **Food**). If Explain’s wording would disagree with **Name**, align the **link anchor** with **Name** and carry Explain’s nuance in the surrounding sentence without mislabeling the drill-down.
-- **Tap links:** Use **only** paths listed under **Helpful Links to Information** for each block. **Link syntax:** ``[text](/path)`` with **no whitespace** between ``(`` and ``/`` — never ``[text]( /path)``. If multiple contexts appear in one bullet, include one correct link per context. **Never** paste one context’s ``/cashflow/...`` URL next to another context’s category name.
-- **Anchor vs path:** The ``href`` must be **exactly** a path from that context block’s **Helpful Links** list. The visible ``[anchor]`` must name the **same** Penny category level that URL opens (parent rollup vs leaf): align with the **display name** in the helpful-link bullet when it names a category; do not write **Food** on a path that opens **Groceries** or **Meals** alone, or **Groceries** on a path meant for a different rollup. Do not paste another context’s path into a sentence tied to a different Explain theme.
-- **Link in sentence:** The linked category must be **woven into the sentence** as normal grammar (subject, object, or “in …” phrase) — not bolted on after a period. **Bad:** ``…following bonus payouts in March. [Salary](/cashflow/…)`` **Good:** ``…following March bonus payouts; [Salary](/cashflow/…) matches your usual early-month rhythm`` or ``Early-month [Salary](/cashflow/…) matches April…``. Do not end a clause with ``.`` and then append only a bare link.
-- **Tools:** You may call finance tools when helpful—especially to **verify** totals, reconcile conflicting numbers across contexts, or confirm whether a claim in the markdown still matches current data. Prefer tools when verification would materially increase confidence; otherwise rely on the pasted rationalize text.
-- Merge semantically duplicate ideas into one bullet; avoid repeating the same point under different wording. When merging, keep the **combined** bullet **fully detailed** (do not drop figures or drivers just to shorten).
-- **Bullet budget:** At most **3** ``- `` bullets under ``## Highlights`` and at most **3** under ``## Lowlights`` (six total max). If contexts are very thin, use fewer; never exceed 3 per section. **Prefer longer, denser bullets** over many short ones—use the budget for **depth**, not for splitting one story into vague fragments.
-- Your **written reply** must not include raw ``llm_calls`` text or pasted tool-call payloads.
-- **Final reply:** After any tool calls, your **only** user-visible text follows the markdown format below — **no** standalone preamble or wrap-up outside it. The first line of your last message must be exactly ``# Top Takeaways``.
+**Amounts:** Whole dollars, comma thousands (`$6,369`).
 
-Final message format (MUST match exactly — nothing else in the last message):
+**Periods:** **this month/week**; **last month/week** or **at this point last month/week**; prior week → **from Apr 26 to May 2**; older → **in Mar**. Use Apr/Mar—not April/March. No years in prose; never "first X days", "so far", or "the previous week".
+
+**Links:** `[display name](/cashflow/path)` woven into the sentence. Path from Helpful Links; anchor matches display name. Link each category discussed (parent + leaf when both matter, e.g. Food + Groceries, Shelter + Upkeep).
+
+**Voice:** Observational Drivers tone—declarative facts, plain merchant names, no advice.
+
+**Output (strict):** Your reply is **only** the markdown below—first line `# Top Takeaways`, then Highlights bullets, then Lowlights bullets when applicable. No preamble, postscript, YAML/JSON, properties, repeated input blocks, `## Helpful Links`, or any other headings or sections.
 
 # Top Takeaways
 
 ## Highlights
 
-- ...
+- **Income Stability:** …
 
 ## Lowlights
 
-- ...
-
-Notes:
-- Use `- ` bullets only (no numbered lists in these sections). Inline Markdown links ``[text](/path)`` inside bullets are required for each context summarized; anchor text follows **Tap link anchor** rules (Explain-based for rationalize blocks, insight-text-based for plain insight blocks), subject to **Tap label vs Markdown anchor** when helpful links include a display name; ``href`` is a ``/cashflow/...`` path from that block’s **Helpful Links** section with **no space** after ``(``. The linked phrase must read as part of the sentence (**Link in sentence** rule), not a trailing tag after the final period. **Anchor vs path** (same subsection in Rules): label and ``href`` must describe the same category level, and you must not apply one context’s URL to another context’s category name.
-- Match the rationalize voice: **direct, readable, and thorough**—high information density per bullet, not telegraphic stubs. For ``uncat_txn`` / ``large_txn`` insights, match **vs-forecast Drivers** observational tone, not advisory copy.
-- Start each bullet with a **bold** short label when helpful (e.g. **Savings:** …).
-- Do not add introductory or closing sentences outside the ``# Top Takeaways`` structure.
+- **Utilities Spike:** …
 """
 
 
@@ -532,7 +514,7 @@ TEST_CASES: list[dict[str, Any]] = [
         "input": """
 # Salary Insight
 
-Explain: Salary is significantly down this month at $6369. (2026-05-01 to 2026-05-10)
+Explain: Salary is significantly down this month at $4200. (2026-05-01 to 2026-05-10)
 
 # Salary Rationalization
 
@@ -544,7 +526,7 @@ Explain: Salary is significantly down this month at $6369. (2026-05-01 to 2026-0
 
 ## Drivers
 
-The "significant drop" in salary compared to early March is due to a large, one-time bonus payout received in the first half of March 2026. Specifically, you received $8,800 in total "Genentech US Bonus" payments on March 11, alongside higher "CA State Payroll" amounts ($8,600 total) compared to your standard bi-weekly payroll cycle. Your income for the first 10 days of May is consistent with your regular pay cycle, mirroring the amount received during the same period in April.
+The Explain line describes salary as significantly down at $4,200 this month, but Figures show $6,369 for May 1–10—the same as the $6,369 from the same window in April—so pay is flat month-over-month, not down. The "significant drop" compared to early March is due to a large, one-time bonus payout received in the first half of March 2026. Specifically, you received $8,800 in total "Genentech US Bonus" payments on March 11, alongside higher "CA State Payroll" amounts ($8,600 total) compared to your standard bi-weekly payroll cycle. Your income for the first 10 days of May is consistent with your regular pay cycle, mirroring the amount received during the same period in April.
 
 ## Helpful Links to Information
 
@@ -623,195 +605,426 @@ The "Uncategorized" spend is trending downward compared to prior months. A signi
 
 ## Highlights
 
-- **Salary rhythm:** Early-month [Salary](/cashflow/36/monthly/2026-05) through May 10 matches April at $6,369.24 while March’s early-month lift came from a one-time Genentech bonus and higher CA State Payroll, not a pay cut.
-- **Food framing:** [Food](/cashflow/1/monthly/2026-05) looks “down” partly because only 10 days of May are counted vs full April/March totals; Applebee’s dining charges may be sitting under groceries.
+- **Income Stability:** This month [Salary](/cashflow/36/monthly/2026-05) tracks at $6,369, which is consistent with the amount received at this point last month. While income appears significantly lower than in Mar, that variance is driven by a one-time $8,800 bonus and higher payroll amounts received during the first half of Mar, rather than a change in the standard bi-weekly pay cycle.
+- **Transaction Volume:** The total [Uncategorized](/cashflow/-1/monthly/2026-05) spend is trending downward this month at $6,644, compared to $7,682 for the entirety of last month. This improvement is driven by a lower volume of smaller miscellaneous transactions, with 18 recorded so far in May compared to 28 in Apr, even though major recurring charges remain constant.
 
 ## Lowlights
 
-- **Uncategorized spike:** Last week [Uncategorized](/cashflow/-1/weekly/2026-05-03) jumped to about $6,382 on large Property Group LLC payments and possible duplicate recurring charges (Community Pool, Costco, BP).
-- **Uncategorized trend:** Month-to-date [Uncategorized](/cashflow/-1/monthly/2026-05) is slightly down vs March/April while big Property Group LLC repeats still dominate with fewer small misc transactions so far in May.
+- **Uncategorized Spikes:** Last week, [Uncategorized](/cashflow/-1/weekly/2026-05-03) spending surged to $6,382, a sharp increase from the $726 recorded from Apr 26 to May 2. This spike reflects two large payments to Property Group LLC totaling $5,700, alongside duplicate entries for recurring transactions like Community Pool, Costco, and BP, which suggests some items may be appearing twice across accounts.
+- **Miscategorization:** While [Food](/cashflow/1/monthly/2026-05) spending is $1,859 and [Groceries](/cashflow/4/monthly/2026-05) is $937 this month, transaction history reveals potential miscategorization. For instance, an $85 charge at Applebee's was recorded under groceries on May 2, despite being a dining venue, which contrasts with typical grocery bills from retailers like Trader Joe's.
 """,
     },
     {
-        "name": "two_contexts_salary_and_groceries_with_tap_links",
+        "name": "single_context_delivered_food_long_figures",
+        "input": """
+# Delivered Food Insight
+
+Explain: Delivered Food is significantly down this month at $0. (2026-05-01 to 2026-05-23)
+
+# Delivered Food Rationalization
+
+## Figures
+
+*   **Delivered Food (meals_delivered_food)**:
+    *   May 2026: from May 1–23, $0 · entire month $0
+    *   Apr 2026: from Apr 1–23, $0 · entire month $0
+    *   Mar 2026: from Mar 1–23, $0 · entire month $0
+    *   Feb 2026: from Feb 1–23, $0 · entire month $0
+    *   Jan 2026: from Jan 1–23, $9.99 · entire month $9.99
+    *   Dec 2025: from Dec 1–23, $149.88 · entire month $149.88
+    *   Nov 2025: from Nov 1–23, $29.36 · entire month $29.36
+    *   Oct 2025: from Oct 1–23, $0 · entire month $0
+    *   Sep 2025: from Sep 1–23, $54.18 · entire month $54.18
+
+## Drivers
+
+Spending on **Delivered Food** is $0 this month, consistent with at this point last month and the same $0 pattern in Mar and Feb.
+
+## Helpful Links to Information
+
+- [Delivered Food](/cashflow/3/monthly/2026-05)
+""",
+        "output": """
+# Top Takeaways
+## Highlights
+- **Spending Control:** You have maintained a clean streak in [Delivered Food](/cashflow/3/monthly/2026-05) this month, with total spending at $0.
+This consistent behavior mirrors the $0 activity recorded at this point last month, as well as the same $0 patterns observed throughout Mar and Feb.
+""",
+    },
+    {
+        "name": "six_contexts_income_and_bills_mosaic",
         "input": """
 # Salary Insight
 
-Explain: Salary is significantly down this month at $6369. (2026-05-01 to 2026-05-10)
+Explain: Salary is slightly up this month at $4210. (2026-05-01 to 2026-05-10)
 
 # Salary Rationalization
 
 ## Figures
 
-*   **May 1–10, 2026:** $6,369.24
-*   **April 1–10, 2026:** $6,369.24
-*   **March 1–10, 2026:** $17,369.24
+*   **May 1–10, 2026:** $4,210.00
+*   **April 1–10, 2026:** $4,105.50
 
 ## Drivers
 
-The "significant drop" in salary compared to early March is due to a large, one-time bonus payout received in the first half of March 2026. Specifically, you received $8,800 in total "Genentech US Bonus" payments on March 11, alongside higher "CA State Payroll" amounts ($8,600 total) compared to your standard bi-weekly payroll cycle. Your income for the first 10 days of May is consistent with your regular pay cycle, mirroring the amount received during the same period in April.
+Payroll landed on the usual bi-weekly schedule with no bonus lines this month.
 
 ## Helpful Links to Information
 
 - [Salary](/cashflow/36/monthly/2026-05)
 
-# Food Insight
+# Side-Gig Insight
 
-Explain: Groceries is significantly down this month at $937.  Food is thus significantly down this month to $1859. (2026-05-01 to 2026-05-10)
+Explain: Side-Gig is significantly up this month at $1850. (2026-05-01 to 2026-05-10)
 
-# Food Rationalization
+# Side-Gig Rationalization
 
 ## Figures
 
-*   **Total Meals (May 1–10, 2026):** $1,859.34
-*   **Total Meals (Apr 1–30, 2026):** $4,039.28
-*   **Total Meals (Mar 1–31, 2026):** $3,300.28
-*   **Groceries (May 1–10, 2026):** $937.22
-*   **Groceries (Apr 1–30, 2026):** $1,513.40
-*   **Groceries (Mar 1–31, 2026):** $1,562.82
+*   **Side-Gig (May 1–10, 2026):** $1,850.00
+*   **Side-Gig (Apr 1–10, 2026):** $420.00
 
 ## Drivers
 
-The significant decrease in food and grocery spending is primarily due to comparing only 10 days of May activity against full-month totals for April and March.
-
-Additionally, your transaction history shows some potential miscategorization: several transactions at "Applebee's" (a dining venue) are currently categorized under `meals_groceries`. For example, $85.36 was recorded at Applebee's on May 2nd under groceries, whereas a typical grocery bill for a similar amount is expected from retailers like "Target" or "Trader Joe's".
+A $1,200 consulting deposit from "Brightline Studio" posted May 6, plus two smaller Upwork payouts ($350 and $300) that did not appear at this point last month.
 
 ## Helpful Links to Information
 
-- [Food](/cashflow/1/monthly/2026-05)
-- [Dining Out](/cashflow/2/monthly/2026-05)
-- [Delivered Food](/cashflow/3/monthly/2026-05)
-- [Groceries](/cashflow/4/monthly/2026-05)
+- [Side-Gig](/cashflow/37/monthly/2026-05)
+
+# Connectivity Insight
+
+Explain: Connectivity is flat this month at $189. (2026-05-01 to 2026-05-10)
+
+# Connectivity Rationalization
+
+## Figures
+
+*   **Connectivity (May 1–10, 2026):** $189.00
+*   **Connectivity (Apr 1–30, 2026):** $189.00
+
+## Drivers
+
+Recurring Comcast and mobile plans unchanged.
+
+## Helpful Links to Information
+
+- [Connectivity](/cashflow/10/monthly/2026-05)
+
+# Insurance Insight
+
+Explain: Insurance is slightly up this month at $312. (2026-05-01 to 2026-05-10)
+
+# Insurance Rationalization
+
+## Figures
+
+*   **Insurance (May 1–10, 2026):** $312.40
+*   **Insurance (Apr 1–30, 2026):** $298.00
+
+## Drivers
+
+Auto premium installment rose $14.40 after policy renewal effective May 1; homeowners line unchanged.
+
+## Helpful Links to Information
+
+- [Insurance](/cashflow/11/monthly/2026-05)
+
+# Utilities Insight
+
+Explain: Utilities is significantly up this month at $428. (2026-05-01 to 2026-05-10)
+
+# Utilities Rationalization
+
+## Figures
+
+*   **Utilities (May 1–10, 2026):** $428.15
+*   **Utilities (Apr 1–30, 2026):** $241.80
+*   **Utilities (Mar 1–31, 2026):** $265.10
+
+## Drivers
+
+PG&E bill jumped to $286.40 on May 4 versus $118.20 at this point last month, reflecting higher cooling use and a rate adjustment. Water district charge ($92.75) also posted earlier in the cycle than in Apr, when it landed on the 18th. Together those two lines explain most of the month-over-month lift; garbage service stayed flat at $49.00.
+
+## Helpful Links to Information
+
+- [Utilities](/cashflow/16/monthly/2026-05)
+
+# Interest Insight
+
+Explain: Interest is slightly up this month at $18. (2026-05-01 to 2026-05-10)
+
+# Interest Rationalization
+
+## Figures
+
+*   **Interest (May 1–10, 2026):** $18.22
+*   **Interest (Apr 1–10, 2026):** $12.05
+
+## Drivers
+
+Savings yield credit posted May 2.
+
+## Helpful Links to Information
+
+- [Interest](/cashflow/39/monthly/2026-05)
 """,
         "output": """
 # Top Takeaways
 
 ## Highlights
 
-- **Income stability:** May 1–10 [Salary](/cashflow/36/monthly/2026-05) aligns with April’s same window at $6,369.24; March’s higher early-month income reflected bonus and payroll timing.
-- **Groceries vs dining:** [Food](/cashflow/1/monthly/2026-05) looks lower partly from comparing 10 days of May to full months; Applebee’s may be miscategorized under groceries.
+- **Income Growth:** Total [Salary](/cashflow/36/monthly/2026-05) is slightly up this month at $4,210 compared to $4,106 at this point last month, driven by standard bi-weekly payroll.
+Additionally, [Interest](/cashflow/39/monthly/2026-05) income rose to $18 from $12 at this point last month, following a savings yield credit posted on May 2.
+- **Side-Gig Expansion:** [Side-Gig](/cashflow/37/monthly/2026-05) earnings saw a significant increase this month, reaching $1,850 compared to $420 at this point last month. This lift is driven by a $1,200 consulting deposit from Brightline Studio on May 6, alongside two Upwork payouts totaling $650 that did not occur in the prior period.
+- **Stable Expenses:** [Connectivity](/cashflow/10/monthly/2026-05) costs remain flat this month at $189, consistent with the total from last month, as recurring Comcast and mobile plan charges were unchanged.
 
 ## Lowlights
 
-- **Applebee’s pattern:** Dining at Applebee’s recorded under groceries inflates grocery totals until those charges are recategorized.
+- **Utilities Spike:** [Utilities](/cashflow/16/monthly/2026-05) expenses are significantly higher this month at $428, compared to $242 last month. The increase is driven by a PG&E bill of $286—up from $118 at this point last month due to higher cooling use and a rate adjustment—and a water district charge of $93 that posted earlier in the cycle than it did in April.
+- **Insurance Adjustment:** [Insurance](/cashflow/11/monthly/2026-05) costs are slightly up this month at $312, compared to $298 last month. This change reflects a $14 increase in the auto premium installment following a policy renewal effective May 1, while the homeowners line remained unchanged.
 """,
     },
     {
-        "name": "uncat_txn_large_txn_plus_four_vs_forecast",
+        "name": "two_contexts_shelter_and_entertainment_deep_drivers",
         "input": """
-Uncategorized outflow transaction for Property Group LLC for $2,850 with a likely category of Clothing.
+# Shelter Insight
 
-## Helpful Links to Information
+Explain: Utilities is significantly up this month at $428.  Shelter is thus significantly up this month to $2840. (2026-05-01 to 2026-05-10)
 
-- [Property Group LLC](/cashflow/transaction/123)
-
-Large outflow transaction with Burger King for $40 last 05/09.
-
-## Helpful Links to Information
-
-- [Burger King](/cashflow/transaction/456)
-
-# Travel & Vacations Insight
-
-Explain: Leisure is significantly up this month at $412. (2026-05-01 to 2026-05-10)
-
-# Travel & Vacations Rationalization
+# Shelter Rationalization
 
 ## Figures
 
-*   **Leisure (May 1–10, 2026):** $412.18
-*   **Leisure (Apr 1–30, 2026):** $251.00
+*   **Shelter (May 1–10, 2026):** $2,840.55
+*   **Shelter (Apr 1–30, 2026):** $2,653.20
+*   **Utilities (May 1–10, 2026):** $428.15
+*   **Utilities (Apr 1–30, 2026):** $241.80
+*   **Home (May 1–10, 2026):** $2,412.40
+*   **Home (Apr 1–30, 2026):** $2,412.40
 
 ## Drivers
 
-Higher leisure spend vs forecast is driven by weekend entertainment and one concert ticket purchase.
+Shelter costs rose this month almost entirely because **Utilities** accelerated, not because rent moved. The **Home** (mortgage) payment is identical to last month at $2,412.40 and posted on May 1 as usual. **Utilities** jumped mainly on PG&E: $286.40 on May 4 compared with $118.20 at this point last month, which Drivers tie to earlier cooling use and a tariff step-up that took effect May 1. The water district bill ($92.75) also landed May 3 instead of mid-month as in Apr, front-loading the category. **Upkeep** was $0 this month versus $42.50 in Apr when a sprinkler repair posted — that absence partially offsets the utility spike but does not fully neutralize it. Net shelter is up $187.35 versus the full prior month even though fixed housing charges are flat.
 
 ## Helpful Links to Information
 
-- [Travel & Vacations](/cashflow/7/monthly/2026-05)
+- [Shelter](/cashflow/14/monthly/2026-05)
+- [Home](/cashflow/15/monthly/2026-05)
+- [Utilities](/cashflow/16/monthly/2026-05)
+- [Upkeep](/cashflow/17/monthly/2026-05)
 
-# Pets Insight
+# Entertainment Insight
 
-Explain: Transport is significantly down this month at $68. (2026-05-01 to 2026-05-10)
+Explain: Entertainment is significantly up last week at $186. (2026-05-03 to 2026-05-09)
 
-# Pets Rationalization
+# Entertainment Rationalization
 
 ## Figures
 
-*   **Transport (May 1–10, 2026):** $68.40
-*   **Transport (Apr 1–30, 2026):** $310.25
+*   **Entertainment (May 3–9, 2026):** $186.40
+*   **Entertainment (Apr 26–May 2, 2026):** $24.00
+*   **Entertainment (Apr 19–25, 2026):** $31.50
 
 ## Drivers
 
-Lower transport vs forecast reflects fewer commutes and no fuel fill-ups yet in early May.
+Last week’s entertainment spike is concentrated in two tickets: **AMC Theaters** $68.50 on May 4 and **StubHub — Indie Fest** $94.00 on May 6. A $23.90 **Spotify** renewal also posted May 3; that recurring charge appears most weeks but the concert and movie lines drove the step-change versus the prior week’s $24.00 total, which was essentially streaming only.
 
 ## Helpful Links to Information
 
-- [Pets](/cashflow/8/monthly/2026-05)
-
-# Bills Insight
-
-Explain: Bills is slightly up this month at $1,240. (2026-05-01 to 2026-05-10)
-
-# Bills Rationalization
-
-## Figures
-
-*   **Bills (May 1–10, 2026):** $1,240.55
-*   **Bills (Apr 1–30, 2026):** $1,180.00
-
-## Drivers
-
-Slight uptick vs forecast from annual software renewal posting in the first week of May.
-
-## Helpful Links to Information
-
-- [Bills](/cashflow/9/monthly/2026-05)
-- [Connectivity](/cashflow/10/monthly/2026-05)
-- [Insurance](/cashflow/11/monthly/2026-05)
-- [Taxes](/cashflow/12/monthly/2026-05)
-- [Service Fees](/cashflow/13/monthly/2026-05)
-
-# Shopping Insight
-
-Explain: Shopping is significantly up this month at $295. (2026-05-01 to 2026-05-10)
-
-# Shopping Rationalization
-
-## Figures
-
-*   **Shopping (May 1–10, 2026):** $295.00
-*   **Shopping (Apr 1–30, 2026):** $142.30
-
-## Drivers
-
-Shopping vs forecast rose after two online orders (electronics accessories and home goods) early in the month.
-
-## Helpful Links to Information
-
-- [Shopping](/cashflow/44/monthly/2026-05)
-- [Pets](/cashflow/8/monthly/2026-05)
-- [Clothing](/cashflow/22/monthly/2026-05)
-- [Gadgets](/cashflow/23/monthly/2026-05)
-- [Kids](/cashflow/24/monthly/2026-05)
+- [Entertainment](/cashflow/6/weekly/2026-05-03)
 """,
         "output": """
 # Top Takeaways
 
 ## Highlights
 
-- **Uncategorized outflow:** The insight flags [Property Group LLC](/cashflow/transaction/123) as an uncategorized **$2,850** outflow with **Clothing** as the likely category.
-- **Leisure vs plan:** [Leisure](/cashflow/7/monthly/2026-05) is up vs forecast on weekend entertainment and a concert ticket early in May.
-- **Shopping lift:** [Shopping](/cashflow/44/monthly/2026-05) is up vs forecast after two online orders for accessories and home goods.
+- **Fixed Housing:** This month, [Home](/cashflow/15/monthly/2026-05) mortgage payments were managed to remain flat at $2,412.
 
 ## Lowlights
 
-- **Uncategorized mix:** Uncategorized totals still include [Property Group LLC](/cashflow/transaction/123) at **$2,850** while that charge posts without a category.
-- **Large dining outflow:** [Burger King](/cashflow/transaction/456) shows a **$40** single-ticket outflow on 05/09.
-- **Commutes and bills:** [Transport](/cashflow/8/monthly/2026-05) is down vs forecast with fewer commutes and no fuel fill-ups yet, while [Bills](/cashflow/9/monthly/2026-05) ticked slightly up on an annual software renewal in early May.
+- **Shelter Surge:** Shelter is up this month to $2,841, primarily because of a surge in [Utilities](/cashflow/16/monthly/2026-05) to $428. This is driven by a PG&E charge of $286—significantly higher than the $118 seen at this point last month—alongside an early water district bill of $93. Although the absence of [Upkeep](/cashflow/17/monthly/2026-05) costs, which were $43 in Apr, provides a minor offset, the overall [Shelter](/cashflow/14/monthly/2026-05) category remains elevated compared to the $2,653 total from last month.
+- **Entertainment Spike:** Spending on entertainment rose to $186 last week, a sharp increase from the $24 recorded in the prior week. This jump in [Entertainment](/cashflow/6/weekly/2026-05-03) is concentrated in two specific transactions: $69 for AMC Theaters and $94 for StubHub, which combined with the recurring $24 Spotify renewal to drive the category well above the previous week's streaming-only baseline.
+""",
+    },
+    {
+        "name": "five_contexts_health_education_shopping_mixed_grains",
+        "input": """
+# Health Insight
+
+Explain: Medical & Pharmacy is significantly up this month at $342.  Health is thus significantly up this month to $518. (2026-05-01 to 2026-05-10)
+
+# Health Rationalization
+
+## Figures
+
+*   **Health (May 1–10, 2026):** $518.60
+*   **Health (Apr 1–30, 2026):** $212.30
+*   **Medical & Pharmacy (May 1–10, 2026):** $342.15
+*   **Medical & Pharmacy (Apr 1–30, 2026):** $88.40
+*   **Gym & Wellness (May 1–10, 2026):** $176.45
+*   **Gym & Wellness (Apr 1–30, 2026):** $123.90
+
+## Drivers
+
+Medical & Pharmacy dominates the health lift: **CVS Pharmacy** $156.80 and **Kaiser Copay** $142.00 posted May 2–5 versus $88.40 for all of last month. Gym & Wellness rose mainly because annual **Peloton** renewal $176.45 hit May 1; last month gym lines were $123.90 with no renewal.
+
+## Helpful Links to Information
+
+- [Health](/cashflow/28/monthly/2026-05)
+- [Medical & Pharmacy](/cashflow/29/monthly/2026-05)
+- [Gym & Wellness](/cashflow/30/monthly/2026-05)
+- [Personal Care](/cashflow/31/monthly/2026-05)
+
+# Tuition Insight
+
+Explain: Tuition is slightly up last week at $650. (2026-05-03 to 2026-05-09)
+
+# Tuition Rationalization
+
+## Figures
+
+*   **Tuition (May 3–9, 2026):** $650.00
+*   **Tuition (Apr 26–May 2, 2026):** $0.00
+
+## Drivers
+
+Spring semester installment to **State University** posted May 5.
+
+## Helpful Links to Information
+
+- [Tuition](/cashflow/20/weekly/2026-05-03)
+
+# Clothing Insight
+
+Explain: Clothing is significantly down this month at $45. (2026-05-01 to 2026-05-10)
+
+# Clothing Rationalization
+
+## Figures
+
+*   **Clothing (May 1–10, 2026):** $45.00
+*   **Clothing (Apr 1–30, 2026):** $312.80
+*   **Clothing (Mar 1–31, 2026):** $189.50
+
+## Drivers
+
+No department-store runs this month; the only charge is **Target** socks $45.00 on May 7. Last month included **Nordstrom** $198.00 and **Old Navy** $114.80.
+
+## Helpful Links to Information
+
+- [Clothing](/cashflow/22/monthly/2026-05)
+
+# Gadgets Insight
+
+Explain: Gadgets is significantly up this month at $279. (2026-05-01 to 2026-05-10)
+
+# Gadgets Rationalization
+
+## Figures
+
+*   **Gadgets (May 1–10, 2026):** $279.99
+*   **Gadgets (Apr 1–30, 2026):** $0.00
+
+## Drivers
+
+**Apple Store** Magic Keyboard $279.99 on May 8.
+
+## Helpful Links to Information
+
+- [Gadgets](/cashflow/23/monthly/2026-05)
+
+# Donations & Gifts Insight
+
+Explain: Donations & Gifts is flat this month at $50. (2026-05-01 to 2026-05-10)
+
+# Donations & Gifts Rationalization
+
+## Figures
+
+*   **Donations & Gifts (May 1–10, 2026):** $50.00
+*   **Donations & Gifts (Apr 1–30, 2026):** $50.00
+
+## Drivers
+
+Recurring **Red Cross** $50.00 on May 1.
+
+## Helpful Links to Information
+
+- [Donations & Gifts](/cashflow/32/monthly/2026-05)
+""",
+        "output": """
+# Top Takeaways
+
+## Highlights
+
+- **Clothing Savings:** Spending on clothing is significantly down this month at $45 compared to $313 last month, as the absence of department-store runs has left [Clothing](/cashflow/22/monthly/2026-05) with only a single $45 charge at Target on May 7, whereas last month included larger purchases at Nordstrom and Old Navy.
+- **Consistent Giving:** Giving remains consistent this month at $50, matching the $50 total from last month, driven entirely by the recurring [Donations & Gifts](/cashflow/32/monthly/2026-05) payment to Red Cross on May 1.
+
+## Lowlights
+
+- **Health Surge:** Costs are significantly up this month at $519 compared to $212 last month, primarily due to a surge in [Medical & Pharmacy](/cashflow/29/monthly/2026-05) expenses—which reached $342 this month versus $88 last month—following CVS Pharmacy and Kaiser Copay charges posted May 2–5. Additionally, [Gym & Wellness](/cashflow/30/monthly/2026-05) spending rose to $176 this month, driven by an annual Peloton renewal on May 1, compared to $124 in gym lines last month.
+- **Tuition Up:** Educational expenses are slightly up this week at $650, reflecting a spring semester installment to State University that posted May 5, whereas [Tuition](/cashflow/20/weekly/2026-05-03) saw no activity in the prior week.
+- **Gadgets Splurge:** Spending is significantly up this month at $280, a sharp increase from $0 last month, driven by a single [Gadgets](/cashflow/23/monthly/2026-05) purchase of an Apple Store Magic Keyboard on May 8.
 """,
     },
 ]
+
+_RE_CENTS = re.compile(r"\$\d{1,3}(?:,\d{3})*\.\d{2}")
+_RE_IDEAL_LINK = re.compile(r"\]\((/cashflow/[^)]+)\)")
+_RE_MD_LINK = re.compile(r"\[[^\]]*\]\([^)]+\)")
+
+
+def _prose_without_links(text: str) -> str:
+    return _RE_MD_LINK.sub("", text or "")
+
+
+def mechanical_sandbox_check(*, ideal: str, actual: str) -> dict[str, Any]:
+    """Heuristic checks vs ideal output: structure, links, amounts, period wording."""
+    issues: list[str] = []
+    ideal_s = (ideal or "").strip()
+    actual_s = (actual or "").strip()
+    if "# Top Takeaways" not in actual_s:
+        issues.append("Missing header: # Top Takeaways")
+    if "## Highlights" not in actual_s:
+        issues.append("Missing header: ## Highlights")
+    if "## Lowlights" in ideal_s and "## Lowlights" not in actual_s:
+        issues.append("Missing header: ## Lowlights")
+    ideal_links = _RE_IDEAL_LINK.findall(ideal_s)
+    for path in ideal_links:
+        if path not in actual_s:
+            issues.append(f"Missing ideal link path: {path}")
+    prose = _prose_without_links(actual_s)
+    for m in _RE_CENTS.findall(prose):
+        issues.append(f"Unrounded amount (cents): {m}")
+    banned = (
+        "first 10 days",
+        "first X days",
+        " so far",
+        "April",
+        "February",
+        "January ",
+        "the previous week",
+        "None.",
+    )
+    for phrase in banned:
+        if phrase in prose:
+            issues.append(f"Banned phrasing in prose: {phrase!r}")
+    takeaway_body = actual_s.split("# Top Takeaways", 1)[-1] if "# Top Takeaways" in actual_s else actual_s
+    for stop in ("## Helpful Links", "\n***", "\n# "):
+        if stop in takeaway_body:
+            takeaway_body = takeaway_body.split(stop, 1)[0]
+    hi = takeaway_body.split("## Lowlights")[0].split("## Highlights")[-1] if "## Highlights" in takeaway_body else ""
+    lo = takeaway_body.split("## Lowlights")[-1] if "## Lowlights" in takeaway_body else ""
+    hi_count = hi.count("\n- ")
+    lo_count = lo.count("\n- ")
+    if hi_count > 3:
+        issues.append(f"Too many Highlights bullets: {hi_count}")
+    if lo_count > 3:
+        issues.append(f"Too many Lowlights bullets: {lo_count}")
+    good = not issues
+    return {"good_copy": good, "issues": issues, "eval_text": "\n".join(f"- {x}" for x in issues) if issues else "OK"}
+
 
 def _run_test(user_message: str, optimizer: TopTakeawaysVerboseOptimizer | None = None) -> str:
     if optimizer is None:
@@ -841,13 +1054,31 @@ def get_test_case(name_or_index: str | int) -> dict[str, Any] | None:
     return None
 
 
-def run_test(name_or_index: str | int, optimizer: TopTakeawaysVerboseOptimizer | None = None) -> str | None:
+def run_test(
+    name_or_index: str | int,
+    optimizer: TopTakeawaysVerboseOptimizer | None = None,
+    *,
+    run_sandbox: bool = True,
+) -> str | None:
     tc = get_test_case(name_or_index) if not isinstance(name_or_index, dict) else name_or_index
     if tc is None:
         print(f"Test case {name_or_index!r} not found.")
         return None
     print(f"\n{'=' * 80}\nRunning test: {tc['name']}\n{'=' * 80}\n")
-    return _run_test(tc["input"], optimizer)
+    result = _run_test(tc["input"], optimizer)
+    if run_sandbox and result and tc.get("output"):
+        print("=" * 80)
+        print("IDEAL OUTPUT:")
+        print("=" * 80)
+        print(tc["output"].strip())
+        print("=" * 80)
+        print("SANDBOX EXECUTION:")
+        print("=" * 80)
+        sand = mechanical_sandbox_check(ideal=tc["output"], actual=result)
+        print(sand["eval_text"])
+        print(f"{'✅' if sand['good_copy'] else '❌'} good_copy={sand['good_copy']}")
+        print("=" * 80 + "\n")
+    return result
 
 
 def main(*, test: str | None) -> None:
