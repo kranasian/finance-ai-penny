@@ -8,45 +8,63 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """**Objective:** Evaluate `ai_review_response` for red flags against prior turns, prioritizing response appropriateness to the latest Human intent.
+SYSTEM_PROMPT = """**Objective:** Evaluate `ai_review_response` for red flags against prior turns, prioritizing whether the response appropriately addresses the Human's last message.
 
 **Input:**
 Input is a list of conversation turns. `conversation_history` is all elements except the last; the last is always `ai_review_response`.
 
 **Output:**
-- Return a JSON object where each key is a red-flag key and each value is a concise rationale.
-- Multiple keys are allowed only when truly necessary.
-- If `good_response` applies, it must be the ONLY key.
-- Prefer exactly one best-fitting key in normal cases.
-- Keep rationale to one sentence, grounded in explicit evidence from the input turns.
+Return one JSON object: a single red-flag key → one-sentence rationale. Prefer exactly one key. If `good_response` applies, it must be the only key. Rationales must be one sentence, evidence-based, and must not quote internal system identifiers or emoji characters.
+
+**Red flag keys (six only):**
+- `good_response`: Substantively addresses the Human's last message—direct answers, brief processing delays, communicated errors/limits, or acknowledged corrections.
+- `incomplete`: Human's last message not substantively addressed (see rule 4).
+- `verbose`: Extra information beyond the Human's ask lengthens the message without much added value (see rule 7).
+- `repetitive_information`: Same phrases repeated within one response without added meaning.
+- `incoherent_flow`: Breaks flow or dead-ends the conversation.
+- `non_sense`: AI-shared figures or facts conflict with earlier AI on the same topic without acknowledging the discrepancy (see rule 6).
 
 **Decision rules (apply strictly):**
-1) Judge response quality using only the conversation context provided. Do not assume missing backend/system limitations unless explicitly mentioned.
-2) A polite processing acknowledgment (e.g., "give me a moment while I check") is `good_response` when it is context-appropriate and not contradictory.
-3) A clear technical-error limitation message is `good_response` if it is transparent and helpful.
-4) If AI repeats earlier AI wording verbatim or near-verbatim instead of paraphrasing in a continuing conversation, use `repetitive_information`.
-5) Use `verbose` when response includes unnecessary internal/extra details (e.g., transaction IDs, unrelated categories, long assistant self-introductions, or leading with unrequested breakdown before the requested top-line answer).
-6) Label precedence when overlapping: contradiction/illogical -> `non_sense`; missing requested parts -> `incomplete`; unnecessary added detail -> `verbose`; exact/near-exact historical repetition -> `repetitive_information`; otherwise `good_response`.
-7) If the user asks for a single top-line value (for example "how much/total/forecasted spending"), label `verbose` when the response leads with unrequested category/itemized breakdown or gives an overly detailed breakdown. A brief breakdown may be acceptable only when it comes after the requested top-line value.
-
-**Red flag keys:**
-- `good_response`: Appropriate, direct response or valid limitation/processing communication. Use this when no other red flag applies.
-- `non_sense`: Illogical/irrelevant response, invalid reasoning, or contradiction with earlier AI statements.
-- `repetitive_information`: Repetition without added value, including repeating prior AI phrasing from conversation history.
-- `incoherent_flow`: Breaks conversation progression or causes a conversational dead end.
-- `verbose`: Includes unnecessary detail that weakens directness to the user's request.
-- `incomplete`: Fails to answer all requested parts and does not provide a clear reason for missing parts.
+1) Judge using only the conversation context provided. Do not assume unstated backend limitations.
+2) **Responding vs completing:** `good_response` includes replies that substantively engage the Human's last message—even when the full data answer is not yet delivered. A brief processing acknowledgment with no data payload (e.g., "Sure, give me a second to check") is `good_response`: it addresses the Human, is not `incomplete`, and is not `verbose`.
+3) **Errors and limits:** When the AI attempts the Human's request but fails, a clear communicated error or limitation is `good_response`—not `incomplete`. Examples: cannot retrieve balances, cannot save a budget. The Human was addressed even though the action did not succeed.
+4) **`incomplete`:** Use only when the Human's last message is not substantively addressed—ignored, off-topic, or a multi-part question where an explicitly requested part is omitted with no explanation. Do not use merely because the full request was not completed; do not use for processing delays or communicated errors.
+5) **Emojis:** Penny uses emojis for tone. Emojis are never a defect and must not be cited in rationales.
+6) **`non_sense`:** Use when `ai_review_response` states figures or facts that conflict with earlier AI in the conversation on the same topic and does not acknowledge the discrepancy—leaving the Human with confusing contradictory information. **Correction exception:** if the response explicitly acknowledges the mistake and corrects it (e.g., "it was actually $230, not $180 — my bad for the hiccup"), that is `good_response`, not `non_sense`.
+7) **`verbose`:** Use when information beyond what the Human asked for makes the message noticeably longer without much value for the ask. Includes: extra time periods or forecasts the Human did not request (e.g., Human asks last month only but response adds this month and next month); system reference numbers in a user-facing list; unrelated extra categories; a long self-introduction before the answer; or an itemized breakdown before a requested top-line total. Processing-only acknowledgments without extra data are not `verbose`.
+8) **`repetitive_information`:** Same phrases repeated within one response without added meaning. Not when the Human asks for a reminder of earlier facts.
+9) **Rationale hygiene:** One sentence only. Never write the words ID, txn, transaction number, or # in rationales; say "system reference numbers" instead.
+10) **Precedence:** unacknowledged AI contradiction → `non_sense`; Human's message not addressed → `incomplete`; extra low-value length → `verbose`; within-response repetition → `repetitive_information`; otherwise `good_response`.
 """
 
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.OBJECT,
+  description="Exactly one red-flag key. If good_response applies, it must be the only key. Rationale: one sentence; no quoted internal IDs or emojis.",
   properties={
-    "good_response": types.Schema(type=types.Type.STRING),
-    "non_sense": types.Schema(type=types.Type.STRING),
-    "repetitive_information": types.Schema(type=types.Type.STRING),
-    "incoherent_flow": types.Schema(type=types.Type.STRING),
-    "verbose": types.Schema(type=types.Type.STRING),
-    "incomplete": types.Schema(type=types.Type.STRING),
+    "good_response": types.Schema(
+      type=types.Type.STRING,
+      description="Substantively addresses the Human's last message—direct answers, brief processing delays, communicated errors when an action fails, or acknowledged corrections of earlier AI mistakes.",
+    ),
+    "non_sense": types.Schema(
+      type=types.Type.STRING,
+      description="AI figures or facts conflict with earlier AI on the same topic without acknowledging the discrepancy. Not when the response apologizes and corrects the earlier mistake.",
+    ),
+    "repetitive_information": types.Schema(
+      type=types.Type.STRING,
+      description="Repeats the same phrases within the response itself without added meaning—not when the Human asked for a reminder of earlier facts.",
+    ),
+    "incoherent_flow": types.Schema(
+      type=types.Type.STRING,
+      description="Breaks conversation progression or causes a conversational dead end.",
+    ),
+    "verbose": types.Schema(
+      type=types.Type.STRING,
+      description="Extra information beyond the Human's ask (other periods/forecasts, system reference numbers, unrelated categories, long self-intro, breakdown before top-line total) lengthens the message without much value. Rationale must not contain ID, txn, or #.",
+    ),
+    "incomplete": types.Schema(
+      type=types.Type.STRING,
+      description="Human's last message is not substantively addressed—ignored, off-topic, or a requested part omitted with no explanation. Not when the Human was engaged via processing delay or a communicated error.",
+    ),
   },
 )
 
@@ -249,106 +267,106 @@ TEST_CASES = [
     "name": "complex_request_processing_ack_good_response",
     "input": [
       {
-        "Human": "Can you compare my total income, total expenses, and savings rate for each quarter last year, then highlight the quarter with the biggest change and explain why?"
+        "Human": "How much did I spend on transport this week?"
       },
       {
-        "ai_review_response": "Absolutely, I can do that. Give me a moment to process all four quarters and I’ll get back to you with a clear breakdown. ⏳"
+        "ai_review_response": "Sure, give me a second to check. 📊"
       }
     ],
-    "output": {"good_response": "The response appropriately acknowledges the complex request and communicates a valid short processing delay."},
+    "output": {"good_response": "The response appropriately addresses the Human's message with a brief processing acknowledgment."},
   },
   {
     "name": "food_spend_partial_answer_incomplete",
     "input": [
       {
-        "Human": "How much did I spend on food last month and this month?"
+        "Human": "How much did I spend on groceries and dining out in March and April?"
       },
       {
-        "ai_review_response": "You spent $412 on food last month."
+        "ai_review_response": "In March you spent $286 on groceries and $194 on dining out. 🛒"
       }
     ],
-    "output": {"incomplete": "Only one part of a two-part request was answered, with no explanation for the missing current-month value."},
+    "output": {"incomplete": "Only March was answered; April totals were not provided and no reason was given for the omission."},
   },
   {
-    "name": "account_balance_technical_error_good_response",
+    "name": "prior_ai_contradiction_non_sense",
     "input": [
       {
-        "Human": "Can you show me all my current account balances?"
+        "Human": "How much did I spend on groceries last month?"
       },
       {
-        "ai_review_response": "I’m sorry — I’m having a technical issue retrieving live balances right now. Please try again in a bit, and I’ll fetch them as soon as the connection is restored."
+        "AI": "You spent $180 on groceries last month."
+      },
+      {
+        "Human": "How does that compare to this month so far?"
+      },
+      {
+        "ai_review_response": "This month you’re at $95 so far, and last month was $240. 🛒"
       }
     ],
-    "output": {"good_response": "A clear and polite technical-error explanation is a valid response when data cannot be retrieved."},
+    "output": {"non_sense": "The response contradicts the AI’s earlier grocery total for last month without explanation, leaving the Human with conflicting figures."},
   },
   {
-    "name": "historical_repeat_repetitive_information",
+    "name": "prior_ai_correction_acknowledged_good_response",
     "input": [
       {
-        "Human": "Can you remind me what my emergency fund target is?"
+        "Human": "How much did I spend on groceries last month?"
       },
       {
-        "AI": "Your emergency fund target is $12,000 based on your current monthly expenses."
+        "AI": "You spent $180 on groceries last month."
       },
       {
-        "Human": "Got it. And how much have I already saved toward that?"
+        "Human": "How does that compare to this month so far?"
       },
       {
-        "AI": "You’ve currently saved $8,600 toward that emergency fund goal."
-      },
-      {
-        "Human": "Before that, what did you say my emergency fund target was again?"
-      },
-      {
-        "ai_review_response": "Your emergency fund target is $12,000 based on your current monthly expenses."
+        "ai_review_response": "This month you’re at $95 so far — and it was actually $230 last month, not $180. My bad for the hiccup there! 📊"
       }
     ],
-    "output": {"repetitive_information": "The response repeats the same earlier AI wording verbatim instead of paraphrasing."},
+    "output": {"good_response": "The response transparently acknowledges and corrects the earlier figure while answering the comparison the Human asked for."},
   },
   {
     "name": "transactions_with_internal_ids_verbose",
     "input": [
       {
-        "Human": "Can you list my transactions from yesterday?"
+        "Human": "What did I buy over the weekend?"
       },
       {
-        "ai_review_response": "Sure — yesterday you had: 1) Grocery Mart (ID: 84192) - $64.20, 2) Coffee Spot (ID: 84195) - $5.80, 3) Ride Share (ID: 84201) - $14.40."
+        "ai_review_response": "Over the weekend you had: 1) River Market (txn #90214) — $47.80, 2) Blue Line Cafe (txn #90218) — $6.25, 3) City Parking (txn #90222) — $18.00. 🧾"
       }
     ],
-    "output": {"verbose": "Internal identifiers are unnecessary for the user-facing answer and add excess detail."},
+    "output": {"verbose": "Internal transaction identifiers are unnecessary for the user-facing answer and add excess detail."},
   },
   {
-    "name": "forecast_category_then_total_verbose",
+    "name": "food_last_month_extra_forecasts_verbose",
     "input": [
       {
-        "Human": "What’s my forecasted spending next month?"
+        "Human": "How much did I spend on food last month?"
       },
       {
-        "ai_review_response": "Next month forecast by category: groceries $420, dining $280, transport $190, subscriptions $95, utilities $240, entertainment $160. Total forecasted spending is $1,385."
+        "ai_review_response": "You spent $412 on food last month. 🍽️ This month so far you’re at $318, and next month is forecasted at about $445."
       }
     ],
-    "output": {"verbose": "The response should present the requested total first; category breakdown before the total adds unnecessary detail."},
+    "output": {"verbose": "The Human only asked for last month’s food spending; this-month and next-month figures add length without much value."},
   },
   {
-    "name": "donation_with_extra_categories_verbose",
+    "name": "budget_set_error_good_response",
     "input": [
       {
-        "Human": "How much did I spend on donations last week?"
+        "Human": "Can you set a $500 monthly budget for dining out?"
       },
       {
-        "ai_review_response": "You spent $85 on donations last week. Similar amounts from other categories: books $79, coffee $82, parking $88, and streaming $83."
+        "ai_review_response": "Sorry — I ran into an error while trying to set that dining budget. Please try again in a moment and I’ll get it saved for you. 🔧"
       }
     ],
-    "output": {"verbose": "The user only asked for donation spending, so other categories are unnecessary additions."},
+    "output": {"good_response": "A clear error message when the budget could not be set appropriately addresses the Human’s request."},
   },
   {
     "name": "long_self_intro_before_answer_verbose",
     "input": [
       {
-        "Human": "What was my highest expense this week?"
+        "Human": "What was my largest purchase this month?"
       },
       {
-        "ai_review_response": "Hi! I’m Penny, your AI financial assistant. I help you track spending, monitor cash flow, understand trends, and make better money decisions. I can summarize transactions, spot unusual activity, and answer budget questions quickly. I’m designed to keep responses clear, practical, and personalized to your data. I’m always here to support your financial planning journey. Your highest expense this week was $310 at Midtown Grocer."
+        "ai_review_response": "Hey! I’m Penny, your personal finance sidekick — I track spending, spot trends, flag unusual charges, and help you stay on top of budgets and goals. I’m built to keep answers practical, friendly, and tailored to your accounts. Whether you’re planning a trip or tightening grocery spend, I’ve got you. Your largest purchase this month was $892 at Westside Appliances. 🏠"
       }
     ],
     "output": {"verbose": "A long self-introduction is unnecessary and distracts from the direct answer."},
