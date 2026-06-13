@@ -42,10 +42,10 @@ SYSTEM_PROMPT = """You are a strict **completeness-only** grader for ``analyze_p
 **Bundle:** `<PROPOSE_SOURCE>` (optional prior propose markdown) … `<ACTIVE_GOALS>` … `<PROPOSED_GOAL_STEPS>` … `<ANALYZE_PROPOSAL>` … `<ANALYZE_TOOL_CALLS>` (this analyze run only: `# Round N`, then `## Invoked tools` per round). Grade only visible text; do not invent facts. **Ignore factual routing correctness and whether dollar amounts are ideal** (accuracy).
 
 **Completeness (workflow + coverage):**
-1. **Disposition coverage** — Every create/update goal bullet in `<PROPOSED_GOAL_STEPS>` must appear in **either** `## Proposed next steps` **or** `## Already covered by existing goals` (paraphrase OK). No silent drops.
-2. **Investigation (required for kept steps)** — For **each kept** candidate (a bullet under `## Proposed next steps`), `<ANALYZE_TOOL_CALLS>` must show **≥6** `lookup_user_aggregate_spending` calls for that candidate's slug **before** its `propose_create_goal` / `propose_update_goal` call(s), at the candidate's grain (weekly/monthly). Widen to 9–12 is acceptable. **Dropped / already-covered** candidates do **not** require lookups or propose tools.
-3. **Tool ↔ Proposed coherence** — `len(## Proposed next steps bullets) == len(propose_create_goal) + len(propose_update_goal)`. Zero kept → Proposed is only `1. - (none)`.
-4. **Structure** — Top-level `# Proposal`; sections `## Proposed next steps` and `## Already covered by existing goals` only; **no** `## Open items`. Proposed bullets should match turn-1 propose-tool `rationale` text.
+1. **Disposition coverage** — Every create/update goal bullet in `<PROPOSED_GOAL_STEPS>` must appear in **either** `## Finalized proposed goal steps` **or** `## Already covered by existing goals` (paraphrase OK). No silent drops. **Create→update reroute is valid disposition:** when a parent active goal covers a **Create** candidate's leaf topic and amounts differ, the kept bullet may read `Update existing goal: <goal_title> to $…` instead of `Create new goal:` — that still satisfies coverage (do **not** score 1 solely because the verb changed from create to update).
+2. **Investigation (required for kept steps)** — For **each kept** candidate (a bullet under `## Finalized proposed goal steps`), `<ANALYZE_TOOL_CALLS>` must show **≥6** `lookup_user_aggregate_spending` calls for that candidate's slug **before** its `propose_create_goal` / `propose_update_goal` call(s), at the candidate's grain (weekly/monthly). Widen to 9–12 is acceptable. **Dropped / already-covered** candidates do **not** require lookups or propose tools. On create→update reroute, lookups use the **matched active row's** parent ``category`` slug (e.g. ``leisure``), not the candidate's leaf slug.
+3. **Tool ↔ Finalized coherence** — `len(## Finalized proposed goal steps bullets) == len(propose_create_goal) + len(propose_update_goal)`. Zero kept → Finalized is only `1. - (none)`.
+4. **Structure** — Top-level `# Analysis output`; sections `## Finalized proposed goal steps` and `## Already covered by existing goals` only; **no** `## Open items`. Finalized bullets should match turn-1 propose-tool `rationale` text.
 5. **Tool family** — Creates → `propose_create_goal`; updates → `propose_update_goal`.
 
 **Out of scope for completeness (do not penalize here):**
@@ -121,9 +121,9 @@ TEST_CASES: list[dict[str, Any]] = [
 
 <ANALYZE_PROPOSAL>
 
-# Proposal
+# Analysis output
 
-## Proposed next steps
+## Finalized proposed goal steps
 
 1. Update existing goal: Weekly Leisure Budget to $50.
 
@@ -141,7 +141,11 @@ TEST_CASES: list[dict[str, Any]] = [
 
 {_SIX_WEEKLY_LEISURE_LOOKUPS}
 
-7. **`propose_update_goal`**
+# Round 2
+
+## Invoked tools
+
+1. **`propose_update_goal`**
 ```json
 {{"existing_goal_id": 2751, "goal_title": "Weekly Leisure Budget", "goal_type": "spending_budget", "category": "leisure", "time_horizon": "weekly", "target_amount": 50, "rationale": "Update existing goal: Weekly Leisure Budget to $50."}}
 ```
@@ -149,6 +153,168 @@ TEST_CASES: list[dict[str, Any]] = [
 </ANALYZE_TOOL_CALLS>
 """,
     "output": '{"score": 5, "notes": "Candidate kept with six weekly leisure lookups before propose_update_goal; coherence and sections are correct."}',
+  },
+  {
+    "name": "create_rerouted_to_parent_update",
+    "batch": 1,
+    "input": f"""<ACTIVE_GOALS>
+
+1. goal_id=2751 | goal_title="Weekly Leisure Budget 🎯" | type=category | granularity=weekly | category=leisure | target_amount=$25
+2. goal_id=2741 | goal_title="Feast For 💖 Less" | type=category | granularity=monthly | category=top_meals | target_amount=$1100
+3. goal_id=2740 | goal_title="Savvy Bites 🍽️" | type=category | granularity=weekly | category=meals_dining_out | target_amount=$150
+
+</ACTIVE_GOALS>
+
+<PROPOSED_GOAL_STEPS>
+
+1. Create new goal: Establish a weekly Entertainment goal of $50 to account for the irregular timing of major ticket purchases like Fandango for leisure_entertainment.
+
+</PROPOSED_GOAL_STEPS>
+
+<ANALYZE_PROPOSAL>
+
+# Analysis output
+
+## Finalized proposed goal steps
+
+1. Update existing goal: Weekly Leisure Budget 🎯 to $50 to better accommodate irregular entertainment and ticket expenses.
+
+## Already covered by existing goals
+
+1. - (none)
+
+</ANALYZE_PROPOSAL>
+
+<ANALYZE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+{_SIX_WEEKLY_LEISURE_LOOKUPS}
+
+# Round 2
+
+## Invoked tools
+
+1. **`propose_update_goal`**
+```json
+{{"existing_goal_id": 2751, "goal_title": "Weekly Leisure Budget 🎯", "goal_type": "spending_budget", "category": "leisure", "time_horizon": "weekly", "target_amount": 50, "rationale": "Update existing goal: Weekly Leisure Budget 🎯 to $50 to better accommodate irregular entertainment and ticket expenses."}}
+```
+
+</ANALYZE_TOOL_CALLS>
+""",
+    "output": '{"score": 5, "notes": "Create candidate rerouted to parent-row update with six leisure lookups, matching rationale, and coherence."}',
+  },
+  {
+    "name": "insufficient_lookups_before_kept_propose",
+    "batch": 1,
+    "input": f"""<ACTIVE_GOALS>
+
+1. goal_id=2751 | goal_title="Weekly Leisure Budget" | type=category | granularity=weekly | category=leisure | target_amount=$75
+
+</ACTIVE_GOALS>
+
+<PROPOSED_GOAL_STEPS>
+
+1. Update existing goal: Weekly Leisure Budget to $50.
+
+</PROPOSED_GOAL_STEPS>
+
+<ANALYZE_PROPOSAL>
+
+# Analysis output
+
+## Finalized proposed goal steps
+
+1. Update existing goal: Weekly Leisure Budget to $50.
+
+## Already covered by existing goals
+
+1. - (none)
+
+</ANALYZE_PROPOSAL>
+
+<ANALYZE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`lookup_user_aggregate_spending`**
+```json
+{{"granularity": "weekly", "category": ["leisure"], "date_in_range": "2026-04-06"}}
+```
+2. **`lookup_user_aggregate_spending`**
+```json
+{{"granularity": "weekly", "category": ["leisure"], "date_in_range": "2026-04-13"}}
+```
+3. **`lookup_user_aggregate_spending`**
+```json
+{{"granularity": "weekly", "category": ["leisure"], "date_in_range": "2026-04-20"}}
+```
+4. **`lookup_user_aggregate_spending`**
+```json
+{{"granularity": "weekly", "category": ["leisure"], "date_in_range": "2026-04-27"}}
+```
+5. **`lookup_user_aggregate_spending`**
+```json
+{{"granularity": "weekly", "category": ["leisure"], "date_in_range": "2026-05-04"}}
+```
+
+# Round 2
+
+## Invoked tools
+
+1. **`propose_update_goal`**
+```json
+{{"existing_goal_id": 2751, "goal_title": "Weekly Leisure Budget", "goal_type": "spending_budget", "category": "leisure", "time_horizon": "weekly", "target_amount": 50, "rationale": "Update existing goal: Weekly Leisure Budget to $50."}}
+```
+
+</ANALYZE_TOOL_CALLS>
+""",
+    "output": '{"score": 3, "notes": "Kept update proposed after only five weekly leisure lookups, not the required six."}',
+  },
+  {
+    "name": "silent_drop_create_candidate",
+    "batch": 1,
+    "input": """<ACTIVE_GOALS>
+
+1. goal_id=2751 | goal_title="Weekly Leisure Budget 🎯" | type=category | granularity=weekly | category=leisure | target_amount=$25
+
+</ACTIVE_GOALS>
+
+<PROPOSED_GOAL_STEPS>
+
+1. Create new goal: Establish a weekly Entertainment goal of $50 for leisure_entertainment.
+
+</PROPOSED_GOAL_STEPS>
+
+<ANALYZE_PROPOSAL>
+
+# Analysis output
+
+## Finalized proposed goal steps
+
+1. - (none)
+
+## Already covered by existing goals
+
+1. - (none)
+
+</ANALYZE_PROPOSAL>
+
+<ANALYZE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. (none)
+
+</ANALYZE_TOOL_CALLS>
+""",
+    "output": '{"score": 1, "notes": "Create candidate wholly unaddressed in both Finalized and Already covered."}',
   },
   {
     "name": "skipped_investigation_before_propose",
@@ -167,9 +333,9 @@ TEST_CASES: list[dict[str, Any]] = [
 
 <ANALYZE_PROPOSAL>
 
-# Proposal
+# Analysis output
 
-## Proposed next steps
+## Finalized proposed goal steps
 
 1. Update existing goal: Weekly Leisure Budget to $50.
 
@@ -213,9 +379,9 @@ TEST_CASES: list[dict[str, Any]] = [
 
 <ANALYZE_PROPOSAL>
 
-# Proposal
+# Analysis output
 
-## Proposed next steps
+## Finalized proposed goal steps
 
 1. Update existing goal: Weekly Leisure Budget to $50.
 2. Update existing goal: Monthly Health Budget to $210.
@@ -260,9 +426,9 @@ TEST_CASES: list[dict[str, Any]] = [
 
 <ANALYZE_PROPOSAL>
 
-# Proposal
+# Analysis output
 
-## Proposed next steps
+## Finalized proposed goal steps
 
 1. - (none)
 
@@ -301,9 +467,9 @@ TEST_CASES: list[dict[str, Any]] = [
 
 <ANALYZE_PROPOSAL>
 
-# Proposal
+# Analysis output
 
-## Proposed next steps
+## Finalized proposed goal steps
 
 1. - (none)
 
@@ -342,9 +508,9 @@ TEST_CASES: list[dict[str, Any]] = [
 
 <ANALYZE_PROPOSAL>
 
-# Proposal
+# Analysis output
 
-## Proposed next steps
+## Finalized proposed goal steps
 
 1. Update existing goal: Weekly Leisure Budget to $50.
 
@@ -370,6 +536,58 @@ TEST_CASES: list[dict[str, Any]] = [
 </ANALYZE_TOOL_CALLS>
 """,
     "output": '{"score": 3, "notes": "Update candidate used propose_create_goal instead of propose_update_goal."}',
+  },
+  {
+    "name": "mixed_reroute_and_duplicate_drop",
+    "batch": 2,
+    "input": f"""<ACTIVE_GOALS>
+
+1. goal_id=2751 | goal_title="Weekly Leisure Budget 🎯" | type=category | granularity=weekly | category=leisure | target_amount=$25
+2. goal_id=22 | goal_title="Clothing" | type=category | granularity=monthly | category=shopping_clothing | target_amount=$60
+
+</ACTIVE_GOALS>
+
+<PROPOSED_GOAL_STEPS>
+
+1. Create new goal: Establish a weekly Entertainment goal of $50 for leisure_entertainment.
+2. Create new goal: $60 monthly Clothing budget.
+
+</PROPOSED_GOAL_STEPS>
+
+<ANALYZE_PROPOSAL>
+
+# Analysis output
+
+## Finalized proposed goal steps
+
+1. Update existing goal: Weekly Leisure Budget 🎯 to $50 to better accommodate irregular entertainment and ticket expenses.
+
+## Already covered by existing goals
+
+1. Create new goal: $60 monthly Clothing budget. — Already covered by existing Clothing monthly budget goal.
+
+</ANALYZE_PROPOSAL>
+
+<ANALYZE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+{_SIX_WEEKLY_LEISURE_LOOKUPS}
+
+# Round 2
+
+## Invoked tools
+
+1. **`propose_update_goal`**
+```json
+{{"existing_goal_id": 2751, "goal_title": "Weekly Leisure Budget 🎯", "goal_type": "spending_budget", "category": "leisure", "time_horizon": "weekly", "target_amount": 50, "rationale": "Update existing goal: Weekly Leisure Budget 🎯 to $50 to better accommodate irregular entertainment and ticket expenses."}}
+```
+
+</ANALYZE_TOOL_CALLS>
+""",
+    "output": '{"score": 5, "notes": "Both candidates dispositioned: create rerouted to parent update with six lookups; duplicate dropped to Already covered without tools."}',
   },
 ]
 
