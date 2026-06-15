@@ -72,6 +72,7 @@ Your task is to rewrite it into **TLDR only**: mirror the source with ``## Highl
 
 Rules:
 - Ground everything in the provided Top Takeaways text only. Do **not** invent transactions, amounts, or dates.
+- Do **not** use the word **insight** or phrases like **despite the insight flagging**—state the factual outcome directly.
 - When you cite numbers or dates, copy them exactly from the input.
 - When the input includes Markdown drill-down links ``[text](/path)``, **preserve them** (same ``href`` verbatim); you may tighten anchor text but it must stay **truthful to that path’s category** (same rule as **Anchor vs path** above); do not drop or change URLs and do not insert a space after ``(`` in links. Do not pair that ``href`` with a new anchor that names a **different** category than in the source. Keep links **inside** the sentence (not a lone trailing link after ``.``).
 - For bullets about **uncategorized- or large-transaction** themes (typically ``/cashflow/transaction/…`` links on those flows), keep the same **observational** tone as vs-forecast rollup bullets in the source: **do not** add action items or imperatives (“confirm”, “verify”, “should”, “until you act”) unless the input states them verbatim.

@@ -58,11 +58,11 @@ Context blocks (markdown, blank-line separated): rationalize body (`Explain:`, `
 
 Synthesize **# Top Takeaways** with **## Highlights** (stability, savings, flat costs) and **## Lowlights** (spikes, overspending, miscategorization). Omit **## Lowlights** when none apply.
 
-Each `- ` bullet: **Short headline:** + 2–4 sentences (what, amount, comparison, driver) from Figures/Drivers. The headline names the **story** (e.g. **Income Growth:**, **Utilities Spike:**, **Miscategorization:**)—not the category alone (**Salary:**, **Food:**). Put `[Category](/cashflow/...)` links in the sentence. If Explain disagrees with Figures or Drivers, Figures and Drivers prevail—state only their facts; never mention a conflict. ≤3 bullets per section; one primary context per bullet.
+Each `- ` bullet: **Short headline:** + 2–4 sentences (what, amount, comparison, driver) from Figures/Drivers. The headline names the **story** (e.g. **Income Growth:**, **Utilities Spike:**, **Miscategorization:**)—not the category alone (**Salary:**, **Food:**). Put `[Category](/cashflow/...)` links in the sentence. When Explain disagrees with Figures or Drivers, use Figures/Drivers only—state the trend as a plain fact (e.g. "total spend reached $974" not "despite the insight flagging … as down"). **Never** use the word **insight**, **flagging**, **alert**, or meta phrases about upstream text, Explain, or disagreement. ≤3 bullets per section; one primary context per bullet.
 
 **Amounts:** Whole dollars, comma thousands (`$6,369`).
 
-**Periods:** **this month/week**; **last month/week** or **at this point last month/week**; prior week → **from Apr 26 to May 2**; older → **in Mar**. Use Apr/Mar—not April/March. No years in prose; never "first X days", "so far", or "the previous week".
+**Periods:** **this month/week**; **last month/week** or **at this point last month/week**; prior week → **from April 26 to May 2**; older → **in March**. Always use **full month names** (April, June, March)—never Apr/Jun/Mar. No years in prose; never "first X days", "so far", or "the previous week".
 
 **Links:** `[display name](/cashflow/path)` woven into the sentence. Path from Helpful Links; anchor matches display name. Link each category discussed (parent + leaf when both matter, e.g. Food + Groceries, Shelter + Upkeep).
 
