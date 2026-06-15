@@ -18,7 +18,7 @@ Run from `finance-ai-penny` repo root:
 - **max_output_tokens:** `384`
 - **response:** `application/json` + **response_schema** for `{score, notes}`
 
-**Rubric:** Grade **only** **`## Drivers`**. Use **`# Rationalize What`** for **which categories** to explain; use **`## Figures`** as **factual truth** (amounts, periods, charges). Every cited charge must name the **transaction** (ledger line label—not necessarily a business name). **Rounding:** Drivers amounts may differ slightly from What/Figures—acceptable. **`## Next steps`** out of scope. **18 fixtures** in batches **1–5**; **`--batch N --check`**.
+**Rubric:** Grade **only** **`## Drivers`**. Use **`# Rationalize What`** for **which categories** to explain; use **`## Figures`** as **factual truth** (amounts, periods, charges). Every cited charge must name the **transaction** (ledger line label—not necessarily a business name). **Rounding:** Drivers amounts may differ slightly from What/Figures—acceptable. **Discrepancies:** material What↔Figures gaps on direction/$/window must be **acknowledged** in Drivers—fault only **unacknowledged** mismatches. **`## Next steps`** out of scope. **19 fixtures** in batches **1–5**; **`--batch N --check`**.
 
 **Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
 """
@@ -68,7 +68,7 @@ OUTPUT_SCHEMA = types.Schema(
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "One sentence on **## Drivers only**: why for each required category, named transaction(s) (ledger line labels), clarity, and coverage. Do not critique Figures-table formatting."
+        "One sentence on **## Drivers only**: why for each required category, named transaction(s) (ledger line labels), clarity, coverage, and—when decisive—whether material What↔Figures gaps were acknowledged. Do not critique Figures-table formatting."
       ),
     ),
   },
@@ -87,8 +87,15 @@ SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness**.
 ## Out of scope (never affects score)
 - **`## Figures`** table formatting, labels, or grain.
 - **Rounding-only amount gaps** between Drivers and What/Figures.
-- Whether the What headline “should” match Figures—do not mention What/Figures doc mismatches in `notes` unless Drivers repeat a wrong What direction or total **instead of** Figures-backed facts.
-- **What vs Figures direction/amount conflicts** — **trust Figures**. Grade whether Drivers explain the **Figures** move for each required category, not whether they parrot a wrong What headline.
+- **What date lines ⊂ Figures window** — no acknowledgment required when Figures simply use a clearer or wider comparison window.
+
+## What/Figures discrepancies
+When **What** and **Figures** disagree on **direction**, **material $** (beyond rounding), or **comparison window**, Drivers must **acknowledge** the gap before or while stating trail truth—e.g. **Although the insight flags …**, reconciling an insight-style total vs posted trail, or clearly contrasting What’s headline with Figures facts.
+
+- **Acknowledged gap → no fault for the gap:** if Drivers surface the mismatch and explain the **Figures** move with insight, do **not** penalize or mention the gap in `notes` unless it is the decisive insight issue.
+- **Unacknowledged gap → fault:** if Drivers explain the **Figures** move but **never** surface that What disagreed on direction/$/window, cap at **~3** even with named transactions—**never 4–5** when a material gap exists.
+- **Parroting wrong What** when Figures disagree → **~2** (worse than silent unacknowledged follow-Figures).
+- **Trust Figures** for grading direction, totals, and comparisons—not What’s headline when they conflict.
 
 ## In scope
 For **each category listed in What**, judge whether **`## Drivers`** explains **why that move happened** vs a relevant prior period, using **Figures** for the underlying facts.
@@ -112,7 +119,7 @@ Insightful **Drivers** explain **why** each required category moved via:
 
 **Each What category** must be explained **per Figures** (direction, amounts, named charges where cited).
 
-**What/Figures conflict:** Grade on whether Drivers explain the **Figures** move with named transactions. **Do not** penalize Drivers for diverging from a wrong What headline. **Do** penalize Drivers that parrot What’s wrong direction when Figures show the opposite. A **5** is possible when Drivers correctly explain the Figures move despite conflicting What.
+**What/Figures conflict:** Grade on whether Drivers **acknowledge** material gaps **and** explain the **Figures** move with named transactions. **Do not** penalize Drivers for diverging from a wrong What headline when they **surface** the mismatch. **Do** penalize Drivers that parrot What’s wrong direction when Figures show the opposite. **Never 4–5** when a material What↔Figures gap exists but Drivers never acknowledge it—even if the Figures move is otherwise well explained.
 
 - **Up/down moves:** identify transaction(s) that **drove** the change vs the prior period—not merely list all focal-period lines.
 - **Composition without drivers → ~3, never 4–5:** naming every focal charge (with transaction labels) but **not** stating which line(s) drove the delta vs the comparison period caps at **~3** even when all lines are named. Restating focal vs prior totals while listing focal lines is **not** driver identification unless Drivers tie specific line(s) to the delta (new, absent last period, larger than last period).
@@ -132,9 +139,9 @@ Insightful **Drivers** explain **why** each required category moved via:
 4. One integer **1–5** from holistic impact (weakest category + severity).
 
 ## Scores (integer 1–5)
-- **5** — Every required category: clear **why**, every cited charge **named** (transaction label), with driver(s) vs prior period (or absence/pause/restart for $0). **Never 5** when focal lines are listed without identifying which drove the move.
+- **5** — Every required category: clear **why**, every cited charge **named** (transaction label), with driver(s) vs prior period (or absence/pause/restart for $0). When What and Figures materially disagree, Drivers **acknowledge** the gap **and** explain the Figures move. **Never 5** when focal lines are listed without identifying which drove the move, or when a material What↔Figures gap is left unacknowledged.
 - **4** — Strong; one category thin or one charge referenced by amount only.
-- **3** — **Partial:** transactions listed but not which drove the move; amount-only/generic references with correct direction; one category thin in multi-line What.
+- **3** — **Partial:** transactions listed but not which drove the move; amount-only/generic references with correct direction; one category thin in multi-line What; **or** strong Figures insight but **unacknowledged** material What↔Figures gap.
 - **2** — **Weak:** category skipped; denies the move; timing-only or vague activity/refunds with **no transaction names** when Figures list specific charges; prior-period-only narrative with no focal-window story.
 - **Multi-line What:** one category strong and another only restates direction with no named lines → overall **3**, not 2.
 - **1** — Drivers **only** echo What/Figures headlines and recite dollar amounts—**no** mechanism, contrast, or activity claim of any kind.
@@ -142,7 +149,7 @@ Insightful **Drivers** explain **why** each required category moved via:
 **Weakest-category cap:** Score from the weakest required category. Any up/down category with only composition lists or unnamed charges → overall **≤3**. **Focal skip** (prior-period charges only with no focal-window $0/up/down story) → **~2**, never **4–5**.
 
 ## `notes`
-One sentence on **Drivers-only** insight: coverage of What categories, named transactions, movement explanation. Do not critique Figures formatting.
+One sentence on **Drivers-only** insight: coverage of What categories, named transactions, movement explanation, and—when decisive—whether material What↔Figures gaps were acknowledged or left silent. Do not critique Figures formatting; omit acknowledged gaps from `notes`.
 
 Return **only** JSON `{score, notes}`.
 """
@@ -182,8 +189,8 @@ Posted rides alone are **down** week-over-week, but the insight total counts an 
     "name": "household_what_up_figures_down_drivers_follow_figures",
     "batch": 1,
     "output": (
-      '{"score": 5, "notes": "What claims up but Figures show a decrease; Drivers explain the '
-      'down move with merchant-named charges vs prior week—insight follows Figures, not What."}'
+      '{"score": 5, "notes": "What claims up but Figures show a decrease; Drivers acknowledge '
+      'the headline mismatch and explain the down move with merchant-named charges vs prior week."}'
     ),
     "input": """# Rationalize What
 
@@ -204,6 +211,34 @@ Explain: Household Supplies is significantly up this week at $89. (2026-07-06 to
 ## Next steps
 
 1. Review household receipts when What and posted totals disagree.
+""",
+  },
+  {
+    "name": "household_what_up_figures_down_unacknowledged_gap",
+    "batch": 1,
+    "output": (
+      '{"score": 3, "notes": "What claims up but Figures show a decrease; Drivers explain the '
+      'down move with named merchants but never acknowledge the direction mismatch with What."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Household Supplies is significantly up this week at $89. (2026-07-06 to 2026-07-12)
+
+# Rationalize Response
+
+## Figures
+
+* **Household Supplies (Jul 6–12, 2026):** $89.20 vs $156.40 (Jun 29–Jul 5, 2026) → **down ~43%**.
+* **Jun 29–Jul 5:** Target **$98.00**; Amazon Fresh **$58.40**.
+* **Jul 6–12:** Target **$42.20**; Dollar Tree **$47.00** (no Amazon Fresh).
+
+## Drivers
+
+Household supplies **fell** to **$89.20** from **$156.40** last week because **Amazon Fresh $58.40** did not repeat and **Target** was smaller (**$42.20** vs **$98.00**); **Dollar Tree $47.00** was new but not enough to offset the missing grocery delivery run.
+
+## Next steps
+
+1. Set a weekly budget for Household Supplies.
 """,
   },
   {
