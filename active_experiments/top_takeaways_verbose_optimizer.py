@@ -62,7 +62,7 @@ Each `- ` bullet: **Short headline:** + 2–4 sentences (what, amount, compariso
 
 **Amounts:** Whole dollars, comma thousands (`$6,369`).
 
-**Periods:** **this month/week**; **last month/week** or **at this point last month/week**; prior week → **from April 26 to May 2**; older → **in March**. Always use **full month names** (April, June, March)—never Apr/Jun/Mar. No years in prose; never "first X days", "so far", or "the previous week".
+**Periods:** **this month/week**; **last month/week** or **at this point last month/week**; prior week → **from April 26 to May 2**; older → **in March**. No years in prose; never "first X days", "so far", or "the previous week".
 
 **Links:** `[display name](/cashflow/path)` woven into the sentence. Path from Helpful Links; anchor matches display name. Link each category discussed (parent + leaf when both matter, e.g. Food + Groceries, Shelter + Upkeep).
 
