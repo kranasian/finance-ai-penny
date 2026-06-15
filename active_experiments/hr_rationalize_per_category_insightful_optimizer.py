@@ -20,7 +20,7 @@ Run from `finance-ai-penny` repo root:
 
 **Rubric:** Grade **only** **`## Drivers`**. Use **`# Rationalize What`** for **which categories** to explain; use **`## Figures`** as **factual truth** (amounts, periods, charges). Every cited charge must name the **transaction** (ledger line label—not necessarily a business name). **Rounding:** Drivers amounts may differ slightly from What/Figures—acceptable. **Discrepancies:** material What↔Figures gaps on direction/$/window must be **acknowledged** in Drivers—fault only **unacknowledged** mismatches. **`## Next steps`** out of scope. **19 fixtures** in batches **1–5**; **`--batch N --check`**.
 
-**Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response` (same shape as `ai_agent_outcomes.agent_outcome` / comprehensive optimizer).
+**Input:** a single markdown **`str`**—`# Rationalize What` then `# Rationalize Response`.
 """
 
 from __future__ import annotations
