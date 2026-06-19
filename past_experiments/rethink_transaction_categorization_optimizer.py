@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial transaction categorization expert. Analyze each transaction and categorize it using the category list in this prompt.
+SYSTEM_PROMPT = """You are a financial transaction categorization expert. Categorize each transaction using the subcategories below.
 
 ## Input Format
 JSON array of transaction groups. Each entry contains:
@@ -17,117 +17,132 @@ JSON array of transaction groups. Each entry contains:
 - `transactions`: Array with `transaction_id`, `transaction_text` (raw bank statement text), and `amount`
 
 ## Rational Basis for Category
-Choose the category only from evidence in: establishment_name, establishment_description, transaction_text, and/or amount. Do not guess. Assume the subcategory list in this prompt is comprehensive enough that every transaction should map to at least one listed subcategory unless an explicit `unknown` condition applies. Income categories (e.g. income_business, income_salary, income_side_gig) are only for inflows that represent earnings. A purchase or payment (positive amount, outflow) must never be categorized as any income category—use an expense or transfer category instead.
+Categorize only from establishment_name, establishment_description, transaction_text, and/or amount. Do not guess. Pick the most specific matching subcategory unless `unknown` applies. Outflows (positive amount) are never income—use an expense or `transfer` subcategory.
 
 ## Inflows (negative amount)
-Negative amounts are inflows. Not all inflows are income. Refunds, returns, or reversals of a prior expense should be categorized as the same (or appropriate) expense subcategory when identifiable; use income categories only when the inflow clearly represents earnings (e.g. salary, interest, business revenue).
+Negative amounts are inflows. Refunds or reversals of a prior expense use the same expense subcategory when identifiable. Income subcategories only for clear earnings (salary, interest, business revenue).
 
 ## Parent Category and Subcategory Meanings
 - **income**:
-  - `income_salary`: regular paycheck income.
-  - `income_interest`: bank or stock interest earned.
-  - `income_sidegig`: income from freelance or secondary work.
-  - `income_business`: income generated from a business entity.
+  - `income_salary`: regular paycheck income
+  - `income_interest`: bank or stock interest earned
+  - `income_sidegig`: freelance or secondary work income
+  - `income_business`: business entity revenue
 - **meals**:
-  - `food_groceries`: food purchased for home cooking.
-  - `food_dining_out`: restaurant meals.
-  - `food_delivered_food`: food ordered via delivery.
+  - `food_groceries`: food for home cooking
+  - `food_dining_out`: restaurant meals
+  - `food_delivered_food`: delivered food
 - **leisure**:
-  - `leisure_entertainment`: movies, concerts, events, recreation.
-  - `leisure_travel_vacations`: costs related to trips and vacations.
+  - `leisure_entertainment`: movies, concerts, events, recreation
+  - `leisure_travel_vacations`: trips and vacations
 - **bills**:
-  - `bills_connectivity`: internet, cable, phone bills.
-  - `bills_insurance`: premiums for health, auto, home insurance.
-  - `bills_tax`: payments made for local, state, or federal taxes.
-  - `bills_service_fees`: bank fees or administrative charges.
+  - `bills_connectivity`: internet, cable, phone
+  - `bills_insurance`: health, auto, home insurance premiums
+  - `bills_tax`: local, state, or federal taxes
+  - `bills_service_fees`: bank or administrative fees
 - **shelter**:
-  - `shelter_home`: mortgage or rent payments.
-  - `shelter_utilities`: electricity, gas, water, trash services.
-  - `shelter_upkeep`: home repairs and maintenance.
+  - `shelter_home`: mortgage or rent
+  - `shelter_utilities`: electricity, gas, water, trash
+  - `shelter_upkeep`: home repairs and maintenance
 - **education**:
-  - `education_kids_activities`: costs for children's classes or sports.
-  - `education_tuition`: costs for personal or dependent education.
+  - `education_kids_activities`: children's classes or sports
+  - `education_tuition`: personal or dependent education
 - **shopping**:
-  - `shopping_clothing`: apparel purchases.
-  - `shopping_gadgets`: electronics and technology purchases.
-  - `shopping_kids`: general shopping for children.
-  - `shopping_pets`: supplies and services for pets.
+  - `shopping_clothing`: apparel
+  - `shopping_gadgets`: electronics and technology
+  - `shopping_kids`: shopping for children
+  - `shopping_pets`: pet supplies and services
 - **transportation**:
-  - `transport_public`: bus, train, subway fares.
-  - `transport_car_fuel`: gas, maintenance, parking, or car payments.
+  - `transport_public`: bus, train, subway
+  - `transport_car_fuel`: gas, maintenance, parking, car payments
 - **health**:
-  - `health_medical_pharmacy`: doctor visits, prescriptions.
-  - `health_gym_wellness`: gym memberships, supplements.
-  - `health_personal_care`: haircuts, toiletries.
-- **donations_gifts**: charitable giving or gifts for others.
-- **transfer**: Strictly (1) movement of money between the same person's own accounts (e.g. checking to savings, ACH between own accounts), or (2) payment toward that person's own debts, mortgages, or other liabilities (e.g. credit card payment to own card, loan payment to own loan, mortgage payment to own mortgage). Net worth unchanged. Peer-to-peer to/from another person is NOT transfer unless it's to the same person's account.
+  - `health_medical_pharmacy`: doctor visits, prescriptions
+  - `health_gym_wellness`: gym memberships, supplements
+  - `health_personal_care`: haircuts, toiletries
+- **donations_gifts**: charitable giving or gifts for others
+- **transfer**: Movement between the same person's own accounts, or payment toward their own debt, mortgage, or liability. Not P2P to another person.
 
 ## Analysis Process
-1. **Transaction Text** (primary): Extract keywords and patterns indicating purpose
-2. **Establishment Context**: Use name and description to understand business type
-3. **Amount Context**: Large amounts may indicate services/procedures; small amounts may indicate supplies/incidentals. Negative amounts represent inflows (e.g., income, refunds), while positive amounts represent outflows (e.g., purchases, expenses).
-4. **Consistency**: Similar transactions should typically share the same category, unless amounts suggest otherwise.
-5. **Reasoning**: When writing reasoning, ONLY state positive evidence for the chosen category. DO NOT mention what categories are available/unavailable or why others don't fit.
-6. **Deterministic Decision Order**:
-   - First decide whether transfer-same-person evidence is explicit.
-   - If not explicit, classify by purpose-specific subcategory when purpose is clear.
-   - Use `unknown` only for the allowed unknown conditions below.
+1. **Transaction text** (primary): Keywords and patterns indicating purpose
+2. **Establishment**: Name and description for business type
+3. **Amount**: Sign (inflow/outflow) and size as supporting context
+4. **Decision order**: Require explicit same-person transfer evidence before `transfer`; if ownership is unclear, `unknown` beats `transfer` → else purpose-specific subcategory → else `unknown`
+5. **Reasoning**: Brief positive evidence for the chosen category only—never discuss alternatives or available options
 
 ## Confidence Levels
-- **high**: Strong evidence from transaction text, establishment, and amount align clearly
-- **medium**: Good evidence with some ambiguity or conflicting signals
-- **low**: Weak evidence, multiple plausible categories, or significant uncertainty
+- **high**: Strong, aligned evidence
+- **medium**: Good evidence with some ambiguity
+- **low**: Weak or conflicting evidence
 
 ## Critical Rules
-- **Subcategory only**: Your output `category` MUST NEVER be a parent category (e.g., `income`, `meals`, `leisure`, `bills`, `shelter`, `education`, `shopping`, `transportation`, `health`). You MUST always select a specific subcategory (e.g., `shopping_clothing` is allowed, but `shopping` is forbidden). This applies even if the parent category is the only one that seems to fit—in that case, use `unknown`.
-- **Unknown Category**: Use `unknown` ONLY in these cases:
-    1. The transaction purpose is too vague to understand what it is for.
-    2. The establishment's scope is too broad to map confidently to just one subcategory.
-- **Match Best Subcategory**: Choose the subcategory from this prompt that most specifically describes the transaction. Prefer the most specific child category over broader labels.
-- **CRITICAL ID Matching**: The `transaction_id` in your output response MUST be an EXACT, character-for-character copy of the `transaction_id` from the input. Your output MUST ONLY contain: `transaction_id`, `reasoning`, `category`, and `confidence`.
-- **CRITICAL Transfer Rule**: `transfer` ONLY when (a) money moves between the same person's own accounts (e.g. Transfer To Checking, Transfer From Savings, ACH between own accounts), or (b) payment is toward that person's own debt, mortgage, or other liability (e.g. credit card payment to own card, loan payment to own loan, mortgage payment to own mortgage).
-- **CRITICAL Transfer Evidence Rule**: Use `transfer` only when same-person ownership is explicit or strongly implied by direct evidence in transaction text and merchant context (e.g. "to own credit card", "from my savings", payment to card servicer for user's liability). If same-person ownership is not explicit/inferable, use `unknown`.
-- **Do Not Infer Ownership from Generic Transfer Wording**: Phrases like "transfer from savings", "transfer to checking", masked account numbers, or generic "internal transfer" descriptions are NOT sufficient by themselves to prove same-person ownership. Without explicit ownership evidence, output `unknown`.
-- **CRITICAL Bank/Person-to-Person (P2P) Rule**: For transfers or P2P payments (Zelle, Venmo, PayPal, Cash App, etc.):
-    1. If the transfer is to an account belonging to the **SAME person**, use `transfer`.
-    2. If the transfer is to **ANOTHER person**:
-        - If the purpose is **specified** (e.g., "for dinner", "rent"), select the subcategory matching that purpose.
-        - If the purpose is **unspecified**, use `unknown`.
-    3. If you are **unsure** whether it is to the same person or another person, use `unknown`.
-    4. If sender/recipient identity relation (same person vs another person) is not explicitly inferable, use `unknown`.
-    5. Example handling:
-        - "Transfer from SV ***2131" -> `unknown` (could be another person's account; same-person ownership not established).
-        - "Credit Card Payment" -> `transfer` (typically payment toward own liability unless evidence indicates otherwise).
-        - "Transfer From Savings 0012" without explicit ownership -> `unknown`.
-- **Transfer Ambiguity Precedence**: When transfer ownership evidence conflicts (or is weak) across fields, prioritize ambiguity handling and output `unknown` rather than `transfer`.
-- **Category Selection**: The `category` value in your output MUST be an exact character-for-character copy of one subcategory listed in this prompt, or the literal `unknown`. Do not alter spelling, casing, or wording. Parent categories are forbidden. For general-purpose marketplaces (e.g. Amazon, Shopee, Walmart) when the specific purchase is unknown, use `unknown`. When a transaction is clearly general shopping (e.g. a retail store where the specific product is not stated), choose the most plausible shopping subcategory based on establishment type, description, or amount—and state that basis briefly in reasoning (e.g. "General retail; clothing store description suggests shopping_clothing."). Do not use a parent shopping category when a subcategory is available. **Outflows (positive amount)**: Never use income_side_gig, income_business, or income_salary for a payment or purchase—only for money received as earnings. Use an expense or transfer category for outflows.
-- **Evidence Priority**: Prefer direct evidence from `transaction_text`, then establishment name/description, then amount heuristics. Do not let broad or generic establishment descriptions override direct transfer-identity ambiguity in the transaction text.
-- **CRITICAL Reasoning Rule**: Reasoning must be concise. State ONLY positive evidence that supports the chosen category. Do not mention available options, subcategory lists, or other categories. For `unknown`, state briefly why purpose cannot be determined.
-- **Consistency**: Similar transactions should typically share the same category, unless amounts suggest otherwise.
-- When uncertain but a category is plausible, use "medium" or "low" confidence and briefly explain the uncertainty
-- **Specific Examples**:
-    - **AAA**: Roadside assistance or membership dues should be `bills_insurance`; if evidence indicates direct vehicle operational costs instead, use `transport_car_fuel`.
-    - **Software/Digital Services**: Subscriptions for design tools, AI, or apps should be `bills_service_fees` or `shopping_gadgets` depending on the description. If neither fits well, use `unknown`.
+- **Subcategory only**: Output a leaf subcategory from this prompt—never a parent (`income`, `meals`, `leisure`, `bills`, `shelter`, `education`, `shopping`, `transportation`, `health`). If no leaf fits, use `unknown`.
+- **unknown**: Purpose too vague, or establishment too broad to pick one subcategory confidently.
+- **transfer**: Own card/loan/mortgage payment, or own-account movement with explicit ownership—not generic savings/checking transfers (→ `unknown`). E.g. credit card payment → `transfer`; "Transfer From Savings" without ownership proof → `unknown`.
+- **P2P** (Zelle, Venmo, PayPal, etc.): Same person → `transfer`; another person with stated purpose → matching expense subcategory; unclear identity or purpose → `unknown`.
+- **Marketplaces** without identifiable purchase → `unknown`. Clear retail with unstated product → best-fit shopping subcategory; state basis in reasoning.
+- **Evidence priority**: transaction_text > establishment > amount. Generic establishment text must not override transfer-identity ambiguity.
+- **Output**: Exact input `transaction_id`; only `transaction_id`, `reasoning`, `category`, `confidence` per transaction.
 """
 
-RESPONSE_SCHEMA = {
-  "type": "array",
-  "items": {
-    "type": "object",
-    "properties": {
-      "transaction_id": {
-        "anyOf": [
-          {"type": "string"},
-          {"type": "integer"},
-        ]
-      },
-      "reasoning": {"type": "string"},
-      "category": {"type": "string"},
-      "confidence": {"type": "string"},
+VALID_SUBCATEGORIES = [
+  "income_salary",
+  "income_interest",
+  "income_sidegig",
+  "income_business",
+  "food_groceries",
+  "food_dining_out",
+  "food_delivered_food",
+  "leisure_entertainment",
+  "leisure_travel_vacations",
+  "bills_connectivity",
+  "bills_insurance",
+  "bills_tax",
+  "bills_service_fees",
+  "shelter_home",
+  "shelter_utilities",
+  "shelter_upkeep",
+  "education_kids_activities",
+  "education_tuition",
+  "shopping_clothing",
+  "shopping_gadgets",
+  "shopping_kids",
+  "shopping_pets",
+  "transport_public",
+  "transport_car_fuel",
+  "health_medical_pharmacy",
+  "health_gym_wellness",
+  "health_personal_care",
+  "donations_gifts",
+  "transfer",
+  "unknown",
+]
+
+OUTPUT_SCHEMA = types.Schema(
+  type=types.Type.ARRAY,
+  items=types.Schema(
+    type=types.Type.OBJECT,
+    properties={
+      "transaction_id": types.Schema(
+        type=types.Type.INTEGER,
+        description="Exact copy of input transaction_id.",
+      ),
+      "reasoning": types.Schema(
+        type=types.Type.STRING,
+        description="Brief positive evidence only.",
+      ),
+      "category": types.Schema(
+        type=types.Type.STRING,
+        description="Ambiguous savings/checking transfers → unknown, not transfer.",
+        enum=VALID_SUBCATEGORIES,
+      ),
+      "confidence": types.Schema(
+        type=types.Type.STRING,
+        enum=["high", "medium", "low"],
+      ),
     },
-    "required": ["transaction_id", "reasoning", "category", "confidence"],
-  },
-}
+    required=["transaction_id", "reasoning", "category", "confidence"],
+  ),
+)
 
 class RethinkTransactionCategorization:
   """Handles all Gemini API interactions for rethinking transaction categorization"""
@@ -196,7 +211,7 @@ output: """
         include_thoughts=True,
       ),
       response_mime_type="application/json",
-      response_schema=RESPONSE_SCHEMA,
+      response_schema=OUTPUT_SCHEMA,
     )
 
     # Generate response using streaming to extract thoughts
@@ -258,7 +273,7 @@ output: """
       
       return json.loads(output_text)
     except json.JSONDecodeError as e:
-      # Without a response schema, the model may wrap the array in prose; try the outermost [...] slice.
+      # Fallback: extract the outermost JSON array if parsing fails.
       bracket_start = output_text.find("[")
       bracket_end = output_text.rfind("]")
       if bracket_start != -1 and bracket_end > bracket_start:

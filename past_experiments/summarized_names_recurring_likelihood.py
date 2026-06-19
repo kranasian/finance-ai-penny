@@ -11,84 +11,58 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 load_dotenv()
 
 
-# Output Schema - array of result objects
+LIKELIHOOD_VALUES = ["LIKELY", "IMPOSSIBLE", "UNLIKELY"]
+
 SCHEMA = types.Schema(
     type=types.Type.ARRAY,
     items=types.Schema(
         type=types.Type.OBJECT,
-        required=[
-            "id",
-            "is_bills",
-            "is_salary",
-            "is_sidegig"
-        ],
+        required=["id", "is_bills", "is_salary", "is_sidegig"],
         properties={
             "id": types.Schema(
                 type=types.Type.INTEGER,
-                description=""
+                description="Input id, unchanged.",
             ),
             "is_bills": types.Schema(
                 type=types.Type.STRING,
-                description=""
+                enum=LIKELIHOOD_VALUES,
+                description="Recurring bill (outflow) likelihood.",
             ),
             "is_salary": types.Schema(
                 type=types.Type.STRING,
-                description=""
+                enum=LIKELIHOOD_VALUES,
+                description="Recurring salary (employed income) likelihood.",
             ),
             "is_sidegig": types.Schema(
                 type=types.Type.STRING,
-                description=""
-            )
-        }
-    )
+                enum=LIKELIHOOD_VALUES,
+                description="Recurring side-gig income likelihood.",
+            ),
+        },
+    ),
 )
 
 
-SYSTEM_PROMPT = """## Persona
-
-You are a personal finance advisor whose role includes identifying possible bills, salaries, and sidegigs to predict a user's cash flow and notify them if the inflow/outflow has not been recorded as expected.
-
-## Objective
-
-Identify recurring transactions, then the likelihood for them to be bills, salaries, and sidegigs.
+SYSTEM_PROMPT = """Classify each transaction's likelihood of being a recurring bill, salary, or side-gig.
 
 ## Input
+Per row: `id`, `name`, `description`. Return one object per input `id`.
 
-- `id`: unique numbers matched to each establishment
-- `name`: establishment the transaction is with (to drop in output)
-- `description` (to drop in output)
-   - **For transactions with businesses:** what the business is, including the specific products and services being purchased/sold
-   - **For person to person transfers, interbank transfers, and credit card payments:** what the transaction is and its likely purpose
+## Categories
+- **Bill**: recurring outflow (subscriptions, utilities, rent, insurance, loan payments)
+- **Salary**: recurring inflow from permanent employment
+- **Side-gig**: recurring inflow from freelance, contract, or non-employer work
 
-## Output
+## Likelihood
+- `LIKELY` — strong fit
+- `UNLIKELY` — plausible but uncertain
+- `IMPOSSIBLE` — does not apply
 
-- `id`: `id` from input
-- `is_bills`: likelihood of transaction with `name` to be a bill
-- `is_salary`: likelihood of transaction with `name` to be a salary
-- `is_sidegig`: likelihood of transaction with `name` to be a sidegig
-
-### Categories
-- `Bill`: outflow that is a consistent payment for a loan, goods, or services
-- `Salary`: inflow for work performed as a permanent employee
-- `Sidegig`: Recurring income from freelance work, contract jobs, or other non-employer sources. It is **always an inflow** of money.
-
-### Likelihood Options
-- `LIKELY`: high probability of being in the category
-- `IMPOSSIBLE`: low to no probability of being in the category
-- `UNLIKELY`: 50-50 between being and not being in the category
-
-### Processing Rules
-1. **Recurring Check (CRITICAL FIRST STEP)**: Based on the `name` and `description`, determine if a transaction is likely to be recurring.
-    - **Consider the nature of the business:** A subscription service is almost guaranteed to be recurring (`LIKELY`). A bank may have recurring fees, but not all bank transactions are recurring, so it's less certain (`UNLIKELY`). A grocery store is rarely a recurring bill (`IMPOSSIBLE`).
-    - Subscriptions (e.g., streaming services, software, meal kits), utilities, rent, insurance, or payroll are typically recurring.
-    - One-time purchases from retailers, ride-sharing, or P2P transfers are typically not.
-   - **If the transaction does not appear to be recurring, you MUST tag `is_bills`, `is_salary`, and `is_sidegig` as `IMPOSSIBLE`.**
-2. **Directionality Inference**: From the `description`, infer if the transaction is an **inflow** (income) or an **outflow** (expense).
-   - **If the direction is ambiguous**: Assume the transaction type that is more common for the establishment. For example, "Netflix" is typically an outflow (payment), while a transaction from a known payroll company is an inflow.
-3. **Categorization Logic (only if recurring)**:
-   - **Outflows (Payments/Expenses)**: If the transaction is an outflow, it is most likely a `bill`. `is_salary` and `is_sidegig` **MUST** be `IMPOSSIBLE`.
-   - **Inflows (Income)**: If the transaction is an inflow, it can be a `salary` or `sidegig`. `is_bills` MUST be `IMPOSSIBLE`. Differentiate between a stable salary and more variable side gig income.
-4. **Final Review**: Briefly review your classifications for common sense. For example, a university (`NYU`) is not a monthly bill, but it does have recurring tuition payments, so `is_bills` should be `UNLIKELY`, not `IMPOSSIBLE`."""
+## Rules
+1. Not recurring → all three fields `IMPOSSIBLE`.
+2. Infer inflow vs outflow from `name` and `description`; if ambiguous, use the typical direction for that establishment.
+3. Outflow → score `is_bills`; `is_salary` and `is_sidegig` are `IMPOSSIBLE`.
+4. Inflow → score `is_salary` vs `is_sidegig`; `is_bills` is `IMPOSSIBLE`."""
 
 
 class SummarizedNamesRecurringLikelihood:
