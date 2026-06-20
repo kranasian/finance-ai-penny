@@ -4,6 +4,7 @@ Optimizer runner for `P:RationalizedPennyInsightsVerbalizer`.
 Run from `finance-ai-penny` repo root:
 
   python3 active_experiments/rationalized_penny_insights_verbalizer_optimizer.py --test 0
+  python3 active_experiments/rationalized_penny_insights_verbalizer_optimizer.py --batch 1
   python3 active_experiments/rationalized_penny_insights_verbalizer_optimizer.py --test all --no-thinking
 """
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import warnings
 from typing import Any, Dict
@@ -73,15 +75,15 @@ def _build_output_schema() -> "types.Schema":
             "insight": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "Single-line rationalized message: g{}/r{} colored link and amount, optional driver detail, "
-                    "one trailing emoji; no newlines."
+                    "Single-line Penny message verbalizing **# Drivers** only. "
+                    "Every category: g{[Display](/slug/weekly)} or r{[Display](/slug/monthly)}; "
+                    "every category total: matching colored g{$N}/r{$N}; ≥1 emoji; ≤320 chars; no newlines."
                 ),
             ),
             "insight_correct": types.Schema(
                 type=types.Type.BOOLEAN,
                 description=(
-                    "True if # Insight matches # Drivers. False only when drivers contradict facts in the insight "
-                    "(e.g. spend exists but insight says $0)."
+                    "False when # Drivers contradicts # Insight direction or headline $ (e.g. Insight significantly down but Drivers say on track). Never mention mismatch in insight."
                 ),
             ),
         },
@@ -104,51 +106,49 @@ def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
 
 
 # Canonical system prompt for ``P:RationalizedPennyInsightsVerbalizer`` — paste into DB ``penny_templates`` when promoting changes.
-SYSTEM_PROMPT = """## Quality gates
+SYSTEM_PROMPT = """## Persona
 
-- JSON only.
-- **Timeframe**: Reuse **# Insight** wording ("this week", "last week", "this month", "last month"). The link uses `/weekly` or `/monthly` matching that period—never swap week ↔ month.
-- **Direction**: Keep up/down/higher/lower/exceeded from **# Insight**; do not replace with neutral **"currently $X"** / **"is currently"** as the main framing when **# Insight** already states direction.
-- **Banned phrasing:** never use the words **currently** or **is currently** anywhere in `insight`—use **"down to"**, **"so far"**, **"as of early …"**, or explicit direction verbs instead.
-- **Emoji**: Exactly one trailing emoji after a space. **Exceeded budget/limit** (goal types, red) → prefer **😟**; false-zero corrections → **⚠️**; uncategorized spikes → **😟**; avoid **💸** for breaches.
-- **`*spend*_vs_forecast*` in **# Type** → **forecast** copy (divergence: "down at", "up at", "down to", "lower at")—not budget/limit wording.
-- **`*vs_goal*` in **# Type** → **budget/limit** copy ("exceeded your limit", "over your budget")—not standalone forecast phrasing.
-
-## Persona
-
-You are Penny, a friendly personal finance advisor.
+You are Penny, a friendly personal finance advisor. Casual but professional; warm openers/closers; conversational verbs. No **currently** / **is currently**.
 
 ## Objective
 
-Compress **# Insight** + **# Drivers** into one rationalized, single-line message in JSON field `insight`.
+Return JSON only: single-line `insight` verbalizing **# Drivers** plus `insight_correct` (compare **# Insight** vs **# Drivers** silently).
 
-## Input
+## Sources
 
-Markdown with exactly three top-level headings in order: `# Type`, `# Insight`, `# Drivers`.
+- **`insight` text:** **# Drivers** only — ignore **# Type**, **# Insight** copy, taxonomy, and partial-period metadata when writing the message.
+- **`insight_correct`:** **false** when Drivers contradict **# Insight** direction or headline $ — including Drivers saying **on track** / **typical timing** vs Insight **significantly down/up**. **true** only when Drivers affirm both the move and the $.
 
 ## Output
 
-- `insight_correct`: **false** only if **# Drivers** contradicts **# Insight** on facts (e.g. claims $0 but drivers show spend). Early-month context that explains the same figures is **not** a contradiction → **true**.
-- `insight`: one line (no newlines). No `Drivers:` prefix.
+- `insight`: one line, ≤320 chars, **≥1 emoji** (~2 when 140+ chars); facts and merchants from **# Drivers** only.
+- `insight_correct`: per Sources rule — never mention mismatch in `insight`.
 
-## Rules
+## Format
 
-1. No greeting. Facts only from **# Insight** and **# Drivers**; merchant names verbatim when cited.
-2. Target ≤320 characters; prefer whole dollars unless amount < $10.
-3. **Category link (required):** include **one** primary drill-down as `g{[Display](/slug/weekly)}` or `g{[Display](/slug/monthly)}` (or `r{…}`). **Never** color a bare category name without the markdown link inside the same wrapper (invalid: `r{Groceries}` alone; valid: `r{[Groceries](/meals_groceries/weekly)}`).
-4. Color the **main dollar amount** you feature with the **same** `g`/`r` as that link.
-5. **Food umbrella** in **# Insight** (e.g. "Food is thus…"): prefer **`[Meals](/meals/weekly)`** or **`[Meals](/meals/monthly)`**. Use a narrower slug (e.g. `meals_dining_out`) only when the sentence is **only** about that subcategory.
-6. **`insight_correct` false:** open with drivers' facts (correct totals). For Food umbrella wrong-$0 cases, use **`g{[Meals](/meals/…)}`** and an explicit correction such as **"— not $0"** when appropriate.
-7. **Forecast phrasing:** prefer **"down at / up at / down to / lower at / higher at"** plus timeframe words from **# Insight**; include merchants or drivers when space allows.
-8. **Goal phrasing:** budget/limit language; map Display from category names in **# Insight** to slugs (e.g. Dining Out → `meals_dining_out`). When **# Insight** contains **"exceeded your limit"** / **"over your budget"**, prefer opening **"You exceeded your budget for …"** with the linked category when it fits.
-9. If **# Drivers** lists multiple notable merchants or charges, prefer weaving **at least two** concrete items into `insight` when ≤320 chars allows (names/amounts verbatim).
-10. Never tautology on zero: do not write both "$0 spend" and "down to $0"; use **one** **down to g{$0}** (or `r{}`) clause with colored amount.
+- **Linking:** every category you name → `g{[Display](/slug/weekly)}` or `g{[Display](/slug/monthly)}` (or `r{…}`). No bare category text. Slug + `/weekly` or `/monthly` required; grain follows **# Type**.
+- **Amounts:** every category total → colored `g{$N}` / `r{$N}` using the **same** `g`/`r` as that category's link.
+- **Syntax:** `r{[Display](/slug/monthly)} at r{$120}` — separate wrappers; never split braces or put `$` before `[`.
+- Single-category Drivers → that category's link only, not parent.
+- Umbrella + leaf Drivers: if both appear, **each** gets full link + colored total; never name a category in plain text.
+- **Timeframe:** unless **# Insight** says **last week/month**, use **this week** / **this month**.
+- Focal totals from Drivers only; whole dollars unless < $10; merchants verbatim.
+
+## Type copy
+
+- **`*spend*_vs_forecast*`:** forecast divergence verbs; not budget wording.
+- **`*vs_goal*`:** budget/limit — went over / blew past / exceeded.
+
+## Content
+
+- Pick the **lead Drivers section**; verbalize its focal total and merchants.
+- Multi-category Drivers: link **each** category with colored total; whole dollars only; ≤320 — shorten merchants to names, one timeframe phrase.
 
 ## Coloring
 
-- `g{…}` / `r{…}`. For typical **outflows**: lower spend vs forecast or good news → **g**; higher / exceeded limit → **r**. Invert for true inflow categories when applicable.
+Outflows: lower vs forecast → **g**; higher → **r**. Inflows: invert.
 
-## Slugs (Display→slug, pipe-separated)
+## Slugs (Display→slug)
 
 Outflows: Meals→meals | Dining Out→meals_dining_out | Delivered Food→meals_delivered_food | Groceries→meals_groceries | Leisure→leisure | Entertainment→leisure_entertainment | Travel and Vacations→leisure_travel | Education→education | Kids Activities→education_kids_activities | Tuition→education_tuition | Transport→transportation | Public Transit→transportation_public | Car and Fuel→transportation_car | Health→health | Medical and Pharmacy→health_medical_pharmacy | Gym and Wellness→health_gym_wellness | Personal Care→health_personal_care | Donations and Gifts→donations_gifts | Uncategorized→uncategorized | Miscellaneous→miscellaneous | Bills→bills | Connectivity→bills_connectivity | Insurance→bills_insurance | Taxes→bills_taxes | Service Fees→bills_service_fees | Shelter→shelter | Home→shelter_home | Utilities→shelter_utilities | Upkeep→shelter_upkeep | Shopping→shopping | Clothing→shopping_clothing | Gadgets→shopping_gadgets | Kids→shopping_kids | Pets→shopping_pets | Transfers→transfers
 
@@ -190,6 +190,7 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
 
         self.system_prompt = SYSTEM_PROMPT
         self.output_schema = _build_output_schema()
+        self.quiet = False
 
     def generate_response(self, insight_input: str) -> Dict[str, Any]:
         if not isinstance(insight_input, str) or not insight_input.strip():
@@ -243,7 +244,7 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
                 sys.exit(1)
             raise
 
-        if thought_summary:
+        if thought_summary and not self.quiet:
             print("\n" + "-" * 80)
             print("THOUGHT SUMMARY:")
             print("-" * 80)
@@ -267,172 +268,250 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
         return result  # type: ignore[return-value]
 
 
+_RE_LINK = re.compile(r"([gr])\{\[([^\]]+)\]\((/[^)]+)\)\}")
+_RE_AMOUNT = re.compile(r"([gr])\{(\$[^}]+)\}")
+_RE_MALFORMED_LINK = re.compile(r"[gr]\{\$[^[\]]*\]\(")
+_RE_BANNED = re.compile(r"\b(currently|is currently)\b", re.I)
+_RE_DISCREPANCY_ACK = re.compile(
+    r"\b(although|actually|insight flags?|not \$0|rather than|instead of|correction|headline|discrepancy|mismatch)\b",
+    re.I,
+)
+_RE_PARTIAL_TIMEFRAME = re.compile(
+    r"\b(first \d+ days|through (the )?first|so far|as of early)\b",
+    re.I,
+)
+_RE_EMOJI = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF](?:\uFE0F)?")
+
+
+def _emoji_count(text: str) -> int:
+    return len(_RE_EMOJI.findall(text or ""))
+
+
+def _min_emojis_for_length(char_count: int) -> int:
+    if char_count < 140:
+        return 1
+    if char_count < 220:
+        return 2
+    return 2
+
+
+def _strip_markup(text: str) -> str:
+    return re.sub(r"[gr]\{([^}]*)\}", r"\1", text or "")
+
+
+def _expected_period(input_type: str) -> str:
+    return "weekly" if "week" in input_type else "monthly"
+
+
+def mechanical_sandbox_check(
+    *,
+    ideal: dict[str, Any],
+    actual: dict[str, Any],
+    input_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Heuristic checks vs ideal output and prompt constraints."""
+    issues: list[str] = []
+    ideal_insight = str(ideal.get("insight", ""))
+    actual_insight = str(actual.get("insight", ""))
+    input_type = str(input_payload.get("type", ""))
+    period = _expected_period(input_type)
+
+    if ideal.get("insight_correct") != actual.get("insight_correct"):
+        issues.append(
+            f"insight_correct mismatch: ideal={ideal.get('insight_correct')} actual={actual.get('insight_correct')}"
+        )
+    if "\n" in actual_insight:
+        issues.append("insight contains newline")
+    if len(actual_insight) > 320:
+        issues.append(f"insight over 320 chars ({len(actual_insight)})")
+    if _RE_BANNED.search(actual_insight):
+        issues.append("banned phrasing: currently")
+    if _RE_DISCREPANCY_ACK.search(_strip_markup(actual_insight)):
+        issues.append("insight acknowledges Insight↔Drivers discrepancy")
+    if _RE_PARTIAL_TIMEFRAME.search(_strip_markup(actual_insight)):
+        issues.append("use this week/month instead of partial-period phrasing")
+    if not _RE_LINK.search(actual_insight):
+        issues.append("missing colored category link")
+    if _RE_MALFORMED_LINK.search(actual_insight):
+        issues.append("malformed link syntax")
+    if not _RE_AMOUNT.search(actual_insight):
+        issues.append("missing colored amount")
+
+    actual_links = _RE_LINK.findall(actual_insight)
+    ideal_links = _RE_LINK.findall(ideal_insight)
+    actual_amounts = _RE_AMOUNT.findall(actual_insight)
+
+    if len(actual_amounts) < len(actual_links):
+        issues.append(
+            f"colored amounts ({len(actual_amounts)}) fewer than category links ({len(actual_links)})"
+        )
+    for color, _display, path in actual_links:
+        if not re.search(rf"/{period}$", path):
+            issues.append(f"link period mismatch: {path} (expected /{period})")
+        if not any(ac == color for ac, _ in actual_amounts):
+            issues.append(f"link color {color} missing matching colored amount")
+    for _color, _display, path in ideal_links:
+        if not any(p == path for _c, _d, p in actual_links):
+            issues.append(f"missing ideal link path: {path}")
+
+    emoji_n = _emoji_count(actual_insight)
+    min_emojis = _min_emojis_for_length(len(actual_insight))
+    if emoji_n < 1:
+        issues.append("missing emoji (minimum 1)")
+    elif emoji_n < min_emojis:
+        issues.append(f"too few emojis for length ({emoji_n}, expected ≥{min_emojis})")
+
+    if "vs_goal" in input_type and not re.search(
+        r"\b(budget|limit|over|exceeded|blew past)\b", _strip_markup(actual_insight), re.I
+    ):
+        issues.append("vs_goal missing budget/limit wording")
+
+    ideal_plain = _strip_markup(ideal_insight).lower()
+    actual_plain = _strip_markup(actual_insight).lower()
+    ideal_tokens = {w for w in re.findall(r"[a-z]{4,}", ideal_plain)}
+    overlap = len(ideal_tokens & {w for w in re.findall(r"[a-z]{4,}", actual_plain)})
+    similarity = overlap / max(len(ideal_tokens), 1)
+
+    good = not issues and similarity >= 0.35
+    if similarity < 0.35 and not any("similarity" in i for i in issues):
+        issues.append(f"low ideal similarity ({similarity:.0%})")
+
+    return {
+        "good_copy": good,
+        "info_correct": ideal.get("insight_correct") == actual.get("insight_correct"),
+        "similarity": round(similarity, 2),
+        "issues": issues,
+        "eval_text": "\n".join(f"- {x}" for x in issues) if issues else "OK",
+    }
+
+
 TEST_CASES: list[dict[str, Any]] = [
     {
-        "name": "spend_vs_forecast_leisure_down",
-        "input": {
-            "type": "month_spend_vs_forecast",
-            "insight": "Leisure is significantly down this month at $11.",
-            "drivers": (
-                "The significant decrease in leisure spending is due to a reduction in the number and type of "
-                "entertainment transactions compared to previous months. In April, you had four leisure transactions "
-                "($76.15 total) including streaming subscriptions and a cinema visit (AMC Theatres: $41.68). So far in "
-                "May, the only leisure transaction is your monthly Spotify subscription ($10.99 on May 3). March saw "
-                "notably higher spending ($584.50) due to a higher volume of transactions."
-            ),
-        },
-        "output": """{
-  "insight_correct": true,
-  "insight": "g{Leisure is way down to g{$11} at g{[Leisure](/leisure/monthly)}}. April had streaming plus AMC ($41.68); May so far is just Spotify ($11), after a much higher March. 😊"
-}""",
-    },
-    {
-        "name": "spend_vs_forecast_leisure_entertainment_zero_early_month",
-        "input": {
-            "type": "month_spend_vs_forecast",
-            "insight": "Entertainment is significantly down this month at $0.",
-            "drivers": (
-                "The $0 spent on entertainment so far in May is not necessarily a permanent change; it reflects the "
-                "fact that no entertainment transactions have posted to your account in the first six days of the month. "
-                "In April, you had multiple recurring and one-off charges, including Netflix ($116.40 and $112.80) and "
-                "StubHub ($93.90). The drop simply indicates that these regular subscription cycles or discretionary "
-                "purchases have not yet occurred or hit your account during the early part of this month."
-            ),
-        },
-        "output": """{
-  "insight_correct": true,
-  "insight": "g{Entertainment is down at g{$0} this month at g{[Entertainment](/leisure_entertainment/monthly)}}, as usual subscriptions and discretionary purchases have not yet posted early in May. 📆"
-}""",
-    },
-    {
-        "name": "spend_vs_forecast_food_weekly_mix",
-        "input": {
-            "type": "week_spend_vs_forecast",
-            "insight": (
-                "Dining Out is significantly down this week at $84. Delivered Food is significantly up this week at $91. "
-                "Food is thus significantly down this week to $231."
-            ),
-            "drivers": (
-                "Your food spending this week is characterized by a shift toward convenience, despite an overall decline "
-                "in total food expenditure compared to last week ($275). While **Dining Out** spending totaled $84 "
-                "(e.g., Five Guys: $39, Wendy's: $23, McDonald's: $21), **Delivered Food** (DoorDash, Uber Eats, Grubhub) "
-                "reached $91, suggesting that delivery services have overtaken dining out as your primary method for "
-                "prepared meals this week."
-            ),
-        },
-        "output": """{
-  "insight_correct": true,
-  "insight": "Your total g{[Meals](/meals/weekly)} spend is down to g{$231} this week, as Dining Out decreased to $84 (e.g., Five Guys, Wendy's) while Delivered Food rose to $91 via services like DoorDash and Uber Eats. 📉"
-}""",
-    },
-    {
-        "name": "spend_vs_forecast_food_week_dining_down_volume",
-        "input": {
-            "type": "week_spend_vs_forecast",
-            "insight": (
-                "Dining Out is significantly down this week at $105.  Food is thus significantly down this week to $188."
-            ),
-            "drivers": (
-                "The reduction in Dining Out is primarily due to a lower volume of transactions compared to the previous "
-                "week. In the prior week (Apr 26–May 2), you had 6 Dining Out transactions totaling $299, whereas this week "
-                "(May 3–9) you had only 2 transactions (Five Guys: $17, Chipotle: $88). The overall Food total is also "
-                "lower because you had no Grocery spending this week, compared to $189 at Walmart in the prior week."
-            ),
-        },
-        "output": """{
-  "insight_correct": true,
-  "insight": "Your g{[Meals](/meals/weekly)} spend is down to g{$188} this week, with dining out at Five Guys ($17) and Chipotle ($88) significantly lower and no grocery spending recorded."
-}""",
-    },
-    {
-        "name": "spend_vs_forecast_food_month_zero_vs_actual",
+        "name": "salary_biweekly_zero_first_12_days_june",
+        "batch": 1,
         "input": {
             "type": "month_spend_vs_forecast",
             "insight": (
-                "Delivered Food is significantly down this month at $0. Groceries is significantly down this month at $0. "
-                "Food is thus significantly down this month to $0."
+                "Salary is significantly down the first 12 days of this month at $0.\n"
+                "(partial month Jun 1-30, 2026)\n"
+                "Category Taxonomy: parent Income (income), with leaf categories Salary (income_salary), "
+                "Side-Gig (income_sidegig), Business (income_business), Interest"
             ),
             "drivers": (
-                "The insight indicating $0 spend is inaccurate. While spending on meals_delivered_food and "
-                "meals_groceries has not been recorded yet in May, you have spent $24.00 on food so far this month, "
-                "which is categorized as meals_dining_out (Merchant: AM PM Convenience, $24.00). The significant drop "
-                "compared to April ($286.07) and March ($345.51) is due to the fact that we are only six days into May, "
-                "and you have not yet made your typical recurring grocery or food delivery purchases for the month."
+                "### Salary\n"
+                "Although the insight flags Salary significantly down at $0, Salary is on track on the overall trail, "
+                "as 10X Genomics Payroll ($4,394.13–$4,447.60) recurs on a bi-weekly schedule; $0 through the first 12 "
+                "days of June is typical for the timing of this payroll cycle, not a decline in income."
             ),
         },
         "output": """{
   "insight_correct": false,
-  "insight": "Your g{[Meals](/meals/monthly)} spend is down at g{$24} so far this month — not $0 — driven by a $24.00 charge at AM PM Convenience. This reflects a significant decrease compared to previous months as you have not yet made your typical grocery or delivery purchases. ⚠️"
+  "insight": "r{[Salary](/income_salary/monthly)} at r{$0} this month — 10X Genomics Payroll runs bi-weekly, so an empty month early on is normal timing. 💼📅"
 }""",
     },
     {
-        "name": "spend_vs_forecast_food_zero_accurate_early_may_keeps_direction",
+        "name": "uncategorized_amazon_early_june",
+        "batch": 2,
         "input": {
             "type": "month_spend_vs_forecast",
             "insight": (
-                "Dining Out is significantly down this month at $0. Groceries is significantly down this month at $0. "
-                "Food is thus significantly down this month to $0."
+                "Uncategorized is significantly up the first 12 days of this month at $67.\n"
+                "(partial month Jun 1-30, 2026)\n"
+                "Category Taxonomy: parent Uncategorized"
             ),
             "drivers": (
-                "The reported $0 spend for May 2026 accurately reflects that there have been no recorded dining out or "
-                "grocery transactions processed for the month of May as of May 6th. In contrast, you spent $1,201.43 on "
-                "food in April and $2,400.93 in March. The current \"significant drop\" is simply due to this being very "
-                "early in the month."
+                "### Uncategorized\n"
+                "Uncategorized is up on the trail—focal $67.27 (Jun 1–12) sits above a typical $0 band for "
+                "early-month partial periods—with Amazon ($48.84 and $18.43 on Jun 2) accounting for the entirety "
+                "of the focal window spend."
             ),
         },
         "output": """{
   "insight_correct": true,
-  "insight": "As of early this month, your g{[Meals](/meals/monthly)} spend is down to g{$0} — not a significant drop, but simply because the month has just begun. ⚠️"
+  "insight": "r{[Uncategorized](/uncategorized/monthly)} at r{$67} this month — Amazon on Jun 2 ($49 and $18) made up the whole window. Worth a look! 🏷️👀"
 }""",
     },
     {
-        "name": "spend_vs_forecast_uncategorized_weekly_not_monthly",
+        "name": "leisure_entertainment_partial_week_june",
+        "batch": 3,
         "input": {
             "type": "week_spend_vs_forecast",
-            "insight": "Uncategorized is slightly up this week at $2988.",
+            "insight": (
+                "Entertainment is significantly up the first 4 days of this week at $76.\n"
+                " Leisure is thus significantly down the first 4 days of this week to $76.\n"
+                "(partial week Jun 7-13, 2026)\n"
+                "Category Taxonomy: parent Leisure (leisure), with leaf categories Entertainment (leisure_entertainment), "
+                "Travel & Vacations"
+            ),
             "drivers": (
-                "The spike in uncategorized spending this week is driven by a single large transaction: "
-                "**Property Group LLC for $2,850.00**. This makes up the vast majority of the $2,988.42 currently listed "
-                "as uncategorized. Smaller items contributing to the total include an ATM withdrawal ($100.00) and a "
-                "charge at the School Cafeteria ($38.42), both from May 3rd."
+                "**Entertainment is significantly up the first 4 days of this week at $76:** Entertainment is on track "
+                "on the 6-week trail, fluctuating between $0 and $96.98, with Disney Plus ($29.99) and Bass Pro Shops "
+                "($46.00) driving this week's spend, which is consistent with similar volatility seen in early May.\n"
+                "**Leisure is thus significantly down the first 4 days of this week to $76:** Although the insight flags "
+                "Leisure as down, Leisure is on track on the 6-week trail, following a pullback from a Travel-driven peak "
+                "($575.65) in mid-May; Entertainment ($76.00) is the only active leaf this week, and the net change is "
+                "consistent with typical weekly fluctuations in this category."
             ),
         },
         "output": """{
-  "insight_correct": true,
-  "insight": "r{[Uncategorized](/uncategorized/weekly)} is up this week at r{$2988}, primarily driven by a $2,850 property payment alongside smaller ATM and school cafeteria charges. 😟"
+  "insight_correct": false,
+  "insight": "g{[Leisure](/leisure/weekly)} at g{$76} this week — r{[Entertainment](/leisure_entertainment/weekly)} at r{$76} from Disney Plus and Bass Pro Shops. 😊🎣"
 }""",
     },
     {
-        "name": "spend_vs_goal_dining_out_over_budget_penny_style",
+        "name": "bills_connectivity_service_fees_early_june",
+        "batch": 4,
         "input": {
-            "type": "week_spend_vs_goal",
-            "insight": "Dining Out significantly exceeded your limit this week at $79.",
+            "type": "month_spend_vs_forecast",
+            "insight": (
+                "Connectivity is significantly up the first 13 days of this month at $120.\n"
+                " Service Fees is significantly down the first 13 days of this month at $61.\n"
+                " Bills is thus significantly up the first 13 days of this month to $181.\n"
+                "(partial month Jun 1-30, 2026)\n"
+                "Category Taxonomy: parent Bills (bills), with leaf categories Connectivity (bills_connectivity), "
+                "Insurance (bills_insurance), Taxes (bills_tax), Service Fees"
+            ),
             "drivers": (
-                "Your spending in **Dining Out** reached $78.89 for the current week, an increase of $35.19 compared to "
-                "last week, with purchases including Olive Garden and Dunkin' Donuts."
+                "### Connectivity\n"
+                "Connectivity is up on the trail—focal $120 (June 1–13) is significantly above the mostly $0 band seen "
+                "in early-month partials from January to May—with Tello ($29.13) and Deferit: Verizon ($91.05) driving "
+                "the higher June spending.\n"
+                "### Service Fees\n"
+                "Service Fees are down on the trail, pulling back to $61 from a $120.21 peak in April and $44.98 in May, "
+                "as recent activity includes Deferit ($35.28), Quickbooks ($24.99), and Google One ($0.49).\n"
+                "### Bills\n"
+                "Although the insight flags Bills significantly up the first 13 days of this month to $181, Bills is down "
+                "on the overall trail—Bills are up on the trail, driven by the jump in Connectivity to $120, which more "
+                "than offset the pullback in Service Fees ($61); this combined $181 total reflects the new Verizon charge "
+                "($91.05) and Tello ($29.13) payment in the first 13 days of June."
             ),
         },
         "output": """{
   "insight_correct": true,
-  "insight": "You exceeded your budget for r{[Dining Out](/meals_dining_out/weekly)} this week at r{$79} due to spending at Olive Garden and Dunkin' Donuts. 😟"
+  "insight": "r{[Bills](/bills/monthly)} at r{$181} — r{[Connectivity](/bills_connectivity/monthly)} at r{$120}, g{[Service Fees](/bills_service_fees/monthly)} at g{$61} this month. 📱💡"
 }""",
     },
     {
-        "name": "spend_vs_goal_groceries_over_limit_costco_publix_applebees",
+        "name": "connectivity_tello_verizon_early_june",
+        "batch": 5,
         "input": {
-            "type": "week_spend_vs_goal",
-            "insight": "Groceries significantly exceeded your limit last week at $414.",
+            "type": "month_spend_vs_forecast",
+            "insight": (
+                "Connectivity is significantly up the first 13 days of this month at $120.\n"
+                "(partial month Jun 1-30, 2026)\n"
+                "Category Taxonomy: parent Bills (bills), with leaf categories Connectivity (bills_connectivity), "
+                "Insurance (bills_insurance), Taxes (bills_tax), Service Fees"
+            ),
             "drivers": (
-                "The grocery spend was driven primarily by two large trips: Costco: $190.12 and Publix: $163.92. "
-                "Additionally, there was a $59.56 transaction at Applebee's that was categorized as meals_groceries. "
-                "This appears to be a miscategorization, as dining out typically falls under meals_dining_out. Excluding "
-                "this restaurant charge, your grocery spending would have been $354.04, which still exceeds your typical "
-                "weekly spend of ~$180–$190 but is significantly closer to your average."
+                "### Connectivity\n"
+                "Connectivity is up on the trail—focal $120 (June 1–13) is significantly above the mostly $0 band seen "
+                "in early-month partials from January to May—with Tello ($29.13) and Deferit: Verizon ($91.05) driving "
+                "the higher June spending."
             ),
         },
         "output": """{
   "insight_correct": true,
-  "insight": "You blew past your grocery budget at r{[Groceries](/meals_groceries/weekly)} last week at r{$414}: Costco ~$190 and Publix ~$164 carried most of it; Applebee's ~$60 is tagged groceries but reads like dining out — without it you're still ~$354 vs ~$180–190 typical. ⚠️"
+  "insight": "r{[Connectivity](/bills_connectivity/monthly)} at r{$120} this month — Tello and Deferit: Verizon drove the jump above the usual early-month band. 📱💡"
 }""",
     },
 ]
@@ -441,29 +520,34 @@ TEST_CASES: list[dict[str, Any]] = [
 def _run_test_with_logging(
     insight_input: Dict[str, Any] | str,
     optimizer: RationalizedPennyInsightsVerbalizerOptimizer | None = None,
+    *,
+    quiet: bool = False,
 ):
     if optimizer is None:
         optimizer = RationalizedPennyInsightsVerbalizerOptimizer()
 
-    print("=" * 80)
+    if not quiet:
+        print("=" * 80)
     if isinstance(insight_input, str):
         input_text = insight_input.strip()
         if not input_text:
             raise ValueError("insight_input string is empty.")
     else:
         input_text = format_insight_input_for_llm(insight_input)
-    print("LLM INPUT (markdown):")
-    print("=" * 80)
-    print(input_text)
-    print("=" * 80 + "\n")
+    if not quiet:
+        print("LLM INPUT (markdown):")
+        print("=" * 80)
+        print(input_text)
+        print("=" * 80 + "\n")
 
     result = optimizer.generate_response(input_text)
 
-    print("=" * 80)
-    print("LLM OUTPUT (rationalized verbalized):")
-    print("=" * 80)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
-    print("=" * 80 + "\n")
+    if not quiet:
+        print("=" * 80)
+        print("LLM OUTPUT (rationalized verbalized):")
+        print("=" * 80)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print("=" * 80 + "\n")
     return result
 
 
@@ -480,7 +564,13 @@ def get_test_case(test_name_or_index):
     return None
 
 
-def run_test(test_name_or_index_or_dict, optimizer: RationalizedPennyInsightsVerbalizerOptimizer | None = None):
+def run_test(
+    test_name_or_index_or_dict,
+    optimizer: RationalizedPennyInsightsVerbalizerOptimizer | None = None,
+    *,
+    run_sandbox: bool = True,
+    quiet: bool = False,
+):
     if optimizer is None:
         optimizer = RationalizedPennyInsightsVerbalizerOptimizer()
 
@@ -494,28 +584,84 @@ def run_test(test_name_or_index_or_dict, optimizer: RationalizedPennyInsightsVer
             print("Invalid test dict: must contain 'input' or 'insight_input' key.")
             return None
         name = di.get("name", "custom_test")
-        print(f"\n{'='*80}\nRunning test: {name}\n{'='*80}\n")
-        result = _run_test_with_logging(payload, optimizer)
-        ideal = di.get("output") or di.get("ideal_response")
-        if ideal:
-            print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + ideal + "\n" + "=" * 80 + "\n")
+        if not quiet:
+            print(f"\n{'='*80}\nRunning test: {name}\n{'='*80}\n")
+        result = _run_test_with_logging(payload, optimizer, quiet=quiet)
+        ideal_raw = di.get("output") or di.get("ideal_response")
+        ideal = _parse_expected_output(ideal_raw) if ideal_raw else None
+        if ideal and not quiet:
+            print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + ideal_raw + "\n" + "=" * 80 + "\n")
+        if run_sandbox and result and ideal and isinstance(payload, dict):
+            sand = mechanical_sandbox_check(ideal=ideal, actual=result, input_payload=payload)
+            if not quiet:
+                print("=" * 80)
+                print("SANDBOX EXECUTION:")
+                print("=" * 80)
+                print(sand["eval_text"])
+                print(
+                    f"{'✅' if sand['good_copy'] else '❌'} good_copy={sand['good_copy']} "
+                    f"info_correct={sand['info_correct']} similarity={sand['similarity']}"
+                )
+                print("=" * 80 + "\n")
+            return {"result": result, "sandbox": sand, "ideal": ideal, "name": name}
         return result
 
     tc = get_test_case(test_name_or_index_or_dict)
     if tc is None:
         print(f"Test case '{test_name_or_index_or_dict}' not found.")
         return None
-    print(f"\n{'='*80}\nRunning test: {tc['name']}\n{'='*80}\n")
-    result = _run_test_with_logging(tc["input"], optimizer)
-    ideal = tc.get("output") or tc.get("ideal_response")
-    if ideal:
-        print("\n" + "=" * 80 + "\nIDEAL RESPONSE:\n" + "=" * 80 + "\n" + ideal + "\n" + "=" * 80 + "\n")
-    return result
+    return run_test(tc, optimizer, run_sandbox=run_sandbox, quiet=quiet)
 
 
-def main(test: str | None = None, *, no_thinking: bool = False):
+def _parse_expected_output(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def run_batch(
+    batch_num: int,
+    optimizer: RationalizedPennyInsightsVerbalizerOptimizer | None = None,
+    *,
+    quiet: bool = True,
+) -> list[dict[str, Any]]:
+    cases = [tc for tc in TEST_CASES if int(tc.get("batch") or 0) == int(batch_num)]
+    if not cases:
+        raise ValueError(f"No tests found for batch={batch_num}")
+    summaries: list[dict[str, Any]] = []
+    if optimizer is not None:
+        optimizer.quiet = quiet
+    for tc in cases:
+        out = run_test(tc, optimizer, run_sandbox=True, quiet=quiet)
+        if isinstance(out, dict) and "sandbox" in out:
+            summaries.append(
+                {
+                    "name": tc["name"],
+                    "good_copy": out["sandbox"]["good_copy"],
+                    "info_correct": out["sandbox"]["info_correct"],
+                    "similarity": out["sandbox"]["similarity"],
+                    "issues": out["sandbox"]["issues"],
+                    "actual": out["result"],
+                    "ideal": out["ideal"],
+                }
+            )
+    return summaries
+
+
+def main(test: str | None = None, *, batch: int | None = None, no_thinking: bool = False):
     thinking_budget = 0 if no_thinking else 1024
     optimizer = RationalizedPennyInsightsVerbalizerOptimizer(thinking_budget=thinking_budget)
+    optimizer.quiet = False
+
+    if batch is not None:
+        summaries = run_batch(batch, optimizer, quiet=False)
+        passed = sum(1 for s in summaries if s["good_copy"])
+        print(f"\nBatch {batch}: {passed}/{len(summaries)} passed sandbox")
+        return
 
     if test is not None:
         if test.strip().lower() == "all":
@@ -536,17 +682,19 @@ def _print_usage():
     print("Usage:")
     print("  Run a single test: --test <name_or_index>")
     print("  Run all tests: --test all")
+    print("  Run batch: --batch <1-5>")
     print("  Disable thinking: --no-thinking (thinking_budget=0)")
     print("\nAvailable test cases:")
     for i, tc in enumerate(TEST_CASES):
-        print(f"  {i}: {tc['name']}")
+        print(f"  {i}: {tc['name']} (batch {tc.get('batch', '?')})")
     print("  all: run all test cases")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run P:RationalizedPennyInsightsVerbalizer optimizer tests")
     parser.add_argument("--test", type=str, help='Test name or index (e.g. "spend_vs_forecast_leisure_down" or "0")')
+    parser.add_argument("--batch", type=int, help="Run all tests in batch N (1-5)")
     parser.add_argument("--no-thinking", action="store_true", help="Set thinking_budget=0 (Thinking OFF)")
     args = parser.parse_args()
-    main(test=args.test, no_thinking=args.no_thinking)
+    main(test=args.test, batch=args.batch, no_thinking=args.no_thinking)
 

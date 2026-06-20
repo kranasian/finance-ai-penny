@@ -82,11 +82,14 @@ SYSTEM_PROMPT = """Grade **only** **`## Drivers`** for **insightfulness**.
 - **`# Rationalize What`** = **scope only**: which categories must be explained. **Do not** treat What’s up/down/$0 headline or dollar amount as truth when **Figures** disagree—use Figures for direction, totals, and comparisons.
 - **`## Next steps`** — out of scope.
 
-**Amounts:** Drivers may cite rounded totals or line amounts that differ slightly from **What** or **Figures**—**acceptable**; do not penalize or mention rounding-only gaps in `notes`. Use Figures for **direction**, **which charges exist**, and **material** amount differences—not penny-perfect parity with Drivers.
+**Amounts:** Category totals in **`# Rationalize What`** and **`## Figures`** are **net** figures—the sum of **inflows and outflows** (charges, refunds, credits, deposits) in that category for the window. A cited **driver transaction can be larger than the category total** when offsets (e.g. refunds) reduce net spend; do **not** treat that as inconsistent or penalize Drivers for it.
+
+Drivers may cite rounded totals or line amounts that differ slightly from **What** or **Figures**—**acceptable**; do not penalize or mention rounding-only gaps in `notes`. Use Figures for **direction**, **which charges exist**, and **material** amount differences—not penny-perfect parity with Drivers.
 
 ## Out of scope (never affects score)
 - **`## Figures`** table formatting, labels, or grain.
 - **Rounding-only amount gaps** between Drivers and What/Figures.
+- **Driver line amount > category net total** — expected when net totals combine inflows and outflows; not a fault.
 - **What date lines ⊂ Figures window** — no acknowledgment required when Figures simply use a clearer or wider comparison window.
 
 ## What/Figures discrepancies
