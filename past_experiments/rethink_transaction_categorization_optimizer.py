@@ -8,19 +8,29 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-SYSTEM_PROMPT = """You are a financial transaction categorization expert. Categorize each transaction using the subcategories below.
+SYSTEM_PROMPT = """You are a financial transaction categorization expert. Categorize each transaction using only the input fields and the subcategory meanings below.
 
 ## Input Format
 JSON array of transaction groups. Each entry contains:
 - `establishment_name`: Merchant/establishment name
 - `establishment_description`: What the establishment provides
 - `transactions`: Array with `transaction_id`, `transaction_text` (raw bank statement text), and `amount`
+- `category_options`: Allowed categories for that group (`unknown` is always valid even when not listed). **If omitted**, treat every **leaf subcategory** listed under Parent Category and Subcategory Meanings below as available—never parent categories (`income`, `meals`, `leisure`, `bills`, `shelter`, `education`, `shopping`, `transportation`, `health`).
 
-## Rational Basis for Category
-Categorize only from establishment_name, establishment_description, transaction_text, and/or amount. Do not guess. Pick the most specific matching subcategory unless `unknown` applies. Outflows (positive amount) are never income—use an expense or `transfer` subcategory.
+## Input-Only Evidence (strict)
+Use **only** `establishment_name`, `establishment_description`, `transaction_text`, `amount`, and `category_options` (or the default full leaf list when omitted). Do not use outside knowledge, merchant research, or assumptions beyond what these fields state.
+
+## Category Selection
+- Output must be an exact copy of one allowed category string, or `unknown`.
+- When `category_options` is present, it is the allowed set for that group. When absent, all leaf subcategories from this prompt are allowed (plus `unknown`).
+- **Always closest fit for identifiable services/fees/specialty goods**: Purchases or payments where the input identifies a **specific service, fee type, or specialty retailer with one dominant product type** must map to the **closest matching** allowed subcategory—even when no category explicitly lists that good or service. Use `medium` or `low` confidence when the fit is weak.
+- **`unknown` when purchase item is unclear**: Use `unknown` when it is genuinely unclear **what was purchased**—including multi-product or variety retailers where many unrelated item types are plausible and the input does not identify what was bought. Also use for peer-to-peer with no stated purpose, bare transfer mechanics without explicit same-person ownership, or purchase text with no merchant or product clue. Do **not** use `unknown` when a **service or fee type** is identifiable but no category is a perfect fit—force the closest allowed category instead.
+- **Service/fee type is sufficient; product type is not**: When establishment fields or transaction text identify a **service provider or fee type**, use that for closest-fit categorization. Knowing only that a retailer sells many unrelated product types is **not** sufficient—without an identifiable item, use `unknown`.
+- If `establishment_name` / `establishment_description` conflict with `transaction_text` or `amount`, follow evidence priority—do not let a wrong establishment label override clearer transaction text or amount sign.
+- Outflows (positive amount) are never income.
 
 ## Inflows (negative amount)
-Negative amounts are inflows. Refunds or reversals of a prior expense use the same expense subcategory when identifiable. Income subcategories only for clear earnings (salary, interest, business revenue).
+Negative amounts are inflows. Refunds or reversals of a prior expense use the same expense subcategory when identifiable in the input. Income subcategories only for clear earnings stated in the input (salary, interest, business revenue).
 
 ## Parent Category and Subcategory Meanings
 - **income**:
@@ -33,13 +43,13 @@ Negative amounts are inflows. Refunds or reversals of a prior expense use the sa
   - `food_dining_out`: restaurant meals
   - `food_delivered_food`: delivered food
 - **leisure**:
-  - `leisure_entertainment`: movies, concerts, events, recreation
+  - `leisure_entertainment`: movies, concerts, events, recreation, alcoholic beverages
   - `leisure_travel_vacations`: trips and vacations
 - **bills**:
   - `bills_connectivity`: internet, cable, phone
   - `bills_insurance`: health, auto, home insurance premiums
   - `bills_tax`: local, state, or federal taxes
-  - `bills_service_fees`: bank or administrative fees
+  - `bills_service_fees`: bank or administrative fees, memberships, association dues
 - **shelter**:
   - `shelter_home`: mortgage or rent
   - `shelter_utilities`: electricity, gas, water, trash
@@ -60,62 +70,29 @@ Negative amounts are inflows. Refunds or reversals of a prior expense use the sa
   - `health_gym_wellness`: gym memberships, supplements
   - `health_personal_care`: haircuts, toiletries
 - **donations_gifts**: charitable giving or gifts for others
-- **transfer**: Movement between the same person's own accounts, or payment toward their own debt, mortgage, or liability. Not P2P to another person.
+- **transfer**: Movement between accounts owned by the **same person**, or payment toward **their own** debt, mortgage, or liability. Requires **explicit** same-person/own-account wording in the input—not merely transfer-related labels.
 
 ## Analysis Process
-1. **Transaction text** (primary): Keywords and patterns indicating purpose
-2. **Establishment**: Name and description for business type
+1. **Transaction text** (primary): Keywords and patterns in `transaction_text`
+2. **Establishment**: `establishment_name` and `establishment_description` as stated in input
 3. **Amount**: Sign (inflow/outflow) and size as supporting context
-4. **Decision order**: Require explicit same-person transfer evidence before `transfer`; if ownership is unclear, `unknown` beats `transfer` → else purpose-specific subcategory → else `unknown`
-5. **Reasoning**: Brief positive evidence for the chosen category only—never discuss alternatives or available options
+4. **Decision order**: (a) Resolve field conflicts using evidence priority. (b) **Transfer check first**: if the input lacks explicit same-person/own-account ownership, do **not** output `transfer`—use `unknown` even when transaction text or description says "transfer", "interbank transfer", "internet transfer", "from checking", "from savings", or shows masked account numbers. (c) Multi-product variety retailer with no identifiable purchased item → `unknown`. (d) Identifiable service, fee type, or specialty-goods purchase → closest matching allowed category. (e) Otherwise genuinely unidentified → `unknown`.
+5. **Reasoning**: Brief positive evidence from input fields only—never discuss alternatives or `category_options`
 
 ## Confidence Levels
-- **high**: Strong, aligned evidence
-- **medium**: Good evidence with some ambiguity
-- **low**: Weak or conflicting evidence
+- **high**: Strong, aligned input evidence
+- **medium**: Good input evidence with some ambiguity
+- **low**: Weak or conflicting input evidence
 
 ## Critical Rules
-- **Subcategory only**: Output a leaf subcategory from this prompt—never a parent (`income`, `meals`, `leisure`, `bills`, `shelter`, `education`, `shopping`, `transportation`, `health`). If no leaf fits, use `unknown`.
-- **unknown**: Purpose too vague, or establishment too broad to pick one subcategory confidently.
-- **transfer**: Own card/loan/mortgage payment, or own-account movement with explicit ownership—not generic savings/checking transfers (→ `unknown`). E.g. credit card payment → `transfer`; "Transfer From Savings" without ownership proof → `unknown`.
-- **P2P** (Zelle, Venmo, PayPal, etc.): Same person → `transfer`; another person with stated purpose → matching expense subcategory; unclear identity or purpose → `unknown`.
-- **Marketplaces** without identifiable purchase → `unknown`. Clear retail with unstated product → best-fit shopping subcategory; state basis in reasoning.
-- **Evidence priority**: transaction_text > establishment > amount. Generic establishment text must not override transfer-identity ambiguity.
+- **Subcategory only**: Output a leaf subcategory—never a parent (`income`, `meals`, `leisure`, `bills`, `shelter`, `education`, `shopping`, `transportation`, `health`).
+- **unknown (unclear purchase or unidentified purpose)**: Use when **what was purchased** is unclear (including variety/multi-product retailers with no identifiable item), or for P2P/transfers per the rules above. Do **not** use `unknown` when a **service or fee type** is identifiable but no category is a perfect fit—force the closest allowed category instead.
+- **transfer (strict)**: The `transfer` **category** applies only when the input **explicitly** states same-person ownership or payment to the user's **own** card, loan, mortgage, or liability. The word "transfer" in merchant name, establishment description, or transaction text does **not** by itself justify the `transfer` category. Interbank, internet, internal, checking, savings, or masked-account movement **without** explicit own-account/same-person language → `unknown`, never `transfer`. Never infer same-person ownership from transfer mechanics, account type, or inflow/outflow sign alone.
+- **P2P**: Payment to another person with no stated purpose in the input → `unknown`. Never `donations_gifts` or `transfer` without explicit input evidence. P2P with stated purpose in the input → matching expense subcategory from the allowed set.
+- **General / multi-product retailers**: Variety stores, dollar stores, and mixed-product retailers where many unrelated item types are plausible and the input does not identify what was bought → `unknown`. Specialty retailers with one dominant product type → closest subcategory.
+- **Evidence priority**: `transaction_text` > `establishment_name` / `establishment_description` > `amount`. When fields conflict, trust the higher-priority field.
 - **Output**: Exact input `transaction_id`; only `transaction_id`, `reasoning`, `category`, `confidence` per transaction.
 """
-
-VALID_SUBCATEGORIES = [
-  "income_salary",
-  "income_interest",
-  "income_sidegig",
-  "income_business",
-  "food_groceries",
-  "food_dining_out",
-  "food_delivered_food",
-  "leisure_entertainment",
-  "leisure_travel_vacations",
-  "bills_connectivity",
-  "bills_insurance",
-  "bills_tax",
-  "bills_service_fees",
-  "shelter_home",
-  "shelter_utilities",
-  "shelter_upkeep",
-  "education_kids_activities",
-  "education_tuition",
-  "shopping_clothing",
-  "shopping_gadgets",
-  "shopping_kids",
-  "shopping_pets",
-  "transport_public",
-  "transport_car_fuel",
-  "health_medical_pharmacy",
-  "health_gym_wellness",
-  "health_personal_care",
-  "donations_gifts",
-  "transfer",
-  "unknown",
-]
 
 OUTPUT_SCHEMA = types.Schema(
   type=types.Type.ARRAY,
@@ -124,20 +101,20 @@ OUTPUT_SCHEMA = types.Schema(
     properties={
       "transaction_id": types.Schema(
         type=types.Type.INTEGER,
-        description="Exact copy of input transaction_id.",
+        description="The transaction ID from the input transaction",
       ),
       "reasoning": types.Schema(
         type=types.Type.STRING,
-        description="Brief positive evidence only.",
+        description="Brief 1-2 sentence explanation of why this category was chosen. Focus on the key decisive factors only.",
       ),
       "category": types.Schema(
         type=types.Type.STRING,
-        description="Ambiguous savings/checking transfers → unknown, not transfer.",
-        enum=VALID_SUBCATEGORIES,
+        description="One of the category_options in the input, or any leaf subcategory from the prompt when category_options is omitted; or 'unknown' when the purchased item or payment purpose is genuinely unclear",
       ),
       "confidence": types.Schema(
         type=types.Type.STRING,
         enum=["high", "medium", "low"],
+        description="Confidence level in the categorization: 'high' for strong evidence, 'medium' for good evidence with some ambiguity, 'low' for weak/conflicting evidence",
       ),
     },
     required=["transaction_id", "reasoning", "category", "confidence"],
@@ -160,9 +137,10 @@ class RethinkTransactionCategorization:
     self.model_name = model_name
     
     # Generation Configuration Constants
+    self.top_k = 40
     self.temperature = 0.5
     self.top_p = 0.95
-    self.max_output_tokens = 4096
+    self.max_output_tokens = 2048
     
     # Safety Settings
     self.safety_settings = [
@@ -201,6 +179,7 @@ output: """
     contents = [types.Content(role="user", parts=[request_text])]
     
     generate_content_config = types.GenerateContentConfig(
+      top_k=self.top_k,
       temperature=self.temperature,
       top_p=self.top_p,
       max_output_tokens=self.max_output_tokens,
@@ -306,239 +285,323 @@ _MAX_CASES_PER_OPTIMIZER_BATCH = 1
 TEST_CASES = [
   {
     "batch": 1,
-    "name": "batch_1_salary_fuel_utility_mix",
+    "name": "batch_1_sidegig_shell_text_mismatch_rent_nomatch",
     "input": """[
   {
-    "establishment_name": "ACME Corp Payroll",
-    "establishment_description": "Biweekly employee payroll deposit from employer.",
+    "establishment_name": "Upwork",
+    "establishment_description": "Freelance marketplace paying contractors for completed project work.",
     "transactions": [
       {
-        "transaction_id": 7001001,
-        "transaction_text": "Acme Corp Payroll Direct Dep",
-        "amount": -2480.55
+        "transaction_id": 9011001,
+        "transaction_text": "Upwork Escrow Release",
+        "amount": -875.00
       }
+    ],
+    "category_options": [
+      "income_sidegig",
+      "income_salary",
+      "income_business",
+      "income_interest",
+      "transfer"
     ]
   },
   {
-    "establishment_name": "Shell Gas",
-    "establishment_description": "Fuel station for gasoline purchases.",
+    "establishment_name": "Whole Foods Market",
+    "establishment_description": "Organic grocery supermarket selling food for home use.",
     "transactions": [
       {
-        "transaction_id": 7001002,
-        "transaction_text": "Shell Oil 574421 Boston Ma",
-        "amount": 52.34
+        "transaction_id": 9011002,
+        "transaction_text": "Shell Oil 44221 Houston Tx",
+        "amount": 41.20
       }
+    ],
+    "category_options": [
+      "transport_car_fuel",
+      "food_groceries",
+      "food_dining_out",
+      "bills_service_fees",
+      "shopping_gadgets"
     ]
   },
   {
-    "establishment_name": "City Water Utility",
-    "establishment_description": "Municipal water and sewer utility billing.",
+    "establishment_name": "Greystar Property Mgmt",
+    "establishment_description": "Property manager collecting monthly apartment rent from tenants.",
     "transactions": [
       {
-        "transaction_id": 7001003,
-        "transaction_text": "City Water Autopay",
-        "amount": 78.11
+        "transaction_id": 9011003,
+        "transaction_text": "Greystar Rent Pmt Apt 4B",
+        "amount": 1850.00
       }
+    ],
+    "category_options": [
+      "bills_insurance",
+      "bills_service_fees",
+      "bills_tax",
+      "income_business",
+      "leisure_entertainment"
     ]
   }
 ]""",
-    "output": """[
-  {
-    "transaction_id": 7001001,
-    "reasoning": "Direct payroll deposit from an employer indicates regular paycheck income.",
-    "category": "income_salary",
-    "confidence": "high"
-  },
-  {
-    "transaction_id": 7001002,
-    "reasoning": "The merchant is a gas station and the charge is for fuel.",
-    "category": "transport_car_fuel",
-    "confidence": "high"
-  },
-  {
-    "transaction_id": 7001003,
-    "reasoning": "The payment is to a city water utility for household utility service.",
-    "category": "shelter_utilities",
-    "confidence": "high"
-  }
-]""",
+    "output": [
+      {
+        "transaction_id": 9011001,
+        "reasoning": "The inflow is a freelance contractor payment from a project marketplace.",
+        "category": "income_sidegig",
+        "confidence": "high",
+      },
+      {
+        "transaction_id": 9011002,
+        "reasoning": "The transaction text shows a gas-station fuel purchase, which overrides the grocery establishment label.",
+        "category": "transport_car_fuel",
+        "confidence": "high",
+      },
+      {
+        "transaction_id": 9011003,
+        "reasoning": "The payment is clearly monthly apartment rent, but none of the listed categories cover housing rent. Closest option is business income, possibly for an office space.",
+        "category": "income_business",
+        "confidence": "low",
+      },
+    ],
   },
   {
     "batch": 2,
-    "name": "batch_2_transfer_and_unknown_p2p",
+    "name": "batch_2_own_card_venmo_text_mismatch_interbank",
     "input": """[
   {
     "establishment_name": "Chase Credit Card",
-    "establishment_description": "Payment to user's own credit card account.",
+    "establishment_description": "Payment to the user's own credit card account.",
     "transactions": [
       {
-        "transaction_id": 7002001,
-        "transaction_text": "Online Payment To Chase Card 4432",
-        "amount": 500.00
+        "transaction_id": 9012001,
+        "transaction_text": "Online Payment To Chase Card 9912",
+        "amount": 425.00
       }
+    ],
+    "category_options": [
+      "transfer",
+      "bills_service_fees",
+      "shelter_home",
+      "income_interest",
+      "donations_gifts"
     ]
   },
   {
-    "establishment_name": "Venmo",
-    "establishment_description": "Peer-to-peer payment app.",
+    "establishment_name": "Venmo Payment To Sarah: Food",
+    "establishment_description": "Payment to a friend for food.",
     "transactions": [
       {
-        "transaction_id": 7002002,
-        "transaction_text": "Venmo Payment To Alex",
-        "amount": 45.00
+        "transaction_id": 9012002,
+        "transaction_text": "Venmo Payment To Sarah",
+        "amount": 35.00
       }
+    ],
+    "category_options": [
+      "leisure_entertainment",
+      "donations_gifts",
+      "food_dining_out",
+      "transfer",
+      "bills_service_fees"
     ]
   },
   {
-    "establishment_name": "Transfer From SV ***0012",
-    "establishment_description": "Internal transfer from a savings account.",
+    "establishment_name": "Internet Transfer from CK ***2974",
+    "establishment_description": "An interbank transfer from a checking account.",
     "transactions": [
       {
-        "transaction_id": 7002003,
-        "transaction_text": "Transfer From Savings 0012",
-        "amount": -300.00
+        "transaction_id": 9012003,
+        "transaction_text": "Internet Transfer from Xx2974 CK -",
+        "amount": -10.00
       }
+    ],
+    "category_options": [
+      "transfer",
+      "income_interest",
+      "income_salary",
+      "bills_service_fees",
+      "donations_gifts"
     ]
   }
 ]""",
-    "output": """[
-  {
-    "transaction_id": 7002001,
-    "reasoning": "The transaction text shows a payment to the user's own credit card account.",
-    "category": "transfer",
-    "confidence": "high"
-  },
-  {
-    "transaction_id": 7002002,
-    "reasoning": "This is a P2P payment to another person with no stated purpose.",
-    "category": "unknown",
-    "confidence": "high"
-  },
-  {
-    "transaction_id": 7002003,
-    "reasoning": "Unclear what the transaction is for.",
-    "category": "unknown",
-    "confidence": "high"
-  }
-]""",
+    "output": [
+      {
+        "transaction_id": 9012001,
+        "reasoning": "The establishment description states this is a payment to the user's own credit card account.",
+        "category": "transfer",
+        "confidence": "high",
+      },
+      {
+        "transaction_id": 9012002,
+        "reasoning": "The transaction text is a P2P payment to another person with no stated purpose, not for food.",
+        "category": "unknown",
+        "confidence": "high",
+      },
+      {
+        "transaction_id": 9012003,
+        "reasoning": "The input describes an interbank transfer without explicit same-person ownership or a clear expense purpose.",
+        "category": "unknown",
+        "confidence": "high",
+      },
+    ],
   },
   {
     "batch": 3,
-    "name": "batch_3_delivery_refund_tax",
+    "name": "batch_3_chevron_text_mismatch_gym_vet_nomatch",
     "input": """[
   {
-    "establishment_name": "Uber Eats",
-    "establishment_description": "Food delivery platform.",
+    "establishment_name": "Geico",
+    "establishment_description": "Auto insurance company collecting policy premium payments.",
     "transactions": [
       {
-        "transaction_id": 7003001,
-        "transaction_text": "Uber Eats Help.Uber.Com",
-        "amount": 27.89
+        "transaction_id": 9013001,
+        "transaction_text": "Chevron 204418 Denver Co",
+        "amount": 48.90
       }
-    ]
-  },
-  {
-    "establishment_name": "Uber Eats",
-    "establishment_description": "Food delivery platform.",
-    "transactions": [
-      {
-        "transaction_id": 7003002,
-        "transaction_text": "Uber Eats Refund",
-        "amount": -27.89
-      }
-    ]
-  },
-  {
-    "establishment_name": "State Tax Board",
-    "establishment_description": "State government tax payment portal.",
-    "transactions": [
-      {
-        "transaction_id": 7003003,
-        "transaction_text": "State Tax Web Pmt",
-        "amount": 420.00
-      }
-    ]
-  }
-]""",
-    "output": """[
-  {
-    "transaction_id": 7003001,
-    "reasoning": "The charge is from a food delivery platform for delivered meals.",
-    "category": "food_delivered_food",
-    "confidence": "high"
-  },
-  {
-    "transaction_id": 7003002,
-    "reasoning": "The transaction is a refund from the same food delivery merchant.",
-    "category": "food_delivered_food",
-    "confidence": "high"
-  },
-  {
-    "transaction_id": 7003003,
-    "reasoning": "The payment is made to a state tax authority for taxes.",
-    "category": "bills_tax",
-    "confidence": "high"
-  }
-]""",
-  },
-  {
-    "batch": 4,
-    "name": "batch_4_marketplace_gym_tuition",
-    "input": """[
-  {
-    "establishment_name": "Amazon Marketplace",
-    "establishment_description": "General online marketplace with mixed product types.",
-    "transactions": [
-      {
-        "transaction_id": 7004001,
-        "transaction_text": "Amazon Mktplace Pmts Amzn.Com/Bill",
-        "amount": 63.42
-      }
+    ],
+    "category_options": [
+      "transport_car_fuel",
+      "bills_insurance",
+      "bills_service_fees",
+      "food_groceries",
+      "shopping_gadgets"
     ]
   },
   {
     "establishment_name": "Planet Fitness",
-    "establishment_description": "Gym and wellness membership facility.",
+    "establishment_description": "Gym chain offering monthly fitness memberships.",
     "transactions": [
       {
-        "transaction_id": 7004002,
-        "transaction_text": "Planet Fitness Club Monthly",
-        "amount": 10.00
+        "transaction_id": 9013002,
+        "transaction_text": "Planet Fitness Club Fee",
+        "amount": 24.99
       }
+    ],
+    "category_options": [
+      "health_gym_wellness",
+      "health_personal_care",
+      "leisure_entertainment",
+      "bills_service_fees",
+      "shopping_clothing"
     ]
   },
   {
-    "establishment_name": "State University",
-    "establishment_description": "University tuition and academic fees.",
+    "establishment_name": "BluePearl Pet Hospital",
+    "establishment_description": "Veterinary emergency clinic providing animal medical treatment.",
     "transactions": [
       {
-        "transaction_id": 7004003,
-        "transaction_text": "State University Tuition Payment",
-        "amount": 1850.00
+        "transaction_id": 9013003,
+        "transaction_text": "BluePearl Vet Emergency",
+        "amount": 312.00
       }
+    ],
+    "category_options": [
+      "bills_service_fees",
+      "donations_gifts",
+      "leisure_entertainment",
+      "food_groceries",
+      "bills_insurance"
     ]
   }
 ]""",
-    "output": """[
-  {
-    "transaction_id": 7004001,
-    "reasoning": "The merchant is a general marketplace and the specific purchase type is not identified.",
-    "category": "unknown",
-    "confidence": "high"
+    "output": [
+      {
+        "transaction_id": 9013001,
+        "reasoning": "The transaction text shows a Chevron gas-station charge, not an insurance premium.",
+        "category": "transport_car_fuel",
+        "confidence": "high",
+      },
+      {
+        "transaction_id": 9013002,
+        "reasoning": "The recurring charge is a monthly gym membership at a fitness facility.",
+        "category": "health_gym_wellness",
+        "confidence": "high",
+      },
+      {
+        "transaction_id": 9013003,
+        "reasoning": "The payment is clearly for veterinary medical treatment, but no medical or pharmacy category is listed. Closest is service fees, possibly for the vet's professional fees.",
+        "category": "bills_service_fees",
+        "confidence": "high",
+      },
+    ],
   },
   {
-    "transaction_id": 7004002,
-    "reasoning": "The recurring membership charge is for a gym facility.",
-    "category": "health_gym_wellness",
-    "confidence": "high"
+    "batch": 4,
+    "name": "batch_4_fee_amount_mismatch_tutoring_netflix_text",
+    "input": """[
+  {
+    "establishment_name": "Ally Bank Savings",
+    "establishment_description": "Interest earned on the user's savings account balance.",
+    "transactions": [
+      {
+        "transaction_id": 9014001,
+        "transaction_text": "Monthly Maintenance Fee",
+        "amount": 12.00
+      }
+    ],
+    "category_options": [
+      "bills_service_fees",
+      "income_interest",
+      "income_salary",
+      "transfer",
+      "donations_gifts"
+    ]
   },
   {
-    "transaction_id": 7004003,
-    "reasoning": "The payment is explicitly for university tuition.",
-    "category": "education_tuition",
-    "confidence": "high"
+    "establishment_name": "Sylvan Learning Center",
+    "establishment_description": "After-school tutoring and test-prep programs for school-age children.",
+    "transactions": [
+      {
+        "transaction_id": 9014002,
+        "transaction_text": "Sylvan Learning Monthly",
+        "amount": 220.00
+      }
+    ],
+    "category_options": [
+      "leisure_entertainment",
+      "food_dining_out",
+      "bills_connectivity",
+      "transport_public",
+      "bills_service_fees"
+    ]
+  },
+  {
+    "establishment_name": "Best Buy",
+    "establishment_description": "Consumer electronics and appliance retail store.",
+    "transactions": [
+      {
+        "transaction_id": 9014003,
+        "transaction_text": "Netflix.Com Bill Pay",
+        "amount": 15.99
+      }
+    ],
+    "category_options": [
+      "leisure_entertainment",
+      "shopping_gadgets",
+      "bills_connectivity",
+      "food_dining_out",
+      "bills_service_fees"
+    ]
   }
 ]""",
+    "output": [
+      {
+        "transaction_id": 9014001,
+        "reasoning": "The outflow and transaction text show a bank maintenance fee, not interest income despite the establishment description.",
+        "category": "bills_service_fees",
+        "confidence": "high",
+      },
+      {
+        "transaction_id": 9014002,
+        "reasoning": "The charge is clearly for children's tutoring, but no education category appears in the options. Closest option is service fees, possibly for the teachers' professional fees.",
+        "category": "bills_service_fees",
+        "confidence": "low",
+      },
+      {
+        "transaction_id": 9014003,
+        "reasoning": "The transaction text shows a Netflix streaming bill, not an electronics retail purchase.",
+        "category": "leisure_entertainment",
+        "confidence": "high",
+      },
+    ],
   },
 ]
 
@@ -550,6 +613,27 @@ assert sorted(_optimizer_batch_sizes.keys()) == [1, 2, 3, 4], _optimizer_batch_s
 assert all(_count == _MAX_CASES_PER_OPTIMIZER_BATCH for _count in _optimizer_batch_sizes.values()), _optimizer_batch_sizes
 
 
+def _ideal_outcome(tc: dict):
+  ideal = tc.get("output")
+  if ideal is None:
+    return None
+  if isinstance(ideal, str):
+    return json.loads(ideal)
+  return ideal
+
+
+def get_test_case(test_name_or_index):
+  if isinstance(test_name_or_index, int):
+    if 0 <= test_name_or_index < len(TEST_CASES):
+      return TEST_CASES[test_name_or_index]
+    return None
+  if isinstance(test_name_or_index, str):
+    for test_case in TEST_CASES:
+      if test_case["name"] == test_name_or_index:
+        return test_case
+  return None
+
+
 def _compare_expected_categories(actual_items, ideal_items):
   actual_map = {str(item.get("transaction_id")): item.get("category") for item in actual_items}
   ideal_map = {str(item.get("transaction_id")): item.get("category") for item in ideal_items}
@@ -558,38 +642,44 @@ def _compare_expected_categories(actual_items, ideal_items):
   return True, "transaction_id to category mapping matches reference"
 
 
-def run_test(test_name_or_index_or_dict, categorizer: RethinkTransactionCategorization = None):
-  if isinstance(test_name_or_index_or_dict, dict):
-    tc = test_name_or_index_or_dict
-  elif isinstance(test_name_or_index_or_dict, int):
-    idx = test_name_or_index_or_dict
-    if not (0 <= idx < len(TEST_CASES)):
-      return None
-    tc = TEST_CASES[idx]
-  else:
-    tc = next((t for t in TEST_CASES if t["name"] == test_name_or_index_or_dict), None)
-    if not tc:
-      return None
-
-  print(f"# Test: **{tc['name']}**")
+def _run_test_with_logging(tc: dict, categorizer: RethinkTransactionCategorization = None):
   if categorizer is None:
     categorizer = RethinkTransactionCategorization()
 
-  llm_input = tc["input"]
-  result = categorizer.generate_response(llm_input)
-  print("## LLM Output:")
+  print("\n" + "=" * 80)
+  print(f"Running categorization test: {tc['name']}")
+  print("=" * 80)
+  print("\nLLM INPUT:")
+  print(tc["input"])
+
+  result = categorizer.generate_response(tc["input"])
+
+  print("\nLLM OUTPUT:")
   print(json.dumps(result, indent=2))
-  if tc.get("output"):
-    print("## Ideal output (reference):")
-    print(tc["output"])
-    try:
-      expected = json.loads(tc["output"])
-      ok, detail = _compare_expected_categories(result, expected)
-      print("## Category mapping match:", "PASS" if ok else "FAIL")
-      print(detail)
-    except json.JSONDecodeError as exc:
-      print(f"Failed to parse reference output: {exc}")
+
+  ideal = _ideal_outcome(tc)
+  if ideal is not None:
+    print("\nEXPECTED OUTPUT (compact):")
+    print(json.dumps(ideal, indent=2))
+    ok, detail = _compare_expected_categories(result, ideal)
+    print("\nCategory mapping match:", "PASS" if ok else "FAIL")
+    print(detail)
+
+  print("\n" + "=" * 80 + "\n")
   return result
+
+
+def run_test(test_name_or_index_or_dict, categorizer: RethinkTransactionCategorization = None):
+  if isinstance(test_name_or_index_or_dict, dict):
+    tc = test_name_or_index_or_dict
+  else:
+    tc = get_test_case(test_name_or_index_or_dict)
+
+  if tc is None:
+    print(f"Test case '{test_name_or_index_or_dict}' not found.")
+    return None
+
+  return _run_test_with_logging(tc, categorizer)
 
 
 def run_all_tests_batch(categorizer: RethinkTransactionCategorization = None, batch_num: int = 1):
