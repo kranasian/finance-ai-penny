@@ -77,7 +77,8 @@ def _build_output_schema() -> "types.Schema":
                 description=(
                     "Single-line Penny message verbalizing **# Drivers** only. "
                     "Every category: g{[Display](/slug/weekly)} or r{[Display](/slug/monthly)}; "
-                    "every category total: matching colored g{$N}/r{$N}; ≥1 emoji; ≤320 chars; no newlines."
+                    "every category total: matching colored g{$N}/r{$N}; ≥1 emoji; ≤20 words "
+                    "(exclude {}, (), [] markup); ≤320 chars; no newlines."
                 ),
             ),
             "insight_correct": types.Schema(
@@ -108,45 +109,50 @@ def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
 # Canonical system prompt for ``P:RationalizedPennyInsightsVerbalizer`` — paste into DB ``penny_templates`` when promoting changes.
 SYSTEM_PROMPT = """## Persona
 
-You are Penny, a friendly personal finance advisor. Casual but professional; warm openers/closers; conversational verbs. No **currently** / **is currently**.
+You are Penny, a friendly personal finance advisor. Text a trusted friend: warm, direct, natural — never stiff or telegraphic. No **currently** / **is currently**.
 
 ## Objective
 
-Return JSON only: single-line `insight` verbalizing **# Drivers** plus `insight_correct` (compare **# Insight** vs **# Drivers** silently).
+Return JSON only: single-line `insight` from **# Drivers** plus `insight_correct` (compare **# Insight** vs **# Drivers** silently).
 
 ## Sources
 
-- **`insight` text:** **# Drivers** only — ignore **# Type**, **# Insight** copy, taxonomy, and partial-period metadata when writing the message.
-- **`insight_correct`:** **false** when Drivers contradict **# Insight** direction or headline $ — including Drivers saying **on track** / **typical timing** vs Insight **significantly down/up**. **true** only when Drivers affirm both the move and the $.
+- **`insight` text:** facts, merchants, and move from **# Drivers** only — ignore **# Type**, taxonomy, and partial-period date ranges. Take the timeframe phrase (**this month**, **last month**, **this week**, **last week**) from **# Insight** when present.
+- **`insight_correct`:** **false** when Drivers contradict **# Insight** direction or headline $ — including **on track** / **typical timing** vs **significantly down/up**. **true** only when Drivers affirm both the move and the headline $.
 
 ## Output
 
-- `insight`: one line, ≤320 chars, **≥1 emoji** (~2 when 140+ chars); facts and merchants from **# Drivers** only.
-- `insight_correct`: per Sources rule — never mention mismatch in `insight`.
+- `insight`: one line, **≤20 words** (count prose only — exclude all `{}`, `()`, `[]` markup), ≤320 chars, **≥1 emoji** (use two when the line runs long); facts and merchants from **# Drivers** only.
+- `insight_correct`: per Sources — never mention mismatch or contrast with the headline in `insight`.
+
+## Process
+
+1. **Focus:** One category named in **# Insight** whose **# Drivers** section you verbalize — **# Drivers** is the only fact source.
+2. **Compose:** Category link, colored focal `$` (window total from **# Drivers**), timeframe from **# Insight**, then a brief clause. Match verb tense to the period — **last** week/month → past; **this** week/month → present. Signal move vs forecast or limit in plain words alongside matching `g`/`r`. For `*vs_goal*` types, include the limit/budget framing **# Drivers** describe. When focal `$` > 0, name merchant(s) from **# Drivers**. At `$`0, explain timing or cadence. Read aloud — rewrite if tense, week/month, or tone is off.
+3. **Verify:** Set `insight_correct` per Sources.
 
 ## Format
 
-- **Linking:** every category you name → `g{[Display](/slug/weekly)}` or `g{[Display](/slug/monthly)}` (or `r{…}`). No bare category text. Slug + `/weekly` or `/monthly` required; grain follows **# Type**.
-- **Amounts:** every category total → colored `g{$N}` / `r{$N}` using the **same** `g`/`r` as that category's link.
-- **Syntax:** `r{[Display](/slug/monthly)} at r{$120}` — separate wrappers; never split braces or put `$` before `[`.
-- Single-category Drivers → that category's link only, not parent.
-- Umbrella + leaf Drivers: if both appear, **each** gets full link + colored total; never name a category in plain text.
-- **Timeframe:** unless **# Insight** says **last week/month**, use **this week** / **this month**.
-- Focal totals from Drivers only; whole dollars unless < $10; merchants verbatim.
+- **Category link:** every category reference uses a colored wrapper — `g{[Display](/slug/period)}` or `r{[Display](/slug/period)}`; never bare markdown links.
+- **Link + amount:** every category total uses one colored whole-dollar `$` wrapper matching the link's `g`/`r`, joined with **at**; separate wrappers; never bare `$` amounts or ranges.
+- **Link paths:** always end `/weekly` or `/monthly` per **# Type** (`week_*` → `/weekly`; else `/monthly`).
+- **One category** — one link + one colored total unless Drivers require two.
+- **Lead:** category link and colored focal `$` come first in the sentence.
+- **Timeframe:** **this month**, **last month**, **this week**, or **last week** — whichever **# Insight** uses; never partial-period phrasing. **Last** → past tense; **this** → present tense.
+- **Focal $:** the colored `$` must be **# Drivers**' focal-window total for the period — whole dollars only; never trail history, ranges, or scheduled amounts outside the window.
+
+## Voice
+
+Natural Penny tone — like texting a friend, not filing a summary. Open with the category link. Use the same week/month wording and matching tense **# Insight** uses. Short, linked clauses; state **# Drivers**' story plainly without hedging or headline contrast.
 
 ## Type copy
 
 - **`*spend*_vs_forecast*`:** forecast divergence verbs; not budget wording.
 - **`*vs_goal*`:** budget/limit — went over / blew past / exceeded.
 
-## Content
-
-- Pick the **lead Drivers section**; verbalize its focal total and merchants.
-- Multi-category Drivers: link **each** category with colored total; whole dollars only; ≤320 — shorten merchants to names, one timeframe phrase.
-
 ## Coloring
 
-Outflows: lower vs forecast → **g**; higher → **r**. Inflows: invert.
+Outflows: lower vs forecast → **g**; higher → **r**. Inflows: invert. Link and focal `$` always share the same `g`/`r`. Color from forecast direction in **# Drivers**, not from on-pace or typical-timing sentiment.
 
 ## Slugs (Display→slug)
 
@@ -281,6 +287,18 @@ _RE_PARTIAL_TIMEFRAME = re.compile(
     re.I,
 )
 _RE_EMOJI = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF](?:\uFE0F)?")
+MAX_INSIGHT_WORDS = 20
+
+
+def _insight_word_count(text: str) -> int:
+    """Count words in insight prose, excluding ``{}``, ``()``, and ``[]`` markup."""
+    plain = text or ""
+    plain = re.sub(r"[gr]\{[^{}]*\}", " ", plain)
+    plain = re.sub(r"\([^)]*\)", " ", plain)
+    plain = re.sub(r"\[[^\]]*\]", " ", plain)
+    plain = _RE_EMOJI.sub("", plain)
+    plain = re.sub(r"[^\w\s'$-]+", " ", plain)
+    return len([w for w in plain.split() if w])
 
 
 def _emoji_count(text: str) -> int:
@@ -301,6 +319,25 @@ def _strip_markup(text: str) -> str:
 
 def _expected_period(input_type: str) -> str:
     return "weekly" if "week" in input_type else "monthly"
+
+
+def _timeframe_phrase(insight_text: str) -> str | None:
+    lower = (insight_text or "").lower()
+    for phrase in ("last month", "this month", "last week", "this week"):
+        if phrase in lower:
+            return phrase
+    return None
+
+
+def _tense_issue(plain: str, timeframe: str | None) -> str | None:
+    if not timeframe:
+        return None
+    if timeframe.startswith("last"):
+        if re.search(r"\b(is only at|is at|are at|is right|is on)\b", plain, re.I):
+            return f"use past tense with {timeframe} (was, landed, hit)"
+    elif re.search(r"\b(was only at|was at|were at|landed at)\b", plain, re.I):
+        return f"use present tense with {timeframe} (is at, hit)"
+    return None
 
 
 def mechanical_sandbox_check(
@@ -324,12 +361,19 @@ def mechanical_sandbox_check(
         issues.append("insight contains newline")
     if len(actual_insight) > 320:
         issues.append(f"insight over 320 chars ({len(actual_insight)})")
+    word_count = _insight_word_count(actual_insight)
+    if word_count > MAX_INSIGHT_WORDS:
+        issues.append(f"insight over {MAX_INSIGHT_WORDS} words ({word_count}, excluding bracket markup)")
     if _RE_BANNED.search(actual_insight):
         issues.append("banned phrasing: currently")
     if _RE_DISCREPANCY_ACK.search(_strip_markup(actual_insight)):
         issues.append("insight acknowledges Insight↔Drivers discrepancy")
     if _RE_PARTIAL_TIMEFRAME.search(_strip_markup(actual_insight)):
         issues.append("use this week/month instead of partial-period phrasing")
+    timeframe = _timeframe_phrase(str(input_payload.get("insight", "")))
+    tense_problem = _tense_issue(_strip_markup(actual_insight), timeframe)
+    if tense_problem:
+        issues.append(tense_problem)
     if not _RE_LINK.search(actual_insight):
         issues.append("missing colored category link")
     if _RE_MALFORMED_LINK.search(actual_insight):
@@ -387,131 +431,94 @@ def mechanical_sandbox_check(
 
 TEST_CASES: list[dict[str, Any]] = [
     {
-        "name": "salary_biweekly_zero_first_12_days_june",
+        "name": "sidegig_etsy_midmonth_zero_july",
         "batch": 1,
         "input": {
-            "type": "month_spend_vs_forecast",
+            "type": "month_spent_vs_forecast",
             "insight": (
-                "Salary is significantly down the first 12 days of this month at $0.\n"
-                "(partial month Jun 1-30, 2026)\n"
+                "Sidegig is significantly down last month at $0.\n"
                 "Category Taxonomy: parent Income (income), with leaf categories Salary (income_salary), "
-                "Side-Gig (income_sidegig), Business (income_business), Interest"
+                "Sidegig (income_sidegig), Business (income_business), Interest"
             ),
             "drivers": (
-                "### Salary\n"
-                "Although the insight flags Salary significantly down at $0, Salary is on track on the overall trail, "
-                "as 10X Genomics Payroll ($4,394.13–$4,447.60) recurs on a bi-weekly schedule; $0 through the first 12 "
-                "days of June is typical for the timing of this payroll cycle, not a decline in income."
+                "### Sidegig\n"
+                "Although the insight flags Sidegig significantly down at $0, Sidegig is on track on the overall trail, "
+                "as Etsy Marketplace deposits ($820–$945) matches that cadence, not a drop in side income."
             ),
         },
         "output": """{
   "insight_correct": false,
-  "insight": "r{[Salary](/income_salary/monthly)} at r{$0} this month — 10X Genomics Payroll runs bi-weekly, so an empty month early on is normal timing. 💼📅"
+  "insight": "r{[Sidegig](/income_sidegig/monthly)} was only at r{$0} last month — Etsy deposits landed as expected. 🎨"
 }""",
     },
     {
-        "name": "uncategorized_amazon_early_june",
+        "name": "groceries_whole_foods_trader_joes_july",
         "batch": 2,
         "input": {
             "type": "month_spend_vs_forecast",
             "insight": (
-                "Uncategorized is significantly up the first 12 days of this month at $67.\n"
-                "(partial month Jun 1-30, 2026)\n"
-                "Category Taxonomy: parent Uncategorized"
+                "Groceries is significantly up the first 11 days of this month at $142.\n"
+                "(partial month Jul 1-31, 2026)\n"
+                "Category Taxonomy: parent Meals (meals), with leaf categories Dining Out (meals_dining_out), "
+                "Delivered Food (meals_delivered_food), Groceries (meals_groceries)"
             ),
             "drivers": (
-                "### Uncategorized\n"
-                "Uncategorized is up on the trail—focal $67.27 (Jun 1–12) sits above a typical $0 band for "
-                "early-month partial periods—with Amazon ($48.84 and $18.43 on Jun 2) accounting for the entirety "
-                "of the focal window spend."
+                "### Groceries\n"
+                "Groceries is up on the trail—focal $142.18 (Jul 1–11) sits well above the usual $40–$70 band for "
+                "early-month partials—with Whole Foods ($89.24) and Trader Joe's ($52.94 on Jul 6) driving the lift."
             ),
         },
         "output": """{
   "insight_correct": true,
-  "insight": "r{[Uncategorized](/uncategorized/monthly)} at r{$67} this month — Amazon on Jun 2 ($49 and $18) made up the whole window. Worth a look! 🏷️👀"
+  "insight": "r{[Groceries](/meals_groceries/monthly)} is at r{$142} this month — Whole Foods and Trader Joe's run the tab. 🥬"
 }""",
     },
     {
-        "name": "leisure_entertainment_partial_week_june",
+        "name": "entertainment_spotify_amc_partial_week_july",
         "batch": 3,
         "input": {
             "type": "week_spend_vs_forecast",
             "insight": (
-                "Entertainment is significantly up the first 4 days of this week at $76.\n"
-                " Leisure is thus significantly down the first 4 days of this week to $76.\n"
-                "(partial week Jun 7-13, 2026)\n"
+                "Entertainment is significantly up the first 3 days of this week at $58.\n"
+                " Leisure is thus significantly down the first 3 days of this week to $58.\n"
+                "(partial week Jul 14-20, 2026)\n"
                 "Category Taxonomy: parent Leisure (leisure), with leaf categories Entertainment (leisure_entertainment), "
-                "Travel & Vacations"
+                "Travel and Vacations (leisure_travel)"
             ),
             "drivers": (
-                "**Entertainment is significantly up the first 4 days of this week at $76:** Entertainment is on track "
-                "on the 6-week trail, fluctuating between $0 and $96.98, with Disney Plus ($29.99) and Bass Pro Shops "
-                "($46.00) driving this week's spend, which is consistent with similar volatility seen in early May.\n"
-                "**Leisure is thus significantly down the first 4 days of this week to $76:** Although the insight flags "
-                "Leisure as down, Leisure is on track on the 6-week trail, following a pullback from a Travel-driven peak "
-                "($575.65) in mid-May; Entertainment ($76.00) is the only active leaf this week, and the net change is "
-                "consistent with typical weekly fluctuations in this category."
+                "**Entertainment is significantly up the first 3 days of this week at $58:** Entertainment is on track "
+                "on the 6-week trail, bouncing between $0 and $72, with Spotify ($15.49) and AMC Theatres ($42.51) "
+                "accounting for this week's spend—similar to a typical early-July week last year.\n"
+                "**Leisure is thus significantly down the first 3 days of this week to $58:** Although the insight flags "
+                "Leisure as down, Leisure is on track on the 6-week trail after a Travel spike ($412.00) in late June; "
+                "Entertainment ($58.00) is the only active leaf this week, and the total fits normal weekly swings."
             ),
         },
         "output": """{
   "insight_correct": false,
-  "insight": "g{[Leisure](/leisure/weekly)} at g{$76} this week — r{[Entertainment](/leisure_entertainment/weekly)} at r{$76} from Disney Plus and Bass Pro Shops. 😊🎣"
+  "insight": "r{[Entertainment](/leisure_entertainment/weekly)} is at r{$58} this week — Spotify and AMC, usual mix for you. 🎬"
 }""",
     },
     {
-        "name": "bills_connectivity_service_fees_early_june",
+        "name": "dining_out_over_limit_chipotle_sweetgreen_july",
         "batch": 4,
         "input": {
-            "type": "month_spend_vs_forecast",
+            "type": "month_spend_vs_goal",
             "insight": (
-                "Connectivity is significantly up the first 13 days of this month at $120.\n"
-                " Service Fees is significantly down the first 13 days of this month at $61.\n"
-                " Bills is thus significantly up the first 13 days of this month to $181.\n"
-                "(partial month Jun 1-30, 2026)\n"
-                "Category Taxonomy: parent Bills (bills), with leaf categories Connectivity (bills_connectivity), "
-                "Insurance (bills_insurance), Taxes (bills_tax), Service Fees"
+                "Dining Out is over its monthly limit the first 14 days of this month at $186.\n"
+                "(partial month Jul 1-31, 2026)\n"
+                "Category Taxonomy: parent Meals (meals), with leaf categories Dining Out (meals_dining_out), "
+                "Delivered Food (meals_delivered_food), Groceries (meals_groceries)"
             ),
             "drivers": (
-                "### Connectivity\n"
-                "Connectivity is up on the trail—focal $120 (June 1–13) is significantly above the mostly $0 band seen "
-                "in early-month partials from January to May—with Tello ($29.13) and Deferit: Verizon ($91.05) driving "
-                "the higher June spending.\n"
-                "### Service Fees\n"
-                "Service Fees are down on the trail, pulling back to $61 from a $120.21 peak in April and $44.98 in May, "
-                "as recent activity includes Deferit ($35.28), Quickbooks ($24.99), and Google One ($0.49).\n"
-                "### Bills\n"
-                "Although the insight flags Bills significantly up the first 13 days of this month to $181, Bills is down "
-                "on the overall trail—Bills are up on the trail, driven by the jump in Connectivity to $120, which more "
-                "than offset the pullback in Service Fees ($61); this combined $181 total reflects the new Verizon charge "
-                "($91.05) and Tello ($29.13) payment in the first 13 days of June."
+                "### Dining Out\n"
+                "Dining Out is above the user's monthly limit on the trail—focal $186.40 (Jul 1–14) exceeds the $150 "
+                "cap—with Chipotle ($68.25 across four visits) and Sweetgreen ($54.80) making up most of the overage."
             ),
         },
         "output": """{
   "insight_correct": true,
-  "insight": "r{[Bills](/bills/monthly)} at r{$181} — r{[Connectivity](/bills_connectivity/monthly)} at r{$120}, g{[Service Fees](/bills_service_fees/monthly)} at g{$61} this month. 📱💡"
-}""",
-    },
-    {
-        "name": "connectivity_tello_verizon_early_june",
-        "batch": 5,
-        "input": {
-            "type": "month_spend_vs_forecast",
-            "insight": (
-                "Connectivity is significantly up the first 13 days of this month at $120.\n"
-                "(partial month Jun 1-30, 2026)\n"
-                "Category Taxonomy: parent Bills (bills), with leaf categories Connectivity (bills_connectivity), "
-                "Insurance (bills_insurance), Taxes (bills_tax), Service Fees"
-            ),
-            "drivers": (
-                "### Connectivity\n"
-                "Connectivity is up on the trail—focal $120 (June 1–13) is significantly above the mostly $0 band seen "
-                "in early-month partials from January to May—with Tello ($29.13) and Deferit: Verizon ($91.05) driving "
-                "the higher June spending."
-            ),
-        },
-        "output": """{
-  "insight_correct": true,
-  "insight": "r{[Connectivity](/bills_connectivity/monthly)} at r{$120} this month — Tello and Deferit: Verizon drove the jump above the usual early-month band. 📱💡"
+  "insight": "r{[Dining Out](/meals_dining_out/monthly)} is at r{$186} this month — over your limit from Chipotle and Sweetgreen. 🌯"
 }""",
     },
 ]
@@ -682,7 +689,7 @@ def _print_usage():
     print("Usage:")
     print("  Run a single test: --test <name_or_index>")
     print("  Run all tests: --test all")
-    print("  Run batch: --batch <1-5>")
+    print("  Run batch: --batch <1-4>")
     print("  Disable thinking: --no-thinking (thinking_budget=0)")
     print("\nAvailable test cases:")
     for i, tc in enumerate(TEST_CASES):
@@ -693,7 +700,7 @@ def _print_usage():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run P:RationalizedPennyInsightsVerbalizer optimizer tests")
     parser.add_argument("--test", type=str, help='Test name or index (e.g. "spend_vs_forecast_leisure_down" or "0")')
-    parser.add_argument("--batch", type=int, help="Run all tests in batch N (1-5)")
+    parser.add_argument("--batch", type=int, help="Run all tests in batch N (1-4)")
     parser.add_argument("--no-thinking", action="store_true", help="Set thinking_budget=0 (Thinking OFF)")
     args = parser.parse_args()
     main(test=args.test, batch=args.batch, no_thinking=args.no_thinking)
