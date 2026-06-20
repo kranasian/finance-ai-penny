@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 from typing import Any, Dict
 
 try:
@@ -56,41 +55,100 @@ OUTPUT_SCHEMA = types.Schema(
 SYSTEM_PROMPT = """Grade **AI-directed (ie. budget/goal/categorization) `## Next steps` lines only**, if any. Do not grade Figures/Drivers quality.
 
 ## Input
-- **Figures** = truth
+- **Figures** = truth (use prior **full periods** and comparable partial windows to infer patterns)
 - **Drivers** = why / miscoding
-- **Rationalize What** = focal scope. 
+- **Rationalize What** = focal scope and **performance direction**
 
-## Rules
+## Checking flow
 
-If `## Next steps` is blank, return **exactly**:\n`{\"score\": 1, \"notes\": \"No next-step bullets were provided.\"}`. If Figures/Drivers **do not necessitate** budget/goal/categorization work, general monitoring or human guidance can still score **5**.
+### IF `## Next steps` IS BLANK
 
-Should improve the situation as described (ie. minimize outflows and/or maximize inflows).
+1. Blank is acceptable when either:
+   - **Good performance:** overearning, underspending, or earning/spending as expected, OR
+   - **Bad performance (overspending or underearning)** AND Figures are **erratic** (no stable baseline to set a budget) AND no miscategorized transactions affect Figures.
 
-**Re-categorization and Categorization Rules:**
-- **Inferred Categories**: Appropriate when transaction name is at least 70% likely to be a certain category, and/or Drivers support the category. Inappropriate otherwise, especially for P2P or bank transfers without a specified purpose.
-- **Multiple Suggested Categories**: "categorize X as A or B" / "X is possibly X or Y" merchant rule → **3**.
-- **Valid Categories** (parent → subcategories): Synonyms allowed.
-   - **Bills**: Connectivity, Insurance, Taxes, Service Fees
-   - **Donations & Gifts**
-   - **Education**: Kids Activities, Tuition
-   - **Health**: Medical & Pharmacy, Gym & Wellness, Personal Care
-   - **Income**: Salary, Side-Gig, Business, Interest
-   - **Leisure**: Entertainment, Travel & Vacations
-   - **Meals/Food**: Dining Out, Delivered Food, Groceries
-   - **Miscellaneous**
-   - **Shelter**: Home, Utilities, Upkeep
-   - **Shopping**: Clothing, Gadgets, Kids, Pets
-   - **Transfer**
-   - **Transport**: Car & Fuel, Public Transit
-   - **Uncategorized**
+2. **Score 5** if acceptable; **score lower** if warranted AI levers were omitted (clear miscoding, steady pattern supports budget/goal/categorization) → **1**.
 
-**Budget:**
-1. Multi-month steady climb or decline (e.g. $385→$410→$620), erratic history, or baseline was **$0**: optional/hedged budget wording ("check if you need", "if necessary") is **5**—do **not** require directive "set budget" for trend-consistent rises.
-2. Narrow stable band then one step-up (e.g. $145→$160 in a tight band, then $250), one-off spike with non-zero stable band: directive "set budget" → **5**; **hedged** "monitor and set budget if necessary" → **3**.
+General monitoring with no bullets is **5** when Figures/Drivers do not necessitate AI levers.
 
-**Weakest line × worst dimension** (appropriateness, concreteness, relevance)—grade **each** line, then take the **minimum** score; never average or upgrade because another line passes:
+### IF `## Next steps` IS NOT BLANK
 
-**Scores:** 5 all pass; 4 minor unrelated flaw; 3 one clear flaw (vague advice, hedged budget, ambiguous A-or-B rule); **2 wrong lever or contradicts Drivers**; **1 only when there are no next-step bullets**.
+**Per-line grading (mandatory):** Score **each bullet independently** against Figures for **that bullet's category/merchant scope only**. The response score is the **minimum** across bullets—never average, never upgrade because another line passes, never score the set as a whole.
+
+Grade each line on weakest dimension (appropriateness, concreteness, relevance).
+
+#### Step 1 — Performance direction (always first, per line)
+
+Read Rationalize What for **performance direction** before amount, pattern, or volatility:
+- **Overearning, underspending, or as expected:** spend caps and underearning income goals are **wrong levers** → **2** for that line. Stop budget evaluation for that line.
+- **Overspending or underearning:** budget/goal and categorization levers may apply for that line; continue below.
+
+When Rationalize What names multiple categories with mixed direction, evaluate **each budget line against the performance direction of its own category**, not the parent alone.
+
+If a budget/goal is proposed under good/neutral performance for that line's category, that mismatch is the **decisive** flaw—do not substitute erratic history, volatility, or amount math in `notes`.
+
+#### Step 2 — Re-categorization / categorization rules (if any)
+
+- **Intelligent guess:** transaction name ≥**70% likely** for the category and/or Drivers support it. Inappropriate for ambiguous P2P/bank transfers → **2**.
+- **One specific category** per rule—no "A or B" ambiguity → **3**.
+- **Valid category** (synonyms allowed):
+  - **Bills**: Connectivity, Insurance, Taxes, Service Fees
+  - **Donations & Gifts**
+  - **Education**: Kids Activities, Tuition
+  - **Health**: Medical & Pharmacy, Gym & Wellness, Personal Care
+  - **Income**: Salary, Side-Gig, Business, Interest
+  - **Leisure**: Entertainment, Travel & Vacations
+  - **Meals/Food**: Dining Out, Delivered Food, Groceries
+  - **Miscellaneous**
+  - **Shelter**: Home, Utilities, Upkeep
+  - **Shopping**: Clothing, Gadgets, Kids, Pets
+  - **Transfer**
+  - **Transport**: Car & Fuel, Public Transit
+  - **Uncategorized**
+
+Steps must minimize outflows / maximize inflows per Rationalize What. Wrong lever or contradicts Drivers → **2**.
+
+#### Step 3 — Budget / income goal (only for overspending or underearning)
+
+Skip entirely for overearning, underspending, or as expected.
+
+**3a. Whether to set a budget (wording)**
+- **Erratic overspend/underearn:** setting a budget/goal **or** omitting one → **5**; do not require or forbid either.
+- **Multi-period steady rise/fall**, **erratic history**, or **zero baseline:** hedged/optional budget wording → **5**; do not require a directive "set budget" for trend-consistent change.
+- **Stable baseline then current-period spike** (current above prior band): directive "set budget" → **5**; hedged "monitor / if necessary" → **3**.
+- **One-off spike with repeatable prior baseline** (stable band or infrequent similar full-period amounts): proposing a budget at that baseline → **5**; the spike is not a reason to skip the step.
+
+**3b. Budget amount** (when a number is given)
+
+For **each budget bullet**, locate the matching category in Figures and infer baseline **only from that category's history**—ignore sibling or parent categories. A cap aligned with a **parent** baseline does **not** excuse a cap above a **leaf** category's own historical range.
+
+Budgets target **future** periods; they need not rein in spend already incurred this period.
+
+- **Direction (always):** overspending → cap **below** current overspend level for that category; underearning → goal **above** current earnings. Match or exceed current overspend, or goal at/below current earnings → **2**. Passing direction **alone** is not enough when patterned history exists.
+- **Recurring obligations:** caps/goals must respect necessary fixed inflows/outflows for that category → **2** if ignored.
+- **Patterned history** at that category's scope (stable band, clustered full-period totals, or infrequent similar full-period amounts):
+  - Infer **historical baseline** from prior **full periods** (exclude the current spike partial period when it is the overspend being addressed).
+  - Cap must sit **at or near baseline + reasonable allowance** within the historical range—not the spike, not a run-rate projection, not a midpoint between spike and baseline, not **above the historical full-period range**.
+  - Cap below current spike but **above the category's historical range** → **2–3** (loose cap; not baseline-anchored).
+  - Cap at or near baseline while current is a spike → **5** for that line.
+- **Erratic history** at that category's scope: pattern alignment not required; any stated amount must still pass **direction** checks.
+
+**Erratic** = no repeatable baseline in that category's Figures (wide swings, no band, no cluster of similar full-period totals). **Baseline** = typical full-period level inferred from prior non-spike periods for **that category only**.
+
+When multiple budget lines are present, **one failing line sets the score**; `notes` must cite **that failing line's category and flaw**, not praise a passing sibling or summarize the whole set as appropriate.
+
+## Scores
+
+5 all pass; 4 minor unrelated flaw; 3 one clear flaw (vague advice, hedged budget when a directive baseline cap fits, ambiguous A-or-B rule); **2** wrong lever, contradicts Drivers, or non-binding/wrong-direction/non-baseline budget; **1** blank when warranted AI levers omitted.
+
+## Notes
+
+One short sentence on the **single decisive** flaw—the **lowest-scoring line**, not the set overall:
+- Good/neutral performance + budget proposed for that category → state budget/goal was set despite overearning/underspending/as expected for that category.
+- Cap above that category's historical range → name the category and that the cap exceeds its baseline.
+- Spike + baseline-anchored cap for that line → do **not** fault as inappropriate for a one-off spike.
+- Do **not** praise passing lines or summarize the set as appropriate when any line fails.
+- Do **not** lead with volatility or run-rate when the decisive issue is wrong lever or cap above historical baseline.
 
 Return JSON `{score, notes}` only.
 """
@@ -550,19 +608,6 @@ class CheckerOptimizer:
 
   def grade(self, agent_outcome: str) -> Dict[str, Any]:
     user_msg = (agent_outcome or "").strip()
-
-    # Hard, deterministic override: if there are no bullet/numbered lines under
-    # "## Next steps", the score must be 1 (per product spec).
-    if "## Next steps" in user_msg:
-      after = user_msg.split("## Next steps", 1)[1]
-      # Stop at next markdown H2 heading if present.
-      after = re.split(r"(?m)^##\s+", after, maxsplit=1)[0]
-      has_bullets = any(
-        re.match(r"^\s*(?:\d+\.|[-*])\s+\S", line)
-        for line in after.splitlines()
-      )
-      if not has_bullets:
-        return {"score": 1, "notes": "No next-step bullets were provided."}
 
     contents = [types.Content(role="user", parts=[types.Part.from_text(text=user_msg)])]
     cfg = types.GenerateContentConfig(
