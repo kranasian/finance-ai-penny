@@ -4,10 +4,54 @@ from google import genai
 from google.genai import types
 import json
 import os
+import sys
+from datetime import datetime
 from dotenv import load_dotenv
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from penny.tool_funcs.date_utils import (
+  get_after_periods,
+  get_end_of_month,
+  get_end_of_week,
+  get_start_of_month,
+  get_start_of_week,
+)
 
 
 load_dotenv()
+
+
+def _format_friendly_date(date: datetime) -> str:
+  return f"{date.strftime('%b')} {date.day}, {date.year}"
+
+
+def _format_friendly_date_range(start: datetime, end: datetime) -> str:
+  if start.date() == end.date():
+    return _format_friendly_date(start)
+  start_month = start.strftime("%b")
+  end_month = end.strftime("%b")
+  if start.year == end.year:
+    if start.month == end.month:
+      return f"{start_month} {start.day}-{end.day}, {start.year}"
+    return f"{start_month} {start.day}-{end_month} {end.day}, {start.year}"
+  return f"{start_month} {start.day}, {start.year}-{end_month} {end.day}, {end.year}"
+
+
+def _build_reference_dates(today: datetime | None = None) -> dict[str, str]:
+  today = today or datetime.now()
+  last_week_anchor = get_after_periods(today, granularity="weekly", count=-1)
+  last_month_anchor = get_after_periods(today, granularity="monthly", count=-1)
+  return {
+    "TODAY_DATE": _format_friendly_date(today),
+    "LAST_WEEK": _format_friendly_date_range(
+      get_start_of_week(last_week_anchor),
+      get_end_of_week(last_week_anchor),
+    ),
+    "LAST_MONTH": _format_friendly_date_range(
+      get_start_of_month(last_month_anchor),
+      get_end_of_month(last_month_anchor),
+    ),
+  }
 
 
 OUTPUT_SCHEMA = types.Schema(
@@ -17,7 +61,8 @@ OUTPUT_SCHEMA = types.Schema(
     "rationale": types.Schema(
       type=types.Type.STRING,
       description=(
-        "Two-part structure: 'Exact Criteria Matches: All|Some|None. Other Similar Transactions for User Confirmation: ' then comma-separated failing transaction lines copied verbatim from input with (reason) after each; empty after colon when All."
+        "Two-part structure: 'Exact Criteria Matches: All|Some|None. Other Similar Transactions for User Confirmation: ' "
+        "then comma-separated failing transaction lines copied verbatim from input with (reason) after each; empty after colon when All."
       ),
     ),
     "rules_satisfied": types.Schema(
@@ -36,6 +81,11 @@ Input you receive:
 - `# Transactions`: a **guess** at which transactions belong to that group—each bullet is a proposed member.
 - Transaction line format: `$Amount Name on YYYY-MM-DD` (example: `$10 McDonald's on 2020-08-30`).
 
+Reference dates (resolve relative date filters in `# Categorize Request` against these; weeks are Sun–Sat):
+- today: |TODAY_DATE|
+- last_week: |LAST_WEEK| (the complete calendar week — Sun to Sat — immediately before the current week)
+- last_month: |LAST_MONTH| (the prior complete calendar month)
+
 Your job: **membership check**—decide whether `# Transactions` is **correct** for the group implied by `# Categorize Request`. For every bullet, verify it satisfies **every** explicit filter that defines the group. Do not judge category sensibility beyond applying those filters literally.
 
 Strictness — no exceptions:
@@ -44,8 +94,8 @@ Strictness — no exceptions:
 
 Rules:
 1) Map every explicit filter, then validate each bullet against all of them:
-   - Payee/name: **Default fuzzy** = case-insensitive substring contains (strip noise like `transaction`, `on`, dates). Use for “{merchant} transactions”, “transactions with {merchant}”, “from PayPal”. **Exact** only when explicit or implicit: labelled/named as '…', must be exactly/equal to '…'—same chars/order, **case-insensitive** (SPOTIFY USA = Spotify USA; Venmo Transfer ≠ exactly Venmo). includes/contains → substring per wording.
-   - Amounts and dates: apply bounds literally (at least / more than / exactly / between). No unstated tolerance except where the request uses around/about/approximately/approx (amount band [0.95*X, 1.05*X]; date band Y−2..Y+2 days).
+   - Payee/name: **Default fuzzy** = case-insensitive substring contains (strip noise like `transaction`, `on`, dates), or an unambiguous merchant alias, domain, or marketplace code for the named merchant. Evaluate both before marking a bullet failed on a contains/includes filter. Use for “{merchant} transactions”, “transactions with {merchant}”, “from PayPal”. **Exact** only when explicit or implicit: labelled/named as '…', must be exactly/equal to '…'—same chars/order, **case-insensitive** (SPOTIFY USA = Spotify USA; Venmo Transfer ≠ exactly Venmo). includes/contains → substring per wording.
+   - Amounts and dates: apply bounds literally (at least / more than / exactly / between). Resolve "today", "last week", and "last month" using Reference dates above. No unstated tolerance except where the request uses around/about/approximately/approx (amount band [0.95*X, 1.05*X]; date band Y−2..Y+2 days).
    - Account: only when the request ties filters to account_id, account, or posts to an account; then every line must show matching account info.
 2) Around amount near $X: [0.95*X, 1.05*X] inclusive.
 3) Around date near Y: Y−2 through Y+2 days inclusive.
@@ -65,10 +115,8 @@ Exact Criteria Matches:
 
 Other Similar Transactions for User Confirmation:
 - When **All**: leave empty after the colon (nothing after "Confirmation: ").
-- When **Some** or **None**: comma-separated failing bullets copied **verbatim** from `# Transactions` (strip leading "- " only). After each line add a short parenthetical reason, e.g. (below $55 minimum), (excluded account), (wrong name), (not exactly Venmo), (not exactly $14.99), (no Chewy substring). Preserve $amount, payee, date, and (Account …) exactly as in the input.
-
-Example (Alibaba + account filter):
-Exact Criteria Matches: Some. Other Similar Transactions for User Confirmation: $45 Alibaba on 2026-02-12 (Account 4123) (excluded account), $300 Alibaba Wholesale on 2026-02-18 (Account 4123) (excluded account), $20 AliExpress on 2026-02-20 (Account 2) (wrong name)
+- When **Some** or **None**: comma-separated **failing bullets only**—never list a line that passes every mapped filter. Copy each bullet **verbatim** from `# Transactions` (strip leading "- " only), then **one space**, then `(reason)`; never glue punctuation (`.`, `,`) between the line and `(reason)`.
+- `(reason)`: short phrase—not a full sentence; no quotes around literals inside it. Restate the violated filter with the request’s own comparator words and values: `(not exactly …)` for exact/labelled names; `(no … substring)` for contains/includes; invert failed bounds tersely and **include the request’s threshold amounts** (`below $X minimum`, `not under $X`, `not exactly $X`, `outside $low–$high band` for between-filters).
 
 Never set All by relaxing a filter; never fail for category taste alone."""
 
@@ -475,6 +523,12 @@ class UpdateTransactionCategoryVerifyOptimizer:
     ]
     self.system_prompt = SYSTEM_PROMPT
 
+  def _resolve_system_prompt(self) -> str:
+    prompt = self.system_prompt
+    for key, value in _build_reference_dates().items():
+      prompt = prompt.replace(f"|{key}|", value)
+    return prompt
+
   def generate_response(self, user_message: str) -> str:
     request_text = types.Part.from_text(text=user_message)
     contents = [types.Content(role="user", parts=[request_text])]
@@ -484,7 +538,7 @@ class UpdateTransactionCategoryVerifyOptimizer:
       top_k=self.top_k,
       max_output_tokens=self.max_output_tokens,
       safety_settings=self.safety_settings,
-      system_instruction=[types.Part.from_text(text=self.system_prompt)],
+      system_instruction=[types.Part.from_text(text=self._resolve_system_prompt())],
       thinking_config=types.ThinkingConfig(
         thinking_budget=self.thinking_budget,
         include_thoughts=True,
