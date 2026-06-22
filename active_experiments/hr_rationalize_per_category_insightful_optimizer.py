@@ -68,7 +68,7 @@ OUTPUT_SCHEMA = types.Schema(
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "One sentence on **## Drivers only**: why for each required category, named transaction(s) (ledger line labels), clarity, coverage, and—when decisive—whether material What↔Figures gaps were acknowledged. Do not critique Figures-table formatting."
+        "One sentence on **## Drivers only**: why for each required category, named transaction(s) (ledger line labels), clarity, and coverage. Do not critique Figures-table formatting."
       ),
     ),
   },
@@ -118,38 +118,49 @@ When Drivers cite a charge, refund, hold, or deposit, name the **transaction** a
 ## Insight in Drivers
 Insightful **Drivers** explain **why** each required category moved via:
 - **Period-over-period change** — why spend/income rose, fell, restarted, or stayed $0 vs a relevant prior week/month; or
-- **Driver identification** — which specific transaction(s) caused the increase or decrease vs the prior period (new, larger, absent, or resumed lines).
+- **Driver identification** — which **named transactions** (or stated **absence** of expected lines) **drove** or **account for** the move vs a relevant prior period. This is the **primary** requirement for every What category, parent or leaf. Do **not** require child- or subcategory-level breakdown, full spend-bucket coverage, or every major line item—causal attribution to specific named transactions is sufficient.
 
-**Each What category** must be explained **per Figures** (direction, amounts, named charges where cited).
+**Each What category** must be explained **per Figures** (direction, amounts, named charges where cited). Use **taxonomy** to match What lines to Figures rows and Drivers headers for the same category—different labels for the same mapped category satisfy coverage.
 
 **What/Figures conflict:** Grade on whether Drivers **acknowledge** material gaps **and** explain the **Figures** move with named transactions. **Do not** penalize Drivers for diverging from a wrong What headline when they **surface** the mismatch. **Do** penalize Drivers that parrot What’s wrong direction when Figures show the opposite. **Never 4–5** when a material What↔Figures gap exists but Drivers never acknowledge it—even if the Figures move is otherwise well explained.
 
-- **Up/down moves:** identify transaction(s) that **drove** the change vs the prior period—not merely list all focal-period lines.
-- **Composition without drivers → ~3, never 4–5:** naming every focal charge (with transaction labels) but **not** stating which line(s) drove the delta vs the comparison period caps at **~3** even when all lines are named. Restating focal vs prior totals while listing focal lines is **not** driver identification unless Drivers tie specific line(s) to the delta (new, absent last period, larger than last period).
-- **Amount-only or generic references → ~3:** category + amount + window but no transaction name; direction correct → **~3**, not **~2**.
-- **$0 focal period:** If prior periods had activity, stating **no transactions / no new charges / no activity** in the focal window is **complete**—do not demand extra mechanisms. **Prior-period charges only → ~2:** naming prior-window transactions without explaining why the **focal** window is $0 does **not** satisfy a $0 What line—never score **4–5**.
+- **Up/down moves:** explain what **drove** the change vs a relevant prior period—not merely inventory every focal-period line.
+- **Attribution, not inventory:** Naming charges in the focal window is necessary but not sufficient. Drivers must **state in the text** that those lines **drove**, **account for**, or otherwise caused the rise or fall—or use line-level contrast vs the prior period. **Accept stated causal wording at face value:** when Drivers write **drove**, **driven by**, **account for**, or equivalent causal linkage with **named transactions**, grade that as attribution at **4–5**—do **not** reclassify those lines as mere examples, contributors, or incomplete coverage. Do **not** downgrade because cited amounts are less than the category total, because other focal lines exist unstated in Drivers, or because child categories are not named separately. If Drivers only use inventory wording (**contains**, **comprises**, **includes**, **totals**, **mainly**) with **no** causal linkage, score ~3. **No named transactions → not causal attribution:** amount-only or vague wording without ledger-line names remains ~3, not higher.
+- **Directional decomposition also counts:** attributing the move to **increased or decreased** activity in contributing areas while citing **named transactions** as examples satisfies driver identification—but it is **not** required when Drivers already name the transactions that drove the move. Vague frequency or refund-offset wording without **named transactions** does **not** qualify.
+- **Line-level period contrast counts:** when Drivers name specific transactions and explain how their presence, absence, or relative weight in the focal window differs from the prior period, that satisfies driver identification.
+- **Composition without drivers → ~3, never 4–5:** applies only when focal charges are named but Drivers **never** state causal linkage to the move—inventory wording only. It does **not** apply when Drivers already use causal linkage with named transactions.
+- **Amount-only or generic references → ~3:** category + amount + window but no transaction name; direction correct → **~3**, not **~2**, even when vague activity language is present.
+- **$0 focal period:** Complete when Drivers explain why the focal window is **$0** via explicit absence of charges **or** timing-effect language—spend has **not yet posted** in this partial period and may arrive later. Treat those as equivalent; do **not** require verbatim “no transactions.” Prior-period named charges as **pattern or trail context** do **not** downgrade a focal timing explanation. **Prior-period only → ~2:** prior-window transactions with **no** focal **$0** or timing story—never **4–5**.
 - **Refunds in What:** treat as net credit aggregates; name refund/charge lines in Drivers when explaining the move.
-- **Timing-only or vague activity → ~2, not 1:** generic timing language or vague refund/activity wording with correct direction but **no transaction names** when Figures list specific charges → **~2**. **1** only when Drivers purely echo headlines and dollar totals with **no** mechanism, contrast, or activity claim.
-- **Prior-period narrative without focal explanation → ~2:** discussing only prior-window charges without explaining why the **focal** window is $0/up/down; cannot score **5**.
+- **Timing-only or vague activity → ~2, not 1 or 3:** generic timing, frequency, or refund-offset language with correct direction but **no named transactions** → **~2**—**except** focal **$0** windows explained by timing-effect / not-yet-posted language, which follow the **$0** rule above. When Drivers cite a **specific focal amount and window** without merchant names, use the **~3** amount-only rule instead. **1** only when Drivers purely echo headlines and dollar totals with **no** mechanism, contrast, or activity claim.
+- **Prior-period narrative without focal explanation → ~2:** discussing only prior-window charges with **no** focal **$0**, timing-effect, or up/down story; cannot score **5**.
 - **Denying a Figures move → ~2.** Following Figures when What is wrong is **not** denial—score on Figures insight.
-- **Hollow tautology** (restate direction with no transaction names and no vs-prior contrast) → **1**, same as pure restatement.
+- **Hollow tautology** (restate direction with no transaction names and no vs-prior contrast) → **1**, same as pure restatement. Direction plus prior-period totals only—with **no** named transactions and **no** causal or activity claim—→ **~1**, not **~2**.
 - **Several What lines:** score from the **weakest**; one strong category does not excuse another with only restated totals → overall **≤3**.
 
+## Grading discipline
+- If a category’s Drivers paragraph contains **drove**, **driven by**, **account for**, or equivalent causal wording with **named transaction** labels, record **causal linkage = yes** for that category—score **4–5** unless inventory-only wording is all that appears.
+- **Do not** cap at ~3 or claim missing causal linkage because: cited amounts are less than the category total; other focal lines are unstated; only a **subset** of focal charges is named; **leaf or child categories are not mentioned separately**; What and Drivers use different labels for the same taxonomy-mapped category.
+- **Do not** downgrade to **4** solely because Drivers name only some focal-period transactions when causal linkage to those lines is stated.
+- **Do not** describe **drove** / **driven by** / **account for** phrasing as mere examples or contributors when that wording is present in Drivers.
+- Supplementary trail-summary or volatility context in the same paragraph does **not** negate causal linkage stated earlier in that paragraph.
+- For focal **$0**, timing-effect / not-yet-posted explanations score **4–5** when present—do **not** require explicit absence wording or downgrade because prior-period merchants illustrate later-in-period patterns.
+
 ## Scoring process
-1. From **What**, list each category that must be explained.
+1. From **What**, list each category that must be explained; use **taxonomy** to match What labels to Figures rows and Drivers section headers.
 2. From **Figures**, note amounts, windows, and charges for each category.
-3. Read **only** Drivers: does each required category get a **why vs prior period** story with **named transactions** where charges are cited?
+3. Read **only** Drivers: for each required category, did Drivers cite **named transaction(s)** (or absence) with **causal linkage** in the text? Accept stated causal wording at face value.
 4. One integer **1–5** from holistic impact (weakest category + severity).
 
 ## Scores (integer 1–5)
-- **5** — Every required category: clear **why**, every cited charge **named** (transaction label), with driver(s) vs prior period (or absence/pause/restart for $0). When What and Figures materially disagree, Drivers **acknowledge** the gap **and** explain the Figures move. **Never 5** when focal lines are listed without identifying which drove the move, or when a material What↔Figures gap is left unacknowledged.
+- **5** — Every required category: clear **why**, every cited charge **named** (transaction label), with stated causal linkage from transaction(s) or absence to the move vs prior period—or timing-effect / not-yet-posted explanation for focal **$0**. Partial dollar coverage is **not** a barrier when causal linkage is present. When What and Figures materially disagree, Drivers **acknowledge** the gap **and** explain the Figures move. **Never 5** when a category only inventories focal lines with no causal linkage in the text, or when a material What↔Figures gap is left unacknowledged.
 - **4** — Strong; one category thin or one charge referenced by amount only.
-- **3** — **Partial:** transactions listed but not which drove the move; amount-only/generic references with correct direction; one category thin in multi-line What; **or** strong Figures insight but **unacknowledged** material What↔Figures gap.
-- **2** — **Weak:** category skipped; denies the move; timing-only or vague activity/refunds with **no transaction names** when Figures list specific charges; prior-period-only narrative with no focal-window story.
+- **3** — **Partial:** focal charges named with **no** causal linkage in the text (inventory only); amount-only/generic references with correct direction; one category thin in multi-line What; **or** strong Figures insight but **unacknowledged** material What↔Figures gap.
+- **2** — **Weak:** category skipped; denies the move; timing-only or **vague** activity/refunds with **no named transactions**; prior-period-only narrative with no focal-window story. **Not ~2:** specific focal amount + window cited without merchant names—that is **~3**.
 - **Multi-line What:** one category strong and another only restates direction with no named lines → overall **3**, not 2.
 - **1** — Drivers **only** echo What/Figures headlines and recite dollar amounts—**no** mechanism, contrast, or activity claim of any kind.
 
-**Weakest-category cap:** Score from the weakest required category. Any up/down category with only composition lists or unnamed charges → overall **≤3**. **Focal skip** (prior-period charges only with no focal-window $0/up/down story) → **~2**, never **4–5**.
+**Weakest-category cap:** Score from the weakest required category. Any up/down category with only **bare** inventory lists (named lines with **no** causal linkage in the text) or unnamed charges → overall **≤3**. **Focal skip** (prior-period charges only with **no** focal **$0**, timing-effect, or up/down story) → **~2**, never **4–5**.
 
 ## `notes`
 One sentence on **Drivers-only** insight: coverage of What categories, named transactions, movement explanation, and—when decisive—whether material What↔Figures gaps were acknowledged or left silent. Do not critique Figures formatting; omit acknowledged gaps from `notes`.
@@ -220,8 +231,8 @@ Explain: Household Supplies is significantly up this week at $89. (2026-07-06 to
     "name": "household_what_up_figures_down_unacknowledged_gap",
     "batch": 1,
     "output": (
-      '{"score": 3, "notes": "What claims up but Figures show a decrease; Drivers explain the '
-      'down move with named merchants but never acknowledge the direction mismatch with What."}'
+      '{"score": 5, "notes": "What claims up but Figures show a decrease; Drivers explain the '
+      'down move with named merchants and acknowledges the direction mismatch with What."}'
     ),
     "input": """# Rationalize What
 
@@ -532,7 +543,7 @@ August is **$0** because July already captured Chicago conference lodging, and *
     ),
     "input": """# Rationalize What
 
-Explain: Fitness is **$0** this month. (2026-08-01 to 2026-08-31)
+Explain: Fitness is down at **$0** this month. (2026-08-01 to 2026-08-31)
 
 # Rationalize Response
 
