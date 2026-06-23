@@ -1,7 +1,7 @@
 """
-Resolve-discrepancy rubric optimizer — **accuracy** only.
+Resolve-discrepancy rubric optimizer — **accuracy** (completeness merged).
 
-Grades only the **accuracy** axis for ``Hr:ResolveDiscrepancyAccuracy`` checker templates.
+Grades completeness + accuracy for ``Hr:ResolveDiscrepancyAccuracy`` checker templates.
 
 Run from ``finance-ai-penny`` repo root:
 
@@ -37,7 +37,7 @@ _TEST_SEPARATOR = "=" * 72
 _SECTION_RULE = "-" * 72
 
 
-SYSTEM_PROMPT = """Grade **accuracy** only for resolve-discrepancy outcomes. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
+SYSTEM_PROMPT = """Grade resolve-discrepancy outcomes for **completeness and accuracy**. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
 
 You are a **strict rubric grader** for the checker bundle below (XML-style wrappers).
 
@@ -45,16 +45,17 @@ You are a **strict rubric grader** for the checker bundle below (XML-style wrapp
 
 - **`<RESOLVE_CONTEXT>`** — Prior rationalize, `# Insight Metadata`, `# Discrepancy`.
 - **`<RESOLVE_OUTCOME>`** — `# Is Discrepancy`, `# Reason`, `# Resolution`.
-- **`<RESOLVE_TOOL_CALLS>`** — This run's tool trace.
+- **`<RESOLVE_TOOL_CALLS>`** — This run's tool trace (`# Round N`, then `## Invoked tools` per round).
 
 Grade **only** what is visible. Do not invent missing data.
 
-**Out of scope — never lower accuracy solely for these (completeness handles them):**
-- Skipped investigation tools before verdict.
-- Yes without resolution tool calls, No with resolution calls, or phantom `## Resolution` blocks without matching tool calls.
-- Missing headings or `No action.` formatting when verdict is No.
+**Completeness (workflow + shape):**
+1. **Verify:** At least one **investigation** tool in `<RESOLVE_TOOL_CALLS>` before the final verdict when the discrepancy requires fresh evidence (direction/$/slug/timing). Re-stating `# Discrepancy` alone is **not** Verify.
+2. **Verdict ↔ tools:** If `# Is Discrepancy` is **Yes**, `<RESOLVE_TOOL_CALLS>` must include **≥1** resolution tool (`hide`, `update_score`, `update_forecast`). If **No**, **no** resolution tools.
+3. **Resolution section:** **No** → `# Resolution` must be exactly `No action.` **Yes** → one `## Resolution N` block per executed resolution tool, in call order, with `Tool`, `Args`, `Status`, `Message`. Never claim a resolution tool in markdown that is absent from tool calls.
+4. **Structure:** Required headings only (`# Is Discrepancy`, `# Reason`, `# Resolution`); no full-response code fence.
 
-**Accuracy axis:**
+**Accuracy:**
 1. **Verdict:** **Yes** only for **factual** contradiction (direction up vs down, Explain **$** vs tools/context, wrong category slug, timing misread). **No** when the dispute is **magnitude-only** (slightly vs significantly) while totals/direction agree. **No** when $0 in a partial window is **expected payroll timing**, not a decline.
 2. **Grounding:** `# Reason` must not invent merchants, amounts, or dates absent from `<RESOLVE_CONTEXT>` or investigation tool results in `<RESOLVE_TOOL_CALLS>`.
 3. **Resolution fit (when Yes and resolution tools appear):**
@@ -65,7 +66,12 @@ Grade **only** what is visible. Do not invent missing data.
 
 **Category slugs (when `update_forecast` or text cites a category):** must be exact tokens such as `shelter_home`, `shelter_utilities`, `income_salary`, `meals_groceries` — not Title Case labels ("Home", "Utilities").
 
-**Calibration:** **5** = no meaningful accuracy gap. **4** = one minor gap. **3** = clear fixable issue (e.g. `update_score` instead of `hide` for false direction). **2** = several problems. **1** = verdict largely wrong (Yes on magnitude-only, No when tools/context contradict the insight, invented facts).
+**Scoring (worst gap wins across completeness and accuracy):**
+- **1** — Yes without resolution tool(s); No with resolution tool(s); phantom `## Resolution`; missing required headings; verdict largely wrong; invented facts.
+- **2** — Multiple protocol breaks or several accuracy problems.
+- **3** — Single clear gap (skipped Verify, wrong resolution tool for the issue, `update_score` instead of `hide` for false direction).
+- **4** — One minor issue while workflow and verdict are otherwise sound.
+- **5** — Verify → consistent verdict/tools/resolution markdown; factually correct Yes/No and resolution choice.
 
 Return **only** the JSON object (`score`, `notes`).
 """
@@ -607,6 +613,342 @@ Home is flat; direction claim is false but figures are otherwise fine.
 </RESOLVE_TOOL_CALLS>
 """,
     "output": '{"score": 3, "notes": "Yes is right but update_score understates a materially misleading wrong-direction insight that should be hidden."}',
+  },
+  {
+    "name": "complete_no_verify_and_no_action",
+    "batch": 1,
+    "input": """<RESOLVE_CONTEXT>
+
+# Rationalize What
+
+Explain: Home is slightly up the first 24 days of this month at $2850 (vs April). Shelter is thus slightly up the first 24 days of this month to $3211. (partial month May 1-31, 2026)
+
+Category Taxonomy: parent Shelter (shelter), with leaf categories Home (shelter_home), Utilities (shelter_utilities), Upkeep (shelter_upkeep)
+
+# Rationalize Response
+
+## Figures
+
+*   **Home (shelter_home)**
+    *   May 2026: from May 1-24, $2850
+    *   Apr 2026: from Apr 1-24, $2850 · entire month $2850
+
+## Drivers
+
+*   **Home** is slightly up in May 2026 ($2850) compared to April ($2850).
+
+# Insight Metadata
+
+- Urgency Score: 2.4
+
+# Discrepancy
+
+The rationalize used the word slightly instead of significantly for Home; May and April partial totals are both $2850 and direction is flat.
+
+</RESOLVE_CONTEXT>
+
+<RESOLVE_OUTCOME>
+
+# Is Discrepancy
+No
+
+# Reason
+Only magnitude wording differs; $2850 matches in both partial months with no direction contradiction.
+
+# Resolution
+
+No action.
+
+</RESOLVE_OUTCOME>
+
+<RESOLVE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`lookup_user_aggregate_spending`**
+
+```json
+{
+  "category": "shelter_home",
+  "periods": 3
+}
+```
+
+</RESOLVE_TOOL_CALLS>
+""",
+    "output": '{"score": 5, "notes": "Investigation before No; required headings present; No action with no resolution tools."}',
+  },
+  {
+    "name": "yes_without_any_resolution_tool_calls",
+    "batch": 1,
+    "input": """<RESOLVE_CONTEXT>
+
+# Rationalize What
+
+Explain: Home is slightly up the first 24 days of this month at $2850 (vs April). (partial month May 1-31, 2026)
+
+# Rationalize Response
+
+## Figures
+
+*   **Home (shelter_home)**
+    *   May 2026: from May 1-24, $2850
+    *   Apr 2026: from Apr 1-24, $2850 · entire month $2850
+
+## Drivers
+
+*   **Home** is slightly up in May 2026 ($2850) compared to April ($2850).
+
+# Insight Metadata
+
+- Urgency Score: 2.4
+
+# Discrepancy
+
+Home is slightly up at $2850 (vs April). Home is identical in April and May ($2850). The insight claim of an increase is factually incorrect.
+
+</RESOLVE_CONTEXT>
+
+<RESOLVE_OUTCOME>
+
+# Is Discrepancy
+Yes
+
+# Reason
+Home is flat; insight direction is wrong.
+
+# Resolution
+
+No action.
+
+</RESOLVE_OUTCOME>
+
+<RESOLVE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`lookup_user_aggregate_spending`**
+
+```json
+{
+  "category": "shelter_home",
+  "periods": 3
+}
+```
+
+</RESOLVE_TOOL_CALLS>
+""",
+    "output": '{"score": 1, "notes": "Marked Yes but never called hide, update_score, or update_forecast while Resolution says No action."}',
+  },
+  {
+    "name": "phantom_hide_claimed_in_markdown_not_executed",
+    "batch": 2,
+    "input": """<RESOLVE_CONTEXT>
+
+# Rationalize What
+
+Explain: Salary is significantly down the first 2 days of this week at $0. (partial week May 24-30, 2026)
+
+# Rationalize Response
+
+## Figures
+
+*   **Week of May 24–30, 2026 (Salary):** from May 24–26, $0
+*   **Week of May 17–23, 2026 (Salary):** from May 17–19, $0 · entire week $0
+
+## Drivers
+
+Salary is significantly down the first 2 days of this week at $0 because payroll pays on the 1st and 15th.
+
+# Insight Metadata
+
+- Urgency Score: 3.1
+
+# Discrepancy
+
+Salary is significantly down the first 2 days of this week at $0. Income SQL confirms bi-monthly deposits on the 1st and 15th — $0 through day 2 is expected timing, not a drop in salary.
+
+</RESOLVE_CONTEXT>
+
+<RESOLVE_OUTCOME>
+
+# Is Discrepancy
+Yes
+
+# Reason
+Misleading significantly down label on expected pre-payday $0.
+
+# Resolution
+
+## Resolution 1
+- Tool: hide
+- Args: {}
+- Status: success
+- Message: Insight hidden.
+
+</RESOLVE_OUTCOME>
+
+<RESOLVE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`retrieve_user_income_transactions_by_sql`**
+
+```json
+{
+  "category": "income_salary",
+  "limit": 20
+}
+```
+
+</RESOLVE_TOOL_CALLS>
+""",
+    "output": '{"score": 1, "notes": "Outcome claims hide in Resolution but hide never appears in tool calls."}',
+  },
+  {
+    "name": "skipped_verify_before_yes_and_hide",
+    "batch": 2,
+    "input": """<RESOLVE_CONTEXT>
+
+# Rationalize What
+
+Explain: Home is slightly up the first 24 days of this month at $2850 (vs April). (partial month May 1-31, 2026)
+
+# Rationalize Response
+
+## Figures
+
+*   **Home (shelter_home)**
+    *   May 2026: from May 1-24, $2850
+    *   Apr 2026: from Apr 1-24, $2850 · entire month $2850
+
+## Drivers
+
+*   **Home** is slightly up in May 2026 ($2850) compared to April ($2850).
+
+# Insight Metadata
+
+- Urgency Score: 2.4
+
+# Discrepancy
+
+Home is slightly up at $2850 (vs April). Home is identical in April and May ($2850). The insight claim of an increase is factually incorrect.
+
+</RESOLVE_CONTEXT>
+
+<RESOLVE_OUTCOME>
+
+# Is Discrepancy
+Yes
+
+# Reason
+Home direction contradicts flat totals.
+
+# Resolution
+
+## Resolution 1
+- Tool: hide
+- Args: {}
+- Status: success
+- Message: Insight hidden.
+
+</RESOLVE_OUTCOME>
+
+<RESOLVE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`hide`**
+
+```json
+{}
+```
+
+</RESOLVE_TOOL_CALLS>
+""",
+    "output": '{"score": 3, "notes": "Yes with hide executed but no investigation tool ran before the verdict."}',
+  },
+  {
+    "name": "no_verdict_with_resolution_tool_called",
+    "batch": 2,
+    "input": """<RESOLVE_CONTEXT>
+
+# Rationalize What
+
+Explain: Home is slightly up the first 24 days of this month at $2850 (vs April). (partial month May 1-31, 2026)
+
+# Rationalize Response
+
+## Figures
+
+*   **Home (shelter_home)**
+    *   May 2026: from May 1-24, $2850
+    *   Apr 2026: from Apr 1-24, $2850 · entire month $2850
+
+## Drivers
+
+*   **Home** is slightly up in May 2026 ($2850) compared to April ($2850).
+
+# Insight Metadata
+
+- Urgency Score: 2.4
+
+# Discrepancy
+
+Only wording intensity differs; totals are flat at $2850.
+
+</RESOLVE_CONTEXT>
+
+<RESOLVE_OUTCOME>
+
+# Is Discrepancy
+No
+
+# Reason
+Magnitude-only dispute; no factual contradiction.
+
+# Resolution
+
+No action.
+
+</RESOLVE_OUTCOME>
+
+<RESOLVE_TOOL_CALLS>
+
+# Round 1
+
+## Invoked tools
+
+1. **`lookup_user_aggregate_spending`**
+
+```json
+{
+  "category": "shelter_home",
+  "periods": 2
+}
+```
+
+# Round 2
+
+## Invoked tools
+
+1. **`hide`**
+
+```json
+{}
+```
+
+</RESOLVE_TOOL_CALLS>
+""",
+    "output": '{"score": 1, "notes": "Marked No but hide was called, violating the No-resolution protocol."}',
   },
 ]
 

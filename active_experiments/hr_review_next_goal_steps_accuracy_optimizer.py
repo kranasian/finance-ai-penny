@@ -1,14 +1,14 @@
 """
-Analyze-proposed-next-steps-goal rubric optimizer — **accuracy** only.
+Review next goal steps rubric optimizer — **accuracy** only.
 
-Grades only the **accuracy** axis for ``Hr:AnalyzeProposedNextStepsGoalAccuracy`` checker templates.
+Grades only the **accuracy** axis for ``Hr:ReviewNextGoalStepsAccuracy`` checker templates.
 
 Run from ``finance-ai-penny`` repo root:
 
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_accuracy_optimizer.py --test all
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_accuracy_optimizer.py --test all --check
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_accuracy_optimizer.py --batch 1 --check
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_accuracy_optimizer.py --model gemini-flash-lite-latest
+  python3 active_experiments/hr_review_next_goal_steps_accuracy_optimizer.py --test all
+  python3 active_experiments/hr_review_next_goal_steps_accuracy_optimizer.py --test all --check
+  python3 active_experiments/hr_review_next_goal_steps_accuracy_optimizer.py --batch 1 --check
+  python3 active_experiments/hr_review_next_goal_steps_accuracy_optimizer.py --model gemini-flash-lite-latest
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _TEST_SEPARATOR = "=" * 72
 _SECTION_RULE = "-" * 72
 
 
-SYSTEM_PROMPT = """Grade **accuracy** only for ``analyze_proposed_next_steps_goal`` outcomes. Return JSON `{score, notes}` (integer 1–5).
+SYSTEM_PROMPT = """Grade **accuracy** only for ``review_next_goal_steps`` outcomes. Return JSON `{score, notes}` (integer 1–5).
 
 **Bundle:** `<ACTIVE_GOALS>` … `<PROPOSED_GOAL_STEPS>` … `<ANALYZE_PROPOSAL>` … `<ANALYZE_TOOL_CALLS>` (`# Round N`, `## Invoked tools`). Grade only visible text.
 
@@ -529,7 +529,7 @@ TEST_CASES: list[dict[str, Any]] = [
 ]
 
 
-class AnalyzeProposedNextStepsGoalAccuracyCheckerOptimizer:
+class ReviewNextGoalStepsAccuracyCheckerOptimizer:
   def __init__(
     self,
     model_name: str = "gemini-flash-lite-latest",
@@ -620,7 +620,7 @@ def main() -> None:
       print(f"  {i}: {tc.get('name')} (batch {batch_s})")
     return
 
-  opt = AnalyzeProposedNextStepsGoalAccuracyCheckerOptimizer(
+  opt = ReviewNextGoalStepsAccuracyCheckerOptimizer(
     model_name=args.model,
     max_output_tokens=args.max_output_tokens,
     thinking_budget=args.thinking_budget,

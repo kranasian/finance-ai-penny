@@ -1,14 +1,14 @@
 """
-Analyze-proposed-next-steps-goal rubric optimizer — **completeness** only.
+Review next goal steps rubric optimizer — **completeness** only.
 
-Grades only the **completeness** axis for ``Hr:AnalyzeProposedNextStepsGoalCompleteness`` checker templates.
+Grades only the **completeness** axis for ``Hr:ReviewNextGoalStepsCompleteness`` checker templates.
 
 Run from ``finance-ai-penny`` repo root:
 
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_completeness_optimizer.py --test all
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_completeness_optimizer.py --test all --check
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_completeness_optimizer.py --batch 1 --check
-  python3 active_experiments/hr_analyze_proposed_next_steps_goal_completeness_optimizer.py --model gemini-flash-lite-latest
+  python3 active_experiments/hr_review_next_goal_steps_completeness_optimizer.py --test all
+  python3 active_experiments/hr_review_next_goal_steps_completeness_optimizer.py --test all --check
+  python3 active_experiments/hr_review_next_goal_steps_completeness_optimizer.py --batch 1 --check
+  python3 active_experiments/hr_review_next_goal_steps_completeness_optimizer.py --model gemini-flash-lite-latest
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ _TEST_SEPARATOR = "=" * 72
 _SECTION_RULE = "-" * 72
 
 
-SYSTEM_PROMPT = """You are a strict **completeness-only** grader for ``analyze_proposed_next_steps_goal`` outcomes. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
+SYSTEM_PROMPT = """You are a strict **completeness-only** grader for ``review_next_goal_steps`` outcomes. Return JSON `{score, notes}` (integer 1–5; one sentence `notes`).
 
 **Bundle:** `<PROPOSE_SOURCE>` (optional prior propose markdown) … `<ACTIVE_GOALS>` … `<PROPOSED_GOAL_STEPS>` … `<ANALYZE_PROPOSAL>` … `<ANALYZE_TOOL_CALLS>` (this analyze run only: `# Round N`, then `## Invoked tools` per round). Grade only visible text; do not invent facts. **Ignore factual routing correctness and whether dollar amounts are ideal** (accuracy).
 
@@ -592,7 +592,7 @@ TEST_CASES: list[dict[str, Any]] = [
 ]
 
 
-class AnalyzeProposedNextStepsGoalCompletenessCheckerOptimizer:
+class ReviewNextGoalStepsCompletenessCheckerOptimizer:
   def __init__(
     self,
     model_name: str = "gemini-flash-lite-latest",
@@ -683,7 +683,7 @@ def main() -> None:
       print(f"  {i}: {tc.get('name')} (batch {batch_s})")
     return
 
-  opt = AnalyzeProposedNextStepsGoalCompletenessCheckerOptimizer(
+  opt = ReviewNextGoalStepsCompletenessCheckerOptimizer(
     model_name=args.model,
     max_output_tokens=args.max_output_tokens,
     thinking_budget=args.thinking_budget,
