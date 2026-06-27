@@ -39,59 +39,38 @@ OUTPUT_SCHEMA = types.Schema(
     "score": types.Schema(
       type=types.Type.INTEGER,
       description=(
-        "Integer 1-5 rubric score."
+        "Integer 1-5 rubric score, with 5 being the highest."
       ),
     ),
     "notes": types.Schema(
       type=types.Type.STRING,
       description=(
-        "One short sentence on the decisive appropriateness issue for ## Next steps."
+        "Concise explanation to the decisive appropriateness issue for ## Next steps. List all issues (separate with ;), regardless of gravity."
       ),
     ),
   },
 )
 
 
-SYSTEM_PROMPT = """Grade **AI-directed (ie. budget/goal/categorization) `## Next steps` lines only**, if any. Do not grade Figures/Drivers quality.
+SYSTEM_PROMPT = """Evaluate the `## Next steps` lines related to budgets, savings goals, and categorization only, if any.
 
 ## Input
-- **Figures** = truth (use prior **full periods** and comparable partial windows to infer patterns)
-- **Drivers** = why / miscoding
-- **Rationalize What** = focal scope and **performance direction**
+- **Rationalize What**: focal scope only, never to be used as truth
+- **Figures**: truth
+- **Drivers**: explanation to Figures
+- **Next Steps**: actions to improve finances, based on Figures and Drivers
 
-## Checking flow
+## Guidelines
+**Default score 5** if no violations of the guidelines below.
 
-### IF `## Next steps` IS BLANK
+Re-categorization and Categorization Rules
+- Use when Drivers suggest ≥70% likelihood for a category; optional otherwise
 
-1. Blank is acceptable when either:
-   - **Good performance:** overearning, underspending, or earning/spending as expected, OR
-   - **Bad performance (overspending or underearning)** AND Figures are **erratic** (no stable baseline to set a budget) AND no miscategorized transactions affect Figures.
+Budgets
+- Not required when category history is all **$0** or too **erratic** to infer a pattern; optional or omitted budgets are **5** in those cases.
+- When a **stable non-zero baseline** exists and spend overshoots it, a category budget may apply; amounts should follow that category's historical pattern and stay realistic.
 
-2. **Score 5** if acceptable; **score lower** if warranted AI levers were omitted (clear miscoding, steady pattern supports budget/goal/categorization) → **1**.
-
-General monitoring with no bullets is **5** when Figures/Drivers do not necessitate AI levers.
-
-### IF `## Next steps` IS NOT BLANK
-
-**Per-line grading (mandatory):** Score **each bullet independently** against Figures for **that bullet's category/merchant scope only**. The response score is the **minimum** across bullets—never average, never upgrade because another line passes, never score the set as a whole.
-
-Grade each line on weakest dimension (appropriateness, concreteness, relevance).
-
-#### Step 1 — Performance direction (always first, per line)
-
-Read Rationalize What for **performance direction** before amount, pattern, or volatility:
-- **Overearning, underspending, or as expected:** spend caps and underearning income goals are **wrong levers** → **2** for that line. Stop budget evaluation for that line.
-- **Overspending or underearning:** budget/goal and categorization levers may apply for that line; continue below.
-
-When Rationalize What names multiple categories with mixed direction, evaluate **each budget line against the performance direction of its own category**, not the parent alone.
-
-If a budget/goal is proposed under good/neutral performance for that line's category, that mismatch is the **decisive** flaw—do not substitute erratic history, volatility, or amount math in `notes`.
-
-#### Step 2 — Re-categorization / categorization rules (if any)
-
-- **Intelligent guess:** transaction name ≥**70% likely** for the category and/or Drivers support it. Inappropriate for ambiguous P2P/bank transfers → **2**.
-- **One specific category** per rule—no "A or B" ambiguity → **3**.
-- **Valid category** (synonyms allowed):
+Categories (Parent Category → Subcategories)
   - **Bills**: Connectivity, Insurance, Taxes, Service Fees
   - **Donations & Gifts**
   - **Education**: Kids Activities, Tuition
@@ -105,50 +84,6 @@ If a budget/goal is proposed under good/neutral performance for that line's cate
   - **Transfer**
   - **Transport**: Car & Fuel, Public Transit
   - **Uncategorized**
-
-Steps must minimize outflows / maximize inflows per Rationalize What. Wrong lever or contradicts Drivers → **2**.
-
-#### Step 3 — Budget / income goal (only for overspending or underearning)
-
-Skip entirely for overearning, underspending, or as expected.
-
-**3a. Whether to set a budget (wording)**
-- **Erratic overspend/underearn:** setting a budget/goal **or** omitting one → **5**; do not require or forbid either.
-- **Multi-period steady rise/fall**, **erratic history**, or **zero baseline:** hedged/optional budget wording → **5**; do not require a directive "set budget" for trend-consistent change.
-- **Stable baseline then current-period spike** (current above prior band): directive "set budget" → **5**; hedged "monitor / if necessary" → **3**.
-- **One-off spike with repeatable prior baseline** (stable band or infrequent similar full-period amounts): proposing a budget at that baseline → **5**; the spike is not a reason to skip the step.
-
-**3b. Budget amount** (when a number is given)
-
-For **each budget bullet**, locate the matching category in Figures and infer baseline **only from that category's history**—ignore sibling or parent categories. A cap aligned with a **parent** baseline does **not** excuse a cap above a **leaf** category's own historical range.
-
-Budgets target **future** periods; they need not rein in spend already incurred this period.
-
-- **Direction (always):** overspending → cap **below** current overspend level for that category; underearning → goal **above** current earnings. Match or exceed current overspend, or goal at/below current earnings → **2**. Passing direction **alone** is not enough when patterned history exists.
-- **Recurring obligations:** caps/goals must respect necessary fixed inflows/outflows for that category → **2** if ignored.
-- **Patterned history** at that category's scope (stable band, clustered full-period totals, or infrequent similar full-period amounts):
-  - Infer **historical baseline** from prior **full periods** (exclude the current spike partial period when it is the overspend being addressed).
-  - Cap must sit **at or near baseline + reasonable allowance** within the historical range—not the spike, not a run-rate projection, not a midpoint between spike and baseline, not **above the historical full-period range**.
-  - Cap below current spike but **above the category's historical range** → **2–3** (loose cap; not baseline-anchored).
-  - Cap at or near baseline while current is a spike → **5** for that line.
-- **Erratic history** at that category's scope: pattern alignment not required; any stated amount must still pass **direction** checks.
-
-**Erratic** = no repeatable baseline in that category's Figures (wide swings, no band, no cluster of similar full-period totals). **Baseline** = typical full-period level inferred from prior non-spike periods for **that category only**.
-
-When multiple budget lines are present, **one failing line sets the score**; `notes` must cite **that failing line's category and flaw**, not praise a passing sibling or summarize the whole set as appropriate.
-
-## Scores
-
-5 all pass; 4 minor unrelated flaw; 3 one clear flaw (vague advice, hedged budget when a directive baseline cap fits, ambiguous A-or-B rule); **2** wrong lever, contradicts Drivers, or non-binding/wrong-direction/non-baseline budget; **1** blank when warranted AI levers omitted.
-
-## Notes
-
-One short sentence on the **single decisive** flaw—the **lowest-scoring line**, not the set overall:
-- Good/neutral performance + budget proposed for that category → state budget/goal was set despite overearning/underspending/as expected for that category.
-- Cap above that category's historical range → name the category and that the cap exceeds its baseline.
-- Spike + baseline-anchored cap for that line → do **not** fault as inappropriate for a one-off spike.
-- Do **not** praise passing lines or summarize the set as appropriate when any line fails.
-- Do **not** lead with volatility or run-rate when the decisive issue is wrong lever or cap above historical baseline.
 
 Return JSON `{score, notes}` only.
 """
@@ -186,11 +121,11 @@ March shows the same payee text with higher frequency but the same lack of a sta
 """,
   },
   {
-    "name": "zelle_maria_dinner_line_ok_blanket_dining_rule_not",
+    "name": "zelle_maria_dinner_memo_dining_out_rule_appropriate",
     "batch": 1,
     "output": (
-      '{"score": 2, "notes": "Recategorizing the Dinner memo line fits, but a blanket Zelle-to-Maria '
-      'dining-out rule is inappropriate because P2P transfers can be for anything."}'
+      '{"score": 5, "notes": "A memo-specific rule for Zelle to Maria: Dinner to dining out is '
+      'appropriate because the memo names a dining purpose while other Maria lines stay generic P2P."}'
     ),
     "input": """# Rationalize What
 
@@ -201,21 +136,79 @@ Explain: Several Zelle payments to Maria are sitting in uncategorized spend this
 ## Figures
 
 * **Current Month (Apr 1–30, 2026) — uncategorized Zelle to Maria:** $840.00 across 6 posted transfers in `miscellaneous`.
+* **Within April — Zelle to Maria: Dinner lines:** $170.00 across 2 posted transfers still uncategorized.
 * **Prior Month (Mar 1–31, 2026) — same payee pattern:** $600.00 across 4 transfers, also uncategorized.
 
 ## Drivers
 
-April memos mix purposes: **Zelle to Maria: Dinner $85.00** on April 8 reads like a shared-meal reimbursement, while **Zelle payment to Maria: rent split $400.00** on April 14 and **Zelle to Maria — thank you: $120.00** on April 22 look like general P2P transfers with no dining cue. The payee pattern is repeatable, but memo text does not justify one dining category for every line.
+April memos mix purposes: **Zelle to Maria: Dinner $85.00** on April 8 and **Zelle to Maria: Dinner $85.00** on April 21 read like shared-meal reimbursements, while **Zelle payment to Maria: rent split $400.00** on April 14 and **Zelle to Maria — thank you: $120.00** on April 22 look like general P2P transfers with no dining cue. Only the Dinner-memo lines carry a specified food purpose; the payee alone does not justify one category for every line.
 
 ## Next steps
 
-1. Recategorize **Zelle to Maria: Dinner** transactions to **`meals_dining_out`**.
-2. Set all **Zelle to Maria** transactions to **`meals_dining_out`** (past and future).
+1. Set **Zelle to Maria: Dinner** transactions to **`meals_dining_out`** (past and future).
+""",
+  },
+  {
+    "name": "target_groceries_or_upkeep_dual_category_rule_inappropriate",
+    "batch": 1,
+    "output": (
+      '{"score": 3, "notes": "Target memos split groceries vs upkeep in Drivers; a single rule '
+      'listing two categories does not resolve the mixed pattern—rules should target one category."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Target spend is elevated and split across categories this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — all Target-tagged spend:** $412.80 across 9 posted lines.
+* **Within April, current ledger coding (pre-review):** $168.40 remains in `meals_groceries`, $154.20 in `shelter_upkeep`, and $90.20 is still flagged as "needs category confirmation" on import.
+* **Prior Month (Mar 1–31, 2026) — Target-tagged spend:** $288.50 with a cleaner memo profile (mostly grocery-like descriptions).
+
+## Drivers
+
+April's Target charges include mixed signals in the memos: several lines read like pantry and household consumables (**Target Grocery run: $72.18** on April 5), while others look like small home goods (**Target Store #1842 — cleaning supplies: $48.33** on April 16). A few ambiguous **Target.com** charges lack item detail, which is why the importer left a residual bucket uncategorized.
+
+That pattern matches your Rationalize prompt: spend is elevated versus March, and the category split is genuinely unclear from text alone—so the narrative risk is misclassification if we force everything into a single bucket too early.
+
+## Next steps
+
+1. Set **Target** transactions to **`meals_groceries`** or **`shelter_upkeep`** (past and future).
+""",
+  },
+  {
+    "name": "confirm_category_then_set_rule_appropriate",
+    "batch": 1,
+    "output": (
+      '{"score": 5, "notes": "Confirming the category first then setting a rule once confirmed is '
+      'appropriate when Drivers show ambiguous P2P memos that may require user input."}'
+    ),
+    "input": """# Rationalize What
+
+Explain: Several Zelle payments to Jose are sitting in uncategorized spend this month. (2026-04-01 to 2026-04-30)
+
+# Rationalize Response
+
+## Figures
+
+* **Current Month (Apr 1–30, 2026) — uncategorized Zelle to Jose:** $520.00 across 5 posted transfers in `miscellaneous`.
+* **Prior Month (Mar 1–31, 2026) — same payee pattern:** $380.00 across 3 transfers, also uncategorized at month-end.
+
+## Drivers
+
+April memos show repeatable **Zelle to Jose** outflows with no stable category assignment: **Zelle payment to Jose: $150.00** on April 4, **Zelle to Jose — thanks: $80.00** on April 12, and **Zelle to Jose: $120.00** on April 23. Nothing in the text clearly signals transfer vs reimbursement vs shared expense—the pattern looks like personal P2P that may need the user to confirm intent before a durable rule is applied.
+
+## Next steps
+
+1. Confirm the correct category for **Zelle to Jose** transactions with the user.
+2. Set a categorization rule for **Zelle to Jose** once the category is confirmed.
 """,
   },
   {
     "name": "mcdonalds_dining_out_rule_appropriate",
-    "batch": 1,
+    "batch": 2,
     "output": (
       '{"score": 5, "notes": "McDonald\'s charges are restaurant spend miscoded in miscellaneous; '
       'a dining-out categorization rule is appropriate for this merchant pattern."}'
@@ -243,7 +236,7 @@ The feed shows classic quick-service restaurant descriptors (**McDonald's #2841:
   },
   {
     "name": "walmart_groceries_rule_acceptable_default",
-    "batch": 1,
+    "batch": 2,
     "output": (
       '{"score": 5, "notes": "Walmart is a mixed retailer but groceries is an acceptable default rule '
       'given the grocery-heavy memo profile Drivers describe."}'
@@ -271,7 +264,7 @@ April's uncategorized Walmart charges mostly read like food and pantry purchases
   },
   {
     "name": "user_directed_payment_and_cancel_steps_acceptable",
-    "batch": 1,
+    "batch": 2,
     "output": (
       '{"score": 5, "notes": "Canceling unused subscriptions and sending the landlord payment are '
       'reasonable user-directed steps even though Penny cannot execute them directly."}'
@@ -326,36 +319,6 @@ The April activity is concentrated in repeatable peer-to-peer outflows where mem
 """,
   },
   {
-    "name": "walmart_mixed_memos_ambiguous_categorization_step",
-    "batch": 2,
-    "output": (
-      '{"score": 3, "notes": "Walmart memos split groceries vs upkeep in Drivers; a single undecided '
-      'groceries-or-upkeep rule does not resolve the mixed pattern."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Walmart spend is elevated and split across categories this month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-* **Current Month (Apr 1–30, 2026) — all Walmart-tagged spend:** $482.63 across 11 posted lines.
-* **Within April, current ledger coding (pre-review):** $215.40 remains in `meals_groceries`, $198.10 in `shelter_upkeep`, and $69.13 is still split/flagged as "needs category confirmation" on import.
-* **Prior Month (Mar 1–31, 2026) — Walmart-tagged spend:** $305.20 with a cleaner memo profile (mostly grocery-like descriptions).
-
-## Drivers
-
-April's Walmart charges include mixed signals in the memos: several lines read like pantry and household consumables (**Walmart Grocery pickup: $84.22** on April 4), while others look like hardware and small home repairs (**Walmart Store #1441 — hardware: $63.77** on April 17). A few ambiguous "Walmart.com" charges lack item detail, which is why the importer left a residual bucket uncategorized.
-
-That pattern matches your Rationalize prompt: spend is elevated versus March, and the category split is genuinely unclear from text alone—so the narrative risk is misclassification if we force everything into a single bucket too early.
-
-## Next steps
-
-1. Match **Walmart** transactions to the appropriate category—possibly **`meals_groceries`** or **`shelter_upkeep`**—based on context.
-""",
-  },
-  {
     "name": "groceries_up_walmart_recategorize_out_inappropriate",
     "batch": 2,
     "output": (
@@ -384,7 +347,7 @@ The week-over-week lift is mostly larger **Walmart** grocery runs (**Walmart Gro
   },
   {
     "name": "dining_spike_with_trend_budget_appropriate",
-    "batch": 2,
+    "batch": 3,
     "output": (
       '{"score": 5, "notes": "Sets a dining-out budget for the focal category; directive phrasing '
       'is appropriate and concrete even alongside a general review line."}'
@@ -495,34 +458,6 @@ Dining out has sat in a narrow $140–$160 band for the past two months and then
 ## Next steps
 
 1. Monitor your restaurant spending and set a **dining out** budget for **`meals_dining_out`** if necessary.
-""",
-  },
-  {
-    "name": "automatic_bank_transfer_cc_payment_out_of_scope",
-    "batch": 4,
-    "output": (
-      '{"score": 2, "notes": "Automatic bank-to-card payment scheduling is outside Penny product levers '
-      'and does not address the categorized spend Drivers explain."}'
-    ),
-    "input": """# Rationalize What
-
-Explain: Credit card balance is up and minimum payments are larger this month. (2026-04-01 to 2026-04-30)
-
-# Rationalize Response
-
-## Figures
-
-* **Current Month (Apr 1–30, 2026) — statement balance (primary card, ending 4412):** $4,860.00 outstanding as of April 28 close (up from March's statement snapshot).
-* **Prior Month (Mar 1–31, 2026) — statement balance (same card):** $3,220.00.
-* **April minimum due / payment lines posted:** minimum due **$122.00** vs March minimum due **$78.00**; scheduled payment amount in the ledger also increased accordingly.
-
-## Drivers
-
-The larger minimum is mechanically tied to the higher statement balance: you carried more into April and added net new spend after the prior cycle's payment. The feed shows fewer large paydowns in early April compared with March, so the required minimum moves up even without assuming any penalty APR change.
-
-## Next steps
-
-1. Set up **automatic transfers** from the user's checking account to **pay the credit card** each month before the due date.
 """,
   },
   {
