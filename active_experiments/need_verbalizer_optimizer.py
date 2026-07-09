@@ -61,7 +61,9 @@ NEED_VERBALIZER_THINKING_BUDGET = 256
 NEED_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
 _FINANCIAL_NEEDS_H1 = "# Financial Needs"
+_FINANCIAL_NEED_H1 = "# Financial Need"
 _FINANCIAL_STRATEGY_H1 = "# Financial Strategy"
+_NEED_DETAILS_H2 = "## Need Details"
 _SIMULATE_OUTCOME_TYPE = "simulate_financial_strategy"
 
 _EXCLUDED_SIMULATE_SECTIONS = (
@@ -93,7 +95,9 @@ SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who turns the di
 
 `need_summary`: one sentence expanding the need (max **25 words**); ground every **$** and date in the input. Fun and confident, never cheesy, patronizing, or naggy.
 
-Max **35 words** total across ``need_title`` and ``need_summary``. No exclamation marks, superlatives, or emoji.
+`need_details`: grounded evidence text for the **primary** need only (max **80 words**). Ground every **$** and date in the input.
+
+Max **35 words** across ``need_title`` and ``need_summary``. No exclamation marks, superlatives, or emoji.
 """
 
 
@@ -102,7 +106,7 @@ def _build_output_schema() -> "types.Schema":
         raise RuntimeError("Install `google-genai` for this optimizer.")
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["need_title", "need_summary"],
+        required=["need_title", "need_summary", "need_details"],
         properties={
             "need_title": types.Schema(
                 type=types.Type.STRING,
@@ -111,6 +115,10 @@ def _build_output_schema() -> "types.Schema":
             "need_summary": types.Schema(
                 type=types.Type.STRING,
                 description="One-sentence expansion of the need (max 25 words).",
+            ),
+            "need_details": types.Schema(
+                type=types.Type.STRING,
+                description="Grounded evidence text for the primary need (max 80 words).",
             ),
         },
     )
@@ -125,9 +133,21 @@ def _validate_need_response(parsed: Any) -> dict[str, Any]:
     need_summary = parsed.get("need_summary")
     if not isinstance(need_summary, str) or not need_summary.strip():
         raise ValueError("need_summary must be a non-empty string")
+    need_details = parsed.get("need_details")
+    if isinstance(need_details, dict):
+        raw_bullets = need_details.get("bullets")
+        if isinstance(raw_bullets, list):
+            need_details = " ".join(
+                str(item).strip()
+                for item in raw_bullets
+                if isinstance(item, str) and item.strip()
+            )
+    if not isinstance(need_details, str) or not need_details.strip():
+        raise ValueError("need_details must be a non-empty string")
     return {
         "need_title": need_title.strip(),
         "need_summary": need_summary.strip(),
+        "need_details": need_details.strip(),
     }
 
 
@@ -195,17 +215,50 @@ def trim_simulate_outcome_for_need_bundle(simulate_outcome_md: str) -> str:
 
 
 def trim_simulate_outcome_for_plan_bundle(simulate_outcome_md: str) -> str:
-    """Drop content before ``# Financial Needs`` and excluded subsections; keep ``# Financial Strategy``."""
-    text = _trim_simulate_outcome_from_financial_needs(simulate_outcome_md)
+    """Drop content before ``# Financial Strategy`` (needs prose is supplied separately)."""
+    text = (simulate_outcome_md or "").strip()
     strategy_idx = text.find(_FINANCIAL_STRATEGY_H1)
     if strategy_idx < 0:
-        return text
-    after_strategy = text[strategy_idx + len(_FINANCIAL_STRATEGY_H1):]
+        raise ValueError(f"simulate outcome must include {_FINANCIAL_STRATEGY_H1}")
+    text = text[strategy_idx:]
+    after_strategy = text[len(_FINANCIAL_STRATEGY_H1):]
     next_h1 = re.search(r"(?m)^# [^#]", after_strategy)
     if next_h1:
-        end = strategy_idx + len(_FINANCIAL_STRATEGY_H1) + next_h1.start()
+        end = len(_FINANCIAL_STRATEGY_H1) + next_h1.start()
         text = text[:end].rstrip() + "\n"
-    return text
+    return _strip_excluded_simulate_sections(text)
+
+
+def format_financial_need_block(need_verbalizer_response: dict[str, Any]) -> str:
+    """Render verbalized need JSON as ``# Financial Need`` + ``## Need Details`` markdown."""
+    if not isinstance(need_verbalizer_response, dict):
+        raise ValueError("need_verbalizer_response must be a JSON object")
+    need_summary = str(need_verbalizer_response.get("need_summary") or "").strip()
+    if not need_summary:
+        raise ValueError("need_verbalizer_response must include need_summary")
+
+    need_details = need_verbalizer_response.get("need_details")
+    if isinstance(need_details, dict):
+        raw_bullets = need_details.get("bullets")
+        if isinstance(raw_bullets, list):
+            need_details = " ".join(
+                str(item).strip()
+                for item in raw_bullets
+                if isinstance(item, str) and item.strip()
+            )
+    if not isinstance(need_details, str) or not need_details.strip():
+        raise ValueError("need_verbalizer_response.need_details must be a non-empty string")
+
+    lines = [
+        _FINANCIAL_NEED_H1,
+        "",
+        need_summary,
+        "",
+        _NEED_DETAILS_H2,
+        "",
+        need_details.strip(),
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _parse_start_end_month(spec: str) -> tuple[int, int | None]:
@@ -620,6 +673,10 @@ TEST_CASES: list[dict[str, Any]] = [
         "ideal_response": {
             "need_title": "Venture interest drag",
             "need_summary": "$312 in interest every 90 days on your $8,400 balance while spending tracks income.",
+            "need_details": (
+                "Interest tool: **$312** on Venture in 90 days. "
+                "Next due **2026-04-18** per payment schedule."
+            ),
         },
     },
     {
@@ -639,6 +696,10 @@ TEST_CASES: list[dict[str, Any]] = [
         "ideal_response": {
             "need_title": "April mortgage crunch",
             "need_summary": "Checking at $800 cannot cover the $2,100 mortgage due April 1.",
+            "need_details": (
+                "Checking **$800** vs mortgage **$2,100** on the 1st. "
+                "Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo."
+            ),
         },
     },
     {
@@ -658,6 +719,10 @@ TEST_CASES: list[dict[str, Any]] = [
         "ideal_response": {
             "need_title": "Platinum debt creep",
             "need_summary": "Balance rose $300 in three months despite $115/mo payments on $4,800 owed.",
+            "need_details": (
+                "Balance up **$300** over three months despite **$115**/mo payments. "
+                "APR tool: **~21.8%** on Platinum."
+            ),
         },
     },
 ]

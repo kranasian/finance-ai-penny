@@ -1,7 +1,7 @@
 """
 Optimizer runner for **P:PlanVerbalizer** (Gemini prompt tuning).
 
-Input is trimmed ``# Financial Needs`` markdown plus the matching ``# Financial Strategy`` subsection
+Input is verbalized ``# Financial Need`` (with ``## Need Details``), the matching ``# Financial Strategy`` subsection
 (recommended or alternative only) and a ``### Spending Schedule`` block with compact spending
 bullets for one scenario (recommended by default, or
 ``--scenario-id``).
@@ -62,9 +62,12 @@ from active_experiments.verbalizer_optimizer_db import (
     resolve_simulate_agent_outcome_id,
 )
 from active_experiments.need_verbalizer_optimizer import (
+    NeedVerbalizerOptimizer,
     _format_goal_plan_narrative,
     _parse_model_json_object,
+    build_need_verbalizer_input_bundle,
     ensure_blank_line_after_plan_headings,
+    format_financial_need_block,
     trim_simulate_outcome_for_plan_bundle,
 )
 
@@ -77,7 +80,7 @@ PLAN_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
 
-Use the financial-needs context, matching plan prose in ``# Financial Strategy``, and the spending caps under ``### Spending Schedule``.
+Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, and the spending caps under ``### Spending Schedule``.
 
 - ``plan_title``: short headline for this plan (max **8 words**; punchy, no jargon).
 - ``plan_summary``: one sentence on what this plan does (max **25 words**); ground every **$** and date in the input.
@@ -139,6 +142,8 @@ def _build_output_schema() -> "types.Schema":
 
 
 SPENDING_SCHEDULE_H3 = "### Spending Schedule"
+FINANCIAL_NEED_H1 = "# Financial Need"
+_FINANCIAL_STRATEGY_H1 = "# Financial Strategy"
 
 _RE_SPENDING_SCHEDULE_BULLET = re.compile(r"^-\s+(.+):\s+Cap\s+(.+)$")
 
@@ -245,15 +250,13 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "debt_paydown_recommended",
         "batch": 1,
         "input": """
-# Financial Needs
+# Financial Need
 
-## Primary needs
-1. **Reduce interest drag**: Venture balance **$8,400** with **$312** interest paid over 90 days while spending tracks near income.
+$312 in interest every 90 days on your $8,400 balance while spending tracks income.
 
-## Evidence
-* **Reduce interest drag**
-  - Interest tool: **$312** on Venture in 90 days.
-  - Next due **2026-04-18** per payment schedule.
+## Need Details
+
+Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payment schedule.
 
 # Financial Strategy
 
@@ -291,16 +294,15 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "debt_paydown_alternative",
         "batch": 1,
+        "scenario_id": "steady_cut",
         "input": """
-# Financial Needs
+# Financial Need
 
-## Primary needs
-1. **Reduce interest drag**: Venture balance **$8,400** with **$312** interest paid over 90 days while spending tracks near income.
+$312 in interest every 90 days on your $8,400 balance while spending tracks income.
 
-## Evidence
-* **Reduce interest drag**
-  - Interest tool: **$312** on Venture in 90 days.
-  - Next due **2026-04-18** per payment schedule.
+## Need Details
+
+Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payment schedule.
 
 # Financial Strategy
 
@@ -333,15 +335,13 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "cash_flow_recommended",
         "batch": 1,
         "input": """
-# Financial Needs
+# Financial Need
 
-## Primary needs
-1. **Stabilize cash flow**: Checking **$800** with **$2,100** mortgage due **2026-04-01** — liquidity risk before flexible spend cuts matter.
+Checking at $800 cannot cover the $2,100 mortgage due April 1.
 
-## Evidence
-* **Stabilize cash flow**
-  - Checking **$800** vs mortgage **$2,100** on the 1st.
-  - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
+## Need Details
+
+Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 
 # Financial Strategy
 
@@ -373,16 +373,15 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "cash_flow_alternative",
         "batch": 1,
+        "scenario_id": "aggressive_flex_cut",
         "input": """
-# Financial Needs
+# Financial Need
 
-## Primary needs
-1. **Stabilize cash flow**: Checking **$800** with **$2,100** mortgage due **2026-04-01** — liquidity risk before flexible spend cuts matter.
+Checking at $800 cannot cover the $2,100 mortgage due April 1.
 
-## Evidence
-* **Stabilize cash flow**
-  - Checking **$800** vs mortgage **$2,100** on the 1st.
-  - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
+## Need Details
+
+Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 
 # Financial Strategy
 
@@ -415,15 +414,13 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "slow_debt_recommended",
         "batch": 2,
         "input": """
-# Financial Needs
+# Financial Need
 
-## Primary needs
-1. **Settle debt**: Platinum **$4,800** with slow paydown at minimum-style payments.
+Balance rose $300 in three months despite $115/mo payments on $4,800 owed.
 
-## Evidence
-* **Settle debt**
-  - Balance up **$300** over three months despite **$115**/mo payments.
-  - APR tool: **~21.8%** on Platinum.
+## Need Details
+
+Balance up **$300** over three months despite **$115**/mo payments. APR tool: **~21.8%** on Platinum.
 
 # Financial Strategy
 
@@ -455,16 +452,15 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "slow_debt_alternative",
         "batch": 2,
+        "scenario_id": "leisure_first",
         "input": """
-# Financial Needs
+# Financial Need
 
-## Primary needs
-1. **Settle debt**: Platinum **$4,800** with slow paydown at minimum-style payments.
+Balance rose $300 in three months despite $115/mo payments on $4,800 owed.
 
-## Evidence
-* **Settle debt**
-  - Balance up **$300** over three months despite **$115**/mo payments.
-  - APR tool: **~21.8%** on Platinum.
+## Need Details
+
+Balance up **$300** over three months despite **$115**/mo payments. APR tool: **~21.8%** on Platinum.
 
 # Financial Strategy
 
@@ -498,25 +494,13 @@ TEST_CASES: list[dict[str, Any]] = [
         "batch": 3,
         "simulate_agent_outcome_id": 1252,
         "input": """
-# Financial Needs
+# Financial Need
 
-## Primary needs
+Fixed overhead consumes ~75% of $6,369 take-home, forcing credit-card bridging.
 
-1. **Structural Liquidity Trap**: Your finances are built on a high-overhead, low-buffer foundation where nearly your entire monthly income is consumed by static commitments, forcing you into a continuous cycle of credit-card debt to bridge cash-flow gaps.
-2. **"Spending Drift" in Discretionary Categories**: Your actual "need" is masked by excessive discretionary spending (dining, entertainment, and delivered food) that consistently exceeds $2,000–$2,500 monthly, effectively cannibalizing the cash meant for savings and debt reduction.
-3. **Interest Leakage and Debt Cycle**: You are paying significant credit card interest—upwards of $180+ monthly—due to delayed payments or carrying balances that could be cleared if the discretionary "drift" were curtailed, creating a negative feedback loop where interest fees further restrict your liquidity.
+## Need Details
 
-## Evidence
-
-* **Structural Liquidity Trap**
-  * Your fixed monthly overhead for shelter alone is $2,850, plus recurring school/daycare ($500), utilities (~$350), and insurance/connectivity (~$200). 
-  * These core fixed costs consume ~75% of your standard $6,369 monthly take-home pay, leaving almost no margin for emergencies, which explains the persistent overdrafts on your savings account and the use of credit cards as a primary cash-flow tool.
-* **"Spending Drift" in Discretionary Categories**
-  * Analysis of your transaction ledger reveals consistent, high-frequency discretionary spending. For example, in June 2026, you spent over $1,200 on "meals_dining_out" and "meals_delivered_food" alone, combined with nearly $600 on "leisure_entertainment."
-  * This "drift"—small, frequent transactions at cafes, cinemas, and for food delivery—totaling ~$2,000/month, is the primary driver of your inability to build a cash buffer in your checking or savings accounts.
-* **Interest Leakage and Debt Cycle**
-  * You are incurring consistent monthly finance charges (e.g., $148.33 and $36.34 on your credit cards in July 2026).
-  * Because your checking account balance is often depleted to the "overdraft" or near-zero level by mid-month, you are forced to rely on credit cards for routine purchases. This triggers high interest charges, which further reduces your available income for the following month, maintaining the debt cycle.
+Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-home. Core fixed costs leave almost no margin for emergencies or savings.
 
 # Financial Strategy
 
@@ -638,12 +622,31 @@ def _select_goal_plan_scenario(goal_plan: Any, *, scenario_id: str | None = None
     return dict(active)
 
 
+def _prepend_verbalized_need_to_plan_bundle(
+    bundle_md: str,
+    need_verbalizer_response: dict[str, Any],
+) -> str:
+    need_block = format_financial_need_block(need_verbalizer_response)
+    text = (bundle_md or "").strip()
+    if FINANCIAL_NEED_H1 in text:
+        strategy_idx = text.find(_FINANCIAL_STRATEGY_H1)
+        if strategy_idx < 0:
+            return need_block.rstrip() + "\n\n" + text + "\n"
+        return need_block.rstrip() + "\n\n" + text[strategy_idx:].strip() + "\n"
+    strategy_idx = text.find(_FINANCIAL_STRATEGY_H1)
+    if strategy_idx < 0:
+        raise ValueError("plan bundle must include # Financial Strategy")
+    return need_block.rstrip() + "\n\n" + text[strategy_idx:].strip() + "\n"
+
+
 def build_plan_verbalizer_input_bundle(
     *,
+    need_verbalizer_response: dict[str, Any],
     simulate_outcome_md: str,
     goal_plan_scenario: dict[str, Any],
 ) -> str:
-    """Trimmed needs markdown plus ``### Spending Schedule`` for one scenario."""
+    """Verbalized need + matching strategy subsection + ``### Spending Schedule`` for one scenario."""
+    need_block = format_financial_need_block(need_verbalizer_response)
     simulate = trim_simulate_outcome_for_plan_bundle(simulate_outcome_md)
     scenario_id = str(goal_plan_scenario.get("scenario_id") or "").strip()
     if scenario_id:
@@ -654,7 +657,7 @@ def build_plan_verbalizer_input_bundle(
         )
     simulate = ensure_blank_line_after_plan_headings(simulate)
     plan_block = _format_goal_plan_narrative([goal_plan_scenario])
-    parts = [simulate.rstrip()]
+    parts = [need_block.rstrip(), simulate.rstrip()]
     if plan_block:
         parts.append(plan_block.rstrip())
     return "\n\n".join(parts) + "\n"
@@ -665,6 +668,8 @@ def build_plan_verbalizer_input(
     simulate_agent_outcome_id: int | None = None,
     user_id: int | None = None,
     scenario_id: str | None = None,
+    need_verbalizer_response: dict[str, Any] | None = None,
+    need_optimizer: NeedVerbalizerOptimizer | None = None,
 ) -> str:
     """Build bundled input from DB outcomes + one ``users.goal_plan`` scenario."""
     sim_id = resolve_simulate_agent_outcome_id(
@@ -675,6 +680,11 @@ def build_plan_verbalizer_input(
     sim_row = _fetch_ai_agent_outcome_row(sim_id)
     if not sim_row:
         raise ValueError(f"simulate_agent_outcome_id not found: {sim_id}")
+
+    if need_verbalizer_response is None:
+        need_input = build_need_verbalizer_input_bundle(simulate_outcome_md=simulate_md)
+        optimizer = need_optimizer or NeedVerbalizerOptimizer()
+        need_verbalizer_response = optimizer.generate_response(need_input)
 
     goal_plan = _fetch_user_goal_plan(sim_uid)
     if goal_plan is None:
@@ -689,6 +699,7 @@ def build_plan_verbalizer_input(
     )
     scenario = _select_goal_plan_scenario(goal_plan, scenario_id=scenario_id)
     return build_plan_verbalizer_input_bundle(
+        need_verbalizer_response=need_verbalizer_response,
         simulate_outcome_md=simulate_md,
         goal_plan_scenario=scenario,
     )
@@ -713,6 +724,10 @@ def resolve_plan_test_case_input(
     if bundle is None:
         raise ValueError("test case must include bundled input")
 
+    need_response = test_case.get("need_verbalizer_response")
+    if isinstance(need_response, dict):
+        bundle = _prepend_verbalized_need_to_plan_bundle(bundle, need_response)
+
     sid = str(scenario_id or test_case.get("scenario_id") or "").strip()
     if sid:
         bundle = _apply_strategy_filter_to_plan_bundle(bundle, sid)
@@ -723,6 +738,10 @@ def format_plan_verbalizer_user_message(profile_input: str) -> str:
     body = (profile_input or "").strip()
     if not body:
         raise ValueError("profile_input must be non-empty markdown.")
+    if FINANCIAL_NEED_H1 not in body:
+        raise ValueError(f"profile_input must include {FINANCIAL_NEED_H1}.")
+    if SPENDING_SCHEDULE_H3 not in body:
+        raise ValueError(f"profile_input must include {SPENDING_SCHEDULE_H3}.")
     return body + "\n"
 
 
