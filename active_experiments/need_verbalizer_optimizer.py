@@ -9,6 +9,7 @@ Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance
   python3 active_experiments/need_verbalizer_optimizer.py --test all
   python3 active_experiments/need_verbalizer_optimizer.py --simulate-agent-outcome-id 1148 --print-input-only
   python3 active_experiments/need_verbalizer_optimizer.py --simulate-agent-outcome-id 1148
+  python3 active_experiments/need_verbalizer_optimizer.py --user-id 3
 
 DB-backed runs read ``SLAVE_DB`` from ``finance-ai-llm-server/config.ini``. Requires ``psycopg2-binary``.
 """
@@ -44,11 +45,12 @@ except Exception:  # pragma: no cover
     types = None  # type: ignore[assignment]
     ClientError = Exception  # type: ignore[misc, assignment]
 
-from active_experiments.need_plans_verbalizer_optimizer import (
+from active_experiments.verbalizer_optimizer_db import (
     _bundled_input_from_test_case,
     _normalize_goal_plan_list,
     _resolve_ideal_response,
     load_simulate_agent_outcome_markdown,
+    resolve_simulate_agent_outcome_id,
 )
 
 if load_dotenv is not None:
@@ -441,9 +443,17 @@ def build_need_verbalizer_input_bundle(
     return trim_simulate_outcome_for_need_bundle(simulate_outcome_md)
 
 
-def build_need_verbalizer_input(*, simulate_agent_outcome_id: int) -> str:
+def build_need_verbalizer_input(
+    *,
+    simulate_agent_outcome_id: int | None = None,
+    user_id: int | None = None,
+) -> str:
     """Build input from a simulate_financial_strategy outcome."""
-    _, simulate_md = load_simulate_agent_outcome_markdown(simulate_agent_outcome_id)
+    sim_id = resolve_simulate_agent_outcome_id(
+        user_id=user_id,
+        simulate_agent_outcome_id=simulate_agent_outcome_id,
+    )
+    _, simulate_md = load_simulate_agent_outcome_markdown(sim_id)
     return build_need_verbalizer_input_bundle(simulate_outcome_md=simulate_md)
 
 
@@ -715,6 +725,11 @@ def main() -> None:
     parser.add_argument("--test", type=str, help='Test name or index (e.g. "0" or "debt_paydown_interest_drag")')
     parser.add_argument("--batch", type=int, help="Run all tests in batch N")
     parser.add_argument(
+        "--user-id",
+        type=int,
+        help="User id; when simulate-agent-outcome-id is omitted, use the latest simulate_financial_strategy outcome.",
+    )
+    parser.add_argument(
         "--simulate-agent-outcome-id",
         type=int,
         help="simulate_financial_strategy ai_agent_outcomes.agent_outcome_id",
@@ -728,8 +743,15 @@ def main() -> None:
     parser.add_argument("--no-thinking", action="store_true", help="Set thinking_budget=0")
     args = parser.parse_args()
 
-    if args.simulate_agent_outcome_id is not None:
-        built = build_need_verbalizer_input(simulate_agent_outcome_id=args.simulate_agent_outcome_id)
+    if args.user_id is not None or args.simulate_agent_outcome_id is not None:
+        sim_id = resolve_simulate_agent_outcome_id(
+            user_id=args.user_id,
+            simulate_agent_outcome_id=args.simulate_agent_outcome_id,
+        )
+        built = build_need_verbalizer_input(
+            simulate_agent_outcome_id=sim_id,
+        )
+        print(f"Using simulate_agent_outcome_id={sim_id}")
         print("BUILT NEED VERBALIZER INPUT")
         print("-" * 80)
         print(built)
@@ -743,7 +765,7 @@ def main() -> None:
         return
 
     if args.print_input_only:
-        print("Error: --print-input-only requires --simulate-agent-outcome-id", file=sys.stderr)
+        print("Error: --print-input-only requires --user-id or --simulate-agent-outcome-id", file=sys.stderr)
         raise SystemExit(1)
 
     if args.batch is None and args.test is None:
@@ -780,8 +802,8 @@ def _print_usage() -> None:
     print("  Run a single test: --test <name_or_index>")
     print("  Run all tests: --test all")
     print("  Run batch: --batch <N>")
-    print("  Build input from DB: --simulate-agent-outcome-id <id>")
-    print("  Print built input only: --simulate-agent-outcome-id <id> --print-input-only")
+    print("  Build input from DB: --user-id <id> | --simulate-agent-outcome-id <id>")
+    print("  Print built input only: --user-id <id> --print-input-only")
     print("\nAvailable test cases:")
     for i, tc in enumerate(TEST_CASES):
         batch = tc.get("batch", "?")
