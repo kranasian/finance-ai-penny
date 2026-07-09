@@ -54,7 +54,6 @@ GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
 NEED_PLANS_VERBALIZER_THINKING_BUDGET = 512
 NEED_PLANS_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
-_FINANCIAL_STRATEGY_H1 = "# Financial Strategy"
 _FINANCIAL_NEEDS_H1 = "# Financial Needs"
 _SIMULATE_OUTCOME_TYPE = "simulate_financial_strategy"
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -150,6 +149,11 @@ def _validate_need_plans_response(
                 f"solution_options expected {expected_plan_count} entries, got {len(options)}"
             )
     return parsed
+
+
+def _resolve_ideal_response(tc: dict[str, Any]) -> dict[str, Any] | None:
+    ideal = tc.get("ideal_response")
+    return ideal if isinstance(ideal, dict) else None
 
 
 def _load_slave_db_connect_kwargs() -> dict[str, Any]:
@@ -549,47 +553,22 @@ def build_need_plans_verbalizer_input(*, simulate_agent_outcome_id: int) -> str:
     )
 
 
-def _split_needs_and_simulate_markdown(combined: str) -> tuple[str, str]:
-    """Split fixture markdown at ``# Financial Strategy`` (needs vs full simulate outcome)."""
-    body = (combined or "").strip()
-    idx = body.find(_FINANCIAL_STRATEGY_H1)
-    if idx < 0:
-        raise ValueError(f"combined input must include {_FINANCIAL_STRATEGY_H1}")
-    needs_outcome = body[:idx].strip() + "\n"
-    simulate_outcome = body.strip() + "\n"
-    return needs_outcome, simulate_outcome
-
-
-def _resolve_simulate_md_from_test_case(test_case: dict[str, Any]) -> str:
-    """Full simulate markdown for alignment (Financial Needs + Financial Strategy)."""
-    simulate_md = test_case.get("simulate_outcome")
-    if isinstance(simulate_md, str) and simulate_md.strip():
-        return simulate_md.strip() + "\n"
-    combined = test_case.get("input")
-    if isinstance(combined, str) and combined.strip():
-        _, simulate_md = _split_needs_and_simulate_markdown(combined)
-        return simulate_md
-    raise ValueError("test case must include simulate_outcome or input")
+def _bundled_input_from_test_case(test_case: dict[str, Any]) -> str | None:
+    """Return pre-built bundled LLM input when ``input`` / ``bundled_input`` is already tagged."""
+    for key in ("input", "bundled_input"):
+        raw = test_case.get(key)
+        if isinstance(raw, str) and raw.strip() and "<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>" in raw:
+            text = raw.strip()
+            return text + ("\n" if not text.endswith("\n") else "")
+    return None
 
 
 def resolve_test_case_input(test_case: dict[str, Any]) -> str:
-    """Build bundled optimizer input from a test-case dict."""
-    explicit = test_case.get("bundled_input")
-    if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip() + "\n"
-
-    simulate_md = _resolve_simulate_md_from_test_case(test_case)
-    goal_plan = test_case.get("goal_plan")
-    simulate_calls = test_case.get("simulate_calls")
-    goal_plan = _finalize_goal_plan_for_bundle(
-        goal_plan,
-        simulate_md,
-        simulate_calls=simulate_calls,
-    )
-    return build_need_plans_verbalizer_input_bundle(
-        simulate_outcome_md=simulate_md,
-        goal_plan=goal_plan,
-    )
+    """Return bundled optimizer input from a test-case dict."""
+    bundled = _bundled_input_from_test_case(test_case)
+    if bundled:
+        return bundled
+    raise ValueError("test case must include bundled input")
 
 
 def format_need_plans_verbalizer_user_message(profile_input: str) -> str:
@@ -597,26 +576,6 @@ def format_need_plans_verbalizer_user_message(profile_input: str) -> str:
     if not body:
         raise ValueError("profile_input must be non-empty markdown.")
     return body + "\n"
-
-
-def _extract_stream_chunk_text(chunk: Any) -> str:
-    pieces: list[str] = []
-    for cand in getattr(chunk, "candidates", None) or []:
-        content = getattr(cand, "content", None)
-        if not content:
-            continue
-        for part in getattr(content, "parts", None) or []:
-            if getattr(part, "thought", False):
-                continue
-            t = getattr(part, "text", None)
-            if isinstance(t, str) and t:
-                pieces.append(t)
-    if pieces:
-        return "".join(pieces)
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=r".*non-text parts in the response.*")
-        agg = getattr(chunk, "text", None)
-        return agg if isinstance(agg, str) else ""
 
 
 class NeedPlansVerbalizerOptimizer:
@@ -649,7 +608,6 @@ class NeedPlansVerbalizerOptimizer:
         ]
         self.system_prompt = SYSTEM_PROMPT
         self.output_schema = _build_output_schema()
-        self.quiet = False
 
     def generate_response(self, profile_input: str) -> dict[str, Any]:
         user_text = format_need_plans_verbalizer_user_message(profile_input)
@@ -709,7 +667,7 @@ class NeedPlansVerbalizerOptimizer:
                 sys.exit(1)
             raise
 
-        if thought_summary and not self.quiet:
+        if thought_summary:
             print("\n" + "-" * 80)
             print("THOUGHT SUMMARY:")
             print("-" * 80)
@@ -732,7 +690,10 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "debt_paydown_interest_drag",
         "batch": 1,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Reduce interest drag**: Venture balance **$8,400** with **$312** interest paid over 90 days while spending tracks near income.
@@ -752,56 +713,119 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: steady_cut
 * Flat **$700** meals and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "gradual_paydown_savings",
     "scenario_title": "Gradual Paydown Savings",
     "is_active": true,
-    "current_spending": {"meals": 974, "leisure": 520},
+    "current_spending": {
+      "meals": 974,
+      "leisure": 520
+    },
     "spending_schedule": [
-      {"start_end_month": "1-3", "categories": {"meals": 850, "leisure": 450}},
-      {"start_end_month": "4+", "categories": {"meals": 700, "leisure": 350}}
+      {
+        "start_end_month": "1-3",
+        "categories": {
+          "meals": 850,
+          "leisure": 450
+        }
+      },
+      {
+        "start_end_month": "4+",
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 850, "leisure": 450},
+        "categories": {
+          "meals": 850,
+          "leisure": 450
+        },
         "start_month": "04/26",
         "end_month": "06/26"
       },
       {
-        "categories": {"meals": 700, "leisure": 350},
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        },
         "start_month": "07/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0,
     "savings_per_month": 200,
-    "savings_targets": [6500]
+    "savings_targets": [
+      6500
+    ]
   },
   {
     "scenario_id": "steady_cut",
     "scenario_title": "Steady Cut",
     "is_active": false,
-    "current_spending": {"meals": 974, "leisure": 520},
+    "current_spending": {
+      "meals": 974,
+      "leisure": 520
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 700, "leisure": 350}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 700, "leisure": 350},
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "financial_need": "Venture interest is costing you $312 every 90 days on an $8,400 balance.",
+            "solution_options": [
+                {
+                    "scenario_id": "gradual_paydown_savings",
+                    "scenario_title": "Gradual Paydown Savings",
+                    "summary": "Phase meal and leisure cuts, then steer $200/mo to savings once debt hits $0."
+                },
+                {
+                    "scenario_id": "steady_cut",
+                    "scenario_title": "Steady Cut",
+                    "summary": "Hold meals at $700 and leisure at $350 from month 1 to clear debt faster."
+                }
+            ]
+        },
     },
     {
         "name": "cash_flow_crunch_before_mortgage",
         "batch": 1,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Stabilize cash flow**: Checking **$800** with **$2,100** mortgage due **2026-04-01** — liquidity risk before flexible spend cuts matter.
@@ -821,54 +845,120 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: aggressive_flex_cut
 * Cut meals to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "protect_fixed_cut_flex",
     "scenario_title": "Protect Fixed Cut Flex",
     "is_active": true,
-    "current_spending": {"meals": 620, "shopping": 280},
+    "current_spending": {
+      "meals": 620,
+      "shopping": 280
+    },
     "spending_schedule": [
-      {"start_end_month": "1-3", "categories": {"meals": 520, "shopping": 180}},
-      {"start_end_month": "4+", "categories": {"meals": 520, "shopping": 180}}
+      {
+        "start_end_month": "1-3",
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        }
+      },
+      {
+        "start_end_month": "4+",
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 520, "shopping": 180},
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        },
         "start_month": "04/26",
         "end_month": "06/26"
       },
       {
-        "categories": {"meals": 520, "shopping": 180},
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        },
         "start_month": "07/26",
         "end_month": "03/28"
       }
     ],
-    "account_balance_targets": [{"account_id": 20, "balance_target": 2200}]
+    "account_balance_targets": [
+      {
+        "account_id": 20,
+        "balance_target": 2200
+      }
+    ]
   },
   {
     "scenario_id": "aggressive_flex_cut",
     "scenario_title": "Aggressive Flex Cut",
     "is_active": false,
-    "current_spending": {"meals": 620, "shopping": 280},
+    "current_spending": {
+      "meals": 620,
+      "shopping": 280
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 450, "shopping": 150}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 450,
+          "shopping": 150
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 450, "shopping": 150},
+        "categories": {
+          "meals": 450,
+          "shopping": 150
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "financial_need": "Checking at $800 cannot cover the $2,100 mortgage due April 1.",
+            "solution_options": [
+                {
+                    "scenario_id": "protect_fixed_cut_flex",
+                    "scenario_title": "Protect Fixed Cut Flex",
+                    "summary": "Keep checking above $2,200 and trim meals and shopping $200/mo for three months."
+                },
+                {
+                    "scenario_id": "aggressive_flex_cut",
+                    "scenario_title": "Aggressive Flex Cut",
+                    "summary": "Cut meals to $450 and shopping to $150 now to be debt-free by Aug 2026."
+                }
+            ]
+        },
     },
     {
         "name": "slow_debt_creep",
         "batch": 2,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Settle debt**: Platinum **$4,800** with slow paydown at minimum-style payments.
@@ -888,19 +978,37 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: leisure_first
 * Protect leisure at **$380** but cut meals harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "balanced_trim",
     "scenario_title": "Balanced Trim",
     "is_active": true,
-    "current_spending": {"meals": 640, "leisure": 410},
+    "current_spending": {
+      "meals": 640,
+      "leisure": 410
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 520, "leisure": 300}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 520,
+          "leisure": 300
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 520, "leisure": 300},
+        "categories": {
+          "meals": 520,
+          "leisure": 300
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
@@ -911,35 +1019,81 @@ TEST_CASES: list[dict[str, Any]] = [
     "scenario_id": "leisure_first",
     "scenario_title": "Leisure First",
     "is_active": false,
-    "current_spending": {"meals": 640, "leisure": 410},
+    "current_spending": {
+      "meals": 640,
+      "leisure": 410
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 450, "leisure": 380}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 450,
+          "leisure": 380
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 450, "leisure": 380},
+        "categories": {
+          "meals": 450,
+          "leisure": 380
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "financial_need": "Platinum debt at $4,800 is creeping up despite $115/mo payments.",
+            "solution_options": [
+                {
+                    "scenario_id": "balanced_trim",
+                    "scenario_title": "Balanced Trim",
+                    "summary": "Trim meals to $520 and leisure to $300 from month 1; debt-free by Dec 2026."
+                },
+                {
+                    "scenario_id": "leisure_first",
+                    "scenario_title": "Leisure First",
+                    "summary": "Protect leisure at $380 while cutting meals to $450 for a similar payoff date."
+                }
+            ]
+        },
     },
 ]
 
 
-def _run_test(profile_input: str, optimizer: NeedPlansVerbalizerOptimizer | None = None) -> dict[str, Any]:
+
+
+def _run_test(
+    profile_input: str,
+    optimizer: NeedPlansVerbalizerOptimizer | None = None,
+    *,
+    ideal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if optimizer is None:
         optimizer = NeedPlansVerbalizerOptimizer()
     wrapped = format_need_plans_verbalizer_user_message(profile_input)
-    print("NEED PLANS VERBALIZER LLM INPUT")
-    print("-" * 80)
+    print("=" * 80)
+    print("LLM INPUT:")
+    print("=" * 80)
     print(wrapped)
     result = optimizer.generate_response(profile_input)
-    print("NEED PLANS VERBALIZER LLM OUTPUT")
-    print("-" * 80)
+    print("=" * 80)
+    print("LLM OUTPUT:")
+    print("=" * 80)
     print(json.dumps(result, indent=2))
+    if ideal is not None:
+        print("=" * 80)
+        print("IDEAL RESPONSE:")
+        print("=" * 80)
+        print(json.dumps(ideal, indent=2))
+    print("=" * 80 + "\n")
     return result
 
 
@@ -970,14 +1124,16 @@ def run_test(
             print(f"Invalid test dict: {exc}")
             return None
         print(f"\n{'=' * 80}\nRunning test: {name}\n{'=' * 80}\n")
-        return _run_test(payload, optimizer)
+        ideal = _resolve_ideal_response(tc)
+        return _run_test(payload, optimizer, ideal=ideal)
 
     tc = get_test_case(test_name_or_index_or_dict)
     if tc is None:
         print(f"Test case '{test_name_or_index_or_dict}' not found.")
         return None
     print(f"\n{'=' * 80}\nRunning test: {tc['name']}\n{'=' * 80}\n")
-    return _run_test(resolve_test_case_input(tc), optimizer)
+    ideal = _resolve_ideal_response(tc)
+    return _run_test(resolve_test_case_input(tc), optimizer, ideal=ideal)
 
 
 def main() -> None:

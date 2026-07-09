@@ -48,13 +48,14 @@ except Exception:  # pragma: no cover
     ClientError = Exception  # type: ignore[misc, assignment]
 
 from active_experiments.need_plans_verbalizer_optimizer import (
+    _bundled_input_from_test_case,
     _fetch_ai_agent_outcome_row,
     _fetch_user_goal_plan,
     _finalize_goal_plan_for_bundle,
     _goal_plan_active_scenario,
     _goal_plan_entries_for_bundle,
     _normalize_goal_plan_list,
-    _resolve_simulate_md_from_test_case,
+    _resolve_ideal_response,
     build_need_plans_verbalizer_input_bundle,
     load_simulate_agent_outcome_markdown,
 )
@@ -146,11 +147,15 @@ def _validate_plan_response(
         )
     return parsed
 
+
 TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "debt_paydown_recommended",
         "batch": 1,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Reduce interest drag**: Venture balance **$8,400** with **$312** interest paid over 90 days while spending tracks near income.
@@ -170,39 +175,86 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: steady_cut
 * Flat **$700** meals and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "gradual_paydown_savings",
     "scenario_title": "Gradual Paydown Savings",
     "is_active": true,
-    "current_spending": {"meals": 974, "leisure": 520},
+    "current_spending": {
+      "meals": 974,
+      "leisure": 520
+    },
     "spending_schedule": [
-      {"start_end_month": "1-3", "categories": {"meals": 850, "leisure": 450}},
-      {"start_end_month": "4+", "categories": {"meals": 700, "leisure": 350}}
+      {
+        "start_end_month": "1-3",
+        "categories": {
+          "meals": 850,
+          "leisure": 450
+        }
+      },
+      {
+        "start_end_month": "4+",
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 850, "leisure": 450},
+        "categories": {
+          "meals": 850,
+          "leisure": 450
+        },
         "start_month": "04/26",
         "end_month": "06/26"
       },
       {
-        "categories": {"meals": 700, "leisure": 350},
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        },
         "start_month": "07/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0,
     "savings_per_month": 200,
-    "savings_targets": [6500]
+    "savings_targets": [
+      6500
+    ]
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "scenario_id": "gradual_paydown_savings",
+            "scenario_title": "Gradual Paydown Savings",
+            "mission": "Phase dining and leisure cuts, then route $200/mo to savings after Venture hits $0.",
+            "blueprint": [
+                "Months 1-3: meals $850/mo, leisure $450/mo.",
+                "Month 4+: meals $700/mo, leisure $350/mo."
+            ],
+            "result": "Card balance targets $0 with $200/mo savings once paid off; $6,500 savings goal.",
+            "trade_off": "Debt clears slower than the flat-cut plan while buffers stay thicker early on."
+        },
     },
     {
         "name": "debt_paydown_alternative",
         "batch": 1,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Reduce interest drag**: Venture balance **$8,400** with **$312** interest paid over 90 days while spending tracks near income.
@@ -222,31 +274,66 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: steady_cut
 * Flat **$700** meals and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "steady_cut",
     "scenario_title": "Steady Cut",
     "is_active": false,
-    "current_spending": {"meals": 974, "leisure": 520},
+    "current_spending": {
+      "meals": 974,
+      "leisure": 520
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 700, "leisure": 350}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 700, "leisure": 350},
+        "categories": {
+          "meals": 700,
+          "leisure": 350
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "scenario_id": "steady_cut",
+            "scenario_title": "Steady Cut",
+            "mission": "Hold meals at $700 and leisure at $350 from month 1 to clear Venture debt faster.",
+            "blueprint": [
+                "Month 1+: meals $700/mo, leisure $350/mo."
+            ],
+            "result": "Reaches $0 card balance about two months sooner than the gradual plan.",
+            "trade_off": "Thinner checking buffers in the first quarter while cuts stay flat."
+        },
     },
     {
         "name": "cash_flow_recommended",
         "batch": 1,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Stabilize cash flow**: Checking **$800** with **$2,100** mortgage due **2026-04-01** — liquidity risk before flexible spend cuts matter.
@@ -266,37 +353,87 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: aggressive_flex_cut
 * Cut meals to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "protect_fixed_cut_flex",
     "scenario_title": "Protect Fixed Cut Flex",
     "is_active": true,
-    "current_spending": {"meals": 620, "shopping": 280},
+    "current_spending": {
+      "meals": 620,
+      "shopping": 280
+    },
     "spending_schedule": [
-      {"start_end_month": "1-3", "categories": {"meals": 520, "shopping": 180}},
-      {"start_end_month": "4+", "categories": {"meals": 520, "shopping": 180}}
+      {
+        "start_end_month": "1-3",
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        }
+      },
+      {
+        "start_end_month": "4+",
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 520, "shopping": 180},
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        },
         "start_month": "04/26",
         "end_month": "06/26"
       },
       {
-        "categories": {"meals": 520, "shopping": 180},
+        "categories": {
+          "meals": 520,
+          "shopping": 180
+        },
         "start_month": "07/26",
         "end_month": "03/28"
       }
     ],
-    "account_balance_targets": [{"account_id": 20, "balance_target": 2200}]
+    "account_balance_targets": [
+      {
+        "account_id": 20,
+        "balance_target": 2200
+      }
+    ]
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "scenario_id": "protect_fixed_cut_flex",
+            "scenario_title": "Protect Fixed Cut Flex",
+            "mission": "Keep checking above $2,200 before the mortgage while trimming flexible spend.",
+            "blueprint": [
+                "Months 1-3: meals $520/mo, shopping $180/mo.",
+                "Month 4+: meals $520/mo, shopping $180/mo."
+            ],
+            "result": "Targets checking balance at $2,200 before the $2,100 mortgage on April 1.",
+            "trade_off": "Slower debt payoff than the aggressive flex cut if card balances remain."
+        },
     },
     {
         "name": "cash_flow_alternative",
         "batch": 1,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Stabilize cash flow**: Checking **$800** with **$2,100** mortgage due **2026-04-01** — liquidity risk before flexible spend cuts matter.
@@ -316,31 +453,66 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: aggressive_flex_cut
 * Cut meals to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "aggressive_flex_cut",
     "scenario_title": "Aggressive Flex Cut",
     "is_active": false,
-    "current_spending": {"meals": 620, "shopping": 280},
+    "current_spending": {
+      "meals": 620,
+      "shopping": 280
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 450, "shopping": 150}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 450,
+          "shopping": 150
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 450, "shopping": 150},
+        "categories": {
+          "meals": 450,
+          "shopping": 150
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "scenario_id": "aggressive_flex_cut",
+            "scenario_title": "Aggressive Flex Cut",
+            "mission": "Cut meals and shopping immediately to stabilize cash before the mortgage hits.",
+            "blueprint": [
+                "Month 1+: meals $450/mo, shopping $150/mo."
+            ],
+            "result": "Debt-free by Aug 2026 but checking may dip below $500 in April.",
+            "trade_off": "Higher liquidity risk in April while spending cuts stay steep from day one."
+        },
     },
     {
         "name": "slow_debt_recommended",
         "batch": 2,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Settle debt**: Platinum **$4,800** with slow paydown at minimum-style payments.
@@ -360,31 +532,66 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: leisure_first
 * Protect leisure at **$380** but cut meals harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "balanced_trim",
     "scenario_title": "Balanced Trim",
     "is_active": true,
-    "current_spending": {"meals": 640, "leisure": 410},
+    "current_spending": {
+      "meals": 640,
+      "leisure": 410
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 520, "leisure": 300}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 520,
+          "leisure": 300
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 520, "leisure": 300},
+        "categories": {
+          "meals": 520,
+          "leisure": 300
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "scenario_id": "balanced_trim",
+            "scenario_title": "Balanced Trim",
+            "mission": "Trim meals and leisure evenly to settle Platinum debt by Dec 2026.",
+            "blueprint": [
+                "Month 1+: meals $520/mo, leisure $300/mo."
+            ],
+            "result": "Hits $0 debt by Dec 2026 and saves about $420 interest versus status quo.",
+            "trade_off": "Leisure drops more than in the leisure-first alternative."
+        },
     },
     {
         "name": "slow_debt_alternative",
         "batch": 2,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 1. **Settle debt**: Platinum **$4,800** with slow paydown at minimum-style payments.
@@ -404,32 +611,67 @@ TEST_CASES: list[dict[str, Any]] = [
 
 ## Alternative plan: leisure_first
 * Protect leisure at **$380** but cut meals harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
-""",
-        "goal_plan": """[
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "leisure_first",
     "scenario_title": "Leisure First",
     "is_active": false,
-    "current_spending": {"meals": 640, "leisure": 410},
+    "current_spending": {
+      "meals": 640,
+      "leisure": 410
+    },
     "spending_schedule": [
-      {"start_end_month": "1+", "categories": {"meals": 450, "leisure": 380}}
+      {
+        "start_end_month": "1+",
+        "categories": {
+          "meals": 450,
+          "leisure": 380
+        }
+      }
     ],
     "spending_timeline": [
       {
-        "categories": {"meals": 450, "leisure": 380},
+        "categories": {
+          "meals": 450,
+          "leisure": 380
+        },
         "start_month": "04/26",
         "end_month": "03/28"
       }
     ],
     "credit_balance_target": 0
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "scenario_id": "leisure_first",
+            "scenario_title": "Leisure First",
+            "mission": "Protect leisure spending while cutting meals harder to settle Platinum debt.",
+            "blueprint": [
+                "Month 1+: meals $450/mo, leisure $380/mo."
+            ],
+            "result": "Similar debt-free timing with more dining sacrifice and steadier social spend.",
+            "trade_off": "Meals stay tighter than the balanced trim plan throughout."
+        },
     },
     {
         "name": "spending_drift_recommended",
         "batch": 3,
         "simulate_agent_outcome_id": 1252,
-        "simulate_outcome": """# Financial Needs
+        "input": """
+<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+# Financial Needs
 
 ## Primary needs
 
@@ -497,8 +739,15 @@ TEST_CASES: list[dict[str, Any]] = [
 * This plan is the most sustainable because it recognizes that a sudden, drastic cut in discretionary spending is often unsustainable and stressful. By allowing for a "step-down" period over six months, you build the discipline to manage your "spending drift" while still successfully clearing your high-interest debt within the same quarter as the more aggressive options. This builds confidence and creates a long-term habit rather than just a temporary fix.
 
 ## Alternative plan: rapid_debt_sprint
-* This is a strong second choice for those who prioritize immediate math over psychological comfort. It eliminates interest charges the fastest, providing an immediate sense of relief and mathematical efficiency. It is the best choice if your top priority is to kill the 24.99% APR interest cycle as quickly as humanly possible, even if it feels more restrictive in the short term.""",
-        "goal_plan": """[
+* This is a strong second choice for those who prioritize immediate math over psychological comfort. It eliminates interest charges the fastest, providing an immediate sense of relief and mathematical efficiency. It is the best choice if your top priority is to kill the 24.99% APR interest cycle as quickly as humanly possible, even if it feels more restrictive in the short term.
+
+
+</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
+
+<GOAL_PLAN>
+
+```json
+[
   {
     "scenario_id": "empathetic_staged_adjustment",
     "scenario_title": "Empathetic Staged Adjustment",
@@ -539,9 +788,29 @@ TEST_CASES: list[dict[str, Any]] = [
       }
     ]
   }
-]""",
+]
+```
+
+</GOAL_PLAN>
+""",
+        "ideal_response": {
+            "scenario_id": "empathetic_staged_adjustment",
+            "scenario_title": "Empathetic Staged Adjustment",
+            "mission": "Step down discretionary drift over six months while clearing high-interest card debt.",
+            "blueprint": [
+                "Months 1-3: meals $1,200/mo, leisure $300/mo, plus fixed education and health lines.",
+                "Months 4-6: meals $750/mo, leisure $200/mo with other categories held steady.",
+                "Month 7+: meals $500/mo, leisure $100/mo to kill the 24.99% APR cycle."
+            ],
+            "result": "Clears revolving balances within the quarter while building sustainable spending habits.",
+            "trade_off": "Slower than a rapid debt sprint while discretionary cuts ramp gradually."
+        },
     },
 ]
+
+
+
+
 
 
 def _select_goal_plan_scenario(goal_plan: Any, *, scenario_id: str | None = None) -> dict[str, Any]:
@@ -630,32 +899,17 @@ def resolve_plan_test_case_input(
     *,
     scenario_id: str | None = None,
 ) -> str:
-    """Build single-scenario bundle from a plan test case (or inline fixture)."""
-    explicit = test_case.get("bundled_input")
-    if isinstance(explicit, str) and explicit.strip():
-        bundled = explicit.strip() + "\n"
-        goal_plan = _goal_plan_from_bundled_input(bundled)
-        scenario = _select_goal_plan_scenario(
-            goal_plan,
-            scenario_id=scenario_id or test_case.get("scenario_id"),
-        )
-        return build_plan_verbalizer_input_bundle(
-            simulate_outcome_md=_simulate_md_from_bundled_input(bundled),
-            goal_plan_scenario=scenario,
-        )
-
-    simulate_md = _resolve_simulate_md_from_test_case(test_case)
-    goal_plan = _finalize_goal_plan_for_bundle(
-        test_case.get("goal_plan"),
-        simulate_md,
-        simulate_calls=test_case.get("simulate_calls"),
-    )
-    scenario = _select_goal_plan_scenario(
-        goal_plan,
-        scenario_id=scenario_id or test_case.get("scenario_id"),
-    )
+    """Return single-scenario bundle from a test-case dict."""
+    bundled = _bundled_input_from_test_case(test_case)
+    if not bundled:
+        raise ValueError("test case must include bundled input")
+    sid = scenario_id or test_case.get("scenario_id")
+    if not sid:
+        return bundled
+    goal_plan = _goal_plan_from_bundled_input(bundled)
+    scenario = _select_goal_plan_scenario(goal_plan, scenario_id=sid)
     return build_plan_verbalizer_input_bundle(
-        simulate_outcome_md=simulate_md,
+        simulate_outcome_md=_simulate_md_from_bundled_input(bundled),
         goal_plan_scenario=scenario,
     )
 
@@ -690,10 +944,6 @@ def _expected_scenario_fields_from_bundle(bundle_md: str) -> tuple[str, str]:
     )
 
 
-def _expected_scenario_title_from_bundle(bundle_md: str) -> str:
-    return _expected_scenario_fields_from_bundle(bundle_md)[1]
-
-
 def _collect_model_response(response: Any) -> tuple[str, str, Any]:
     output_text = ""
     thought_summary = ""
@@ -720,26 +970,6 @@ def _collect_model_response(response: Any) -> tuple[str, str, Any]:
             if isinstance(agg, str) and agg:
                 output_text = agg
     return output_text, thought_summary, finish_reason
-
-
-def _extract_stream_chunk_text(chunk: Any) -> str:
-    pieces: list[str] = []
-    for cand in getattr(chunk, "candidates", None) or []:
-        content = getattr(cand, "content", None)
-        if not content:
-            continue
-        for part in getattr(content, "parts", None) or []:
-            if getattr(part, "thought", False):
-                continue
-            t = getattr(part, "text", None)
-            if isinstance(t, str) and t:
-                pieces.append(t)
-    if pieces:
-        return "".join(pieces)
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message=r".*non-text parts in the response.*")
-        agg = getattr(chunk, "text", None)
-        return agg if isinstance(agg, str) else ""
 
 
 class PlanVerbalizerOptimizer:
@@ -772,7 +1002,6 @@ class PlanVerbalizerOptimizer:
         ]
         self.system_prompt = SYSTEM_PROMPT
         self.output_schema = _build_output_schema()
-        self.quiet = False
 
     def generate_response(self, profile_input: str) -> dict[str, Any]:
         user_text = format_plan_verbalizer_user_message(profile_input)
@@ -812,7 +1041,7 @@ class PlanVerbalizerOptimizer:
                 sys.exit(1)
             raise
 
-        if thought_summary and not self.quiet:
+        if thought_summary:
             print("\n" + "-" * 80)
             print("THOUGHT SUMMARY:")
             print("-" * 80)
@@ -836,17 +1065,30 @@ class PlanVerbalizerOptimizer:
         )
 
 
-def _run_test(profile_input: str, optimizer: PlanVerbalizerOptimizer | None = None) -> dict[str, Any]:
+def _run_test(
+    profile_input: str,
+    optimizer: PlanVerbalizerOptimizer | None = None,
+    *,
+    ideal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if optimizer is None:
         optimizer = PlanVerbalizerOptimizer()
     wrapped = format_plan_verbalizer_user_message(profile_input)
-    print("PLAN VERBALIZER LLM INPUT")
-    print("-" * 80)
+    print("=" * 80)
+    print("LLM INPUT:")
+    print("=" * 80)
     print(wrapped)
     result = optimizer.generate_response(profile_input)
-    print("PLAN VERBALIZER LLM OUTPUT")
-    print("-" * 80)
+    print("=" * 80)
+    print("LLM OUTPUT:")
+    print("=" * 80)
     print(json.dumps(result, indent=2))
+    if ideal is not None:
+        print("=" * 80)
+        print("IDEAL RESPONSE:")
+        print("=" * 80)
+        print(json.dumps(ideal, indent=2))
+    print("=" * 80 + "\n")
     return result
 
 
@@ -879,7 +1121,8 @@ def run_test(
             print(f"Invalid test dict: {exc}")
             return None
         print(f"\n{'=' * 80}\nRunning test: {name}\n{'=' * 80}\n")
-        return _run_test(payload, optimizer)
+        ideal = _resolve_ideal_response(tc)
+        return _run_test(payload, optimizer, ideal=ideal)
 
     tc = get_test_case(test_name_or_index_or_dict)
     if tc is None:
@@ -888,7 +1131,8 @@ def run_test(
     name = tc["name"]
     sid = scenario_id or tc.get("scenario_id")
     print(f"\n{'=' * 80}\nRunning test: {name}\n{'=' * 80}\n")
-    return _run_test(resolve_plan_test_case_input(tc, scenario_id=sid), optimizer)
+    ideal = _resolve_ideal_response(tc)
+    return _run_test(resolve_plan_test_case_input(tc, scenario_id=sid), optimizer, ideal=ideal)
 
 
 def main() -> None:
@@ -960,7 +1204,11 @@ def main() -> None:
                     print("\n" + "-" * 80 + "\n")
             return
         test_val: str | int = int(args.test) if args.test.isdigit() else args.test
-        run_test(test_val, optimizer, scenario_id=args.scenario_id)
+        run_test(
+            test_val,
+            optimizer,
+            scenario_id=args.scenario_id,
+        )
         return
 
 
