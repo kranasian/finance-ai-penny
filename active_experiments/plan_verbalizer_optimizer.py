@@ -1,12 +1,14 @@
 """
 Optimizer runner for **P:PlanVerbalizer** (Gemini prompt tuning).
 
-Same bundled input as ``need_plans_verbalizer_optimizer.py`` — trimmed
-``<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>`` plus ``<GOAL_PLAN>`` — except only the
-intended scenario is included in ``<GOAL_PLAN>`` (recommended by default, or
+Input is trimmed ``# Financial Needs`` markdown plus the matching ``# Financial Strategy`` subsection
+(recommended or alternative only) and a ``### Spending Schedule`` block with compact spending
+bullets for one scenario (recommended by default, or
 ``--scenario-id``).
 
-Objective: detailed verbalization of that one plan (phased spending, targets, payoff).
+Objective: verbalize that one plan as ``plan_title``, ``plan_summary``, and ``plan_details``
+(``spending_phase_descriptions``, ``payoff``, ``trade_off`` from the model; ``spending_phases`` with
+``period``, ``caps``, and ``description`` assembled after the call from ``### Spending Schedule``).
 
 Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance-ai-llm-server/llm``):
 
@@ -25,7 +27,6 @@ import json
 import os
 import re
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -53,31 +54,65 @@ from active_experiments.need_plans_verbalizer_optimizer import (
     _fetch_user_goal_plan,
     _finalize_goal_plan_for_bundle,
     _goal_plan_active_scenario,
-    _goal_plan_entries_for_bundle,
     _normalize_goal_plan_list,
     _resolve_ideal_response,
-    build_need_plans_verbalizer_input_bundle,
+    _scenario_ids_from_simulate_strategy,
     load_simulate_agent_outcome_markdown,
+)
+from active_experiments.need_verbalizer_optimizer import (
+    _format_goal_plan_narrative,
+    _parse_model_json_object,
+    trim_simulate_outcome_for_plan_bundle,
 )
 
 if load_dotenv is not None:
     load_dotenv()
 
 GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
-PLAN_VERBALIZER_THINKING_BUDGET = 256
-PLAN_VERBALIZER_MAX_OUTPUT_TOKENS = 4096
+PLAN_VERBALIZER_THINKING_BUDGET = 128
+PLAN_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
 
-Use the plan JSON in the input ``<GOAL_PLAN>`` block. Copy ``scenario_id`` and ``scenario_title`` verbatim. Draw details from that JSON and the matching plan prose in ``<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>``.
+Use the financial-needs context, matching plan prose in ``# Financial Strategy``, and the spending caps under ``### Spending Schedule``.
 
-- ``mission``: 1–2 sentences — what this plan optimizes for.
-- ``blueprint``: one string per spending phase (``spending_schedule`` / ``spending_timeline``) with exact **$**/mo targets; summarize when many categories.
-- ``result``: 1–2 sentences — payoff timeline, balance or savings targets, interest impact when stated.
-- ``trade_off``: 1 sentence — main sacrifice or risk.
+- ``plan_title``: short headline for this plan (max **8 words**; punchy, no jargon).
+- ``plan_summary``: one sentence on what this plan does (max **25 words**); ground every **$** and date in the input.
+- ``plan_details``: JSON object with:
+  - ``spending_phase_descriptions``: array with one entry per spending-schedule line, in order. Each entry is one sentence describing that phase (max **20 words**). Name only categories whose caps change in that phase; do not list every dollar amount.
+  - ``payoff``: one sentence — balance or savings targets and interest impact when stated (max **20 words**).
+  - ``trade_off``: one sentence — main sacrifice from ``# Financial Strategy`` (max **20 words**).
+  Exact ``period`` and caps live under ``### Spending Schedule`` — do not repeat them in descriptions.
 
-Ground every figure in the input. Fun and confident, never cheesy, patronizing, or naggy. No exclamation marks, superlatives, or emoji.
+Keep ``plan_summary`` to one sentence (max **25 words**). Output compact JSON only — no extra fields or whitespace padding.
 """
+
+
+def _build_plan_details_schema() -> "types.Schema":
+    if types is None:  # pragma: no cover
+        raise RuntimeError("Install `google-genai` for this optimizer.")
+    return types.Schema(
+        type=types.Type.OBJECT,
+        required=["spending_phase_descriptions", "payoff", "trade_off"],
+        properties={
+            "spending_phase_descriptions": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(
+                    type=types.Type.STRING,
+                    description="One-sentence description of a spending-schedule phase.",
+                ),
+                description="One entry per ### Spending Schedule line, in order.",
+            ),
+            "payoff": types.Schema(
+                type=types.Type.STRING,
+                description="Payoff timeline, balance or savings targets, and interest impact when stated.",
+            ),
+            "trade_off": types.Schema(
+                type=types.Type.STRING,
+                description="Main sacrifice or risk for this plan.",
+            ),
+        },
+    )
 
 
 def _build_output_schema() -> "types.Schema":
@@ -85,67 +120,121 @@ def _build_output_schema() -> "types.Schema":
         raise RuntimeError("Install `google-genai` for this optimizer.")
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["scenario_id", "scenario_title", "mission", "blueprint", "result", "trade_off"],
+        required=["plan_title", "plan_summary", "plan_details"],
         properties={
-            "scenario_id": types.Schema(
+            "plan_title": types.Schema(
                 type=types.Type.STRING,
-                description="Verbatim scenario_id from the input GOAL_PLAN JSON.",
+                description="Short headline for this plan (max 8 words).",
             ),
-            "scenario_title": types.Schema(
+            "plan_summary": types.Schema(
                 type=types.Type.STRING,
-                description="Verbatim scenario_title from the input GOAL_PLAN JSON.",
+                description="One-sentence summary of what this plan does (max 25 words).",
             ),
-            "mission": types.Schema(
-                type=types.Type.STRING,
-                description="1–2 sentences on what this plan optimizes for.",
-            ),
-            "blueprint": types.Schema(
-                type=types.Type.ARRAY,
-                items=types.Schema(
-                    type=types.Type.STRING,
-                    description="One string per spending phase with exact $/mo targets.",
-                ),
-            ),
-            "result": types.Schema(
-                type=types.Type.STRING,
-                description="1–2 sentences on payoff timeline, targets, and interest impact when stated.",
-            ),
-            "trade_off": types.Schema(
-                type=types.Type.STRING,
-                description="One sentence on the main sacrifice or risk.",
-            ),
+            "plan_details": _build_plan_details_schema(),
         },
     )
 
 
-def _validate_plan_response(
-    parsed: Any,
-    *,
-    expected_scenario_id: str | None = None,
-    expected_scenario_title: str | None = None,
-) -> dict[str, Any]:
+SPENDING_SCHEDULE_H3 = "### Spending Schedule"
+
+_RE_SPENDING_SCHEDULE_BULLET = re.compile(r"^-\s+(.+):\s+Cap\s+(.+)$")
+
+
+def _spending_phases_from_bundle(bundle_md: str) -> list[dict[str, str]]:
+    if SPENDING_SCHEDULE_H3 not in bundle_md:
+        return []
+    block_lines: list[str] = []
+    started = False
+    for line in bundle_md.splitlines():
+        if line.strip() == SPENDING_SCHEDULE_H3:
+            started = True
+            continue
+        if not started:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            break
+        if stripped:
+            block_lines.append(stripped)
+    phases: list[dict[str, str]] = []
+    for stripped in block_lines:
+        match = _RE_SPENDING_SCHEDULE_BULLET.match(stripped)
+        if not match:
+            continue
+        period = match.group(1).strip()
+        if period.endswith("-"):
+            period = f"{period}:"
+        phases.append({
+            "period": period,
+            "caps": match.group(2).strip(),
+        })
+    return phases
+
+
+def _attach_spending_phases(response: dict[str, Any], profile_input: str) -> dict[str, Any]:
+    phases = _spending_phases_from_bundle(profile_input)
+    if not phases:
+        return response
+    plan_details = dict(response["plan_details"])
+    descriptions = plan_details.pop("spending_phase_descriptions", None)
+    if not isinstance(descriptions, list) or not descriptions:
+        raise ValueError("plan_details.spending_phase_descriptions must be a non-empty array")
+    if len(descriptions) != len(phases):
+        raise ValueError(
+            "plan_details.spending_phase_descriptions length must match "
+            f"spending-schedule lines ({len(phases)} expected, {len(descriptions)} got)"
+        )
+    merged_phases: list[dict[str, str]] = []
+    for phase, description in zip(phases, descriptions, strict=True):
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("each spending_phase_descriptions entry must be a non-empty string")
+        merged_phases.append({
+            **phase,
+            "description": description.strip(),
+        })
+    plan_details["spending_phases"] = merged_phases
+    return {**response, "plan_details": plan_details}
+
+
+def _validate_plan_details(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("plan_details must be a JSON object")
+    descriptions = value.get("spending_phase_descriptions")
+    if not isinstance(descriptions, list) or not descriptions:
+        raise ValueError("plan_details.spending_phase_descriptions must be a non-empty array")
+    normalized_descriptions: list[str] = []
+    for i, description in enumerate(descriptions):
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError(f"plan_details.spending_phase_descriptions[{i}] must be a non-empty string")
+        normalized_descriptions.append(description.strip())
+    payoff = value.get("payoff")
+    if not isinstance(payoff, str) or not payoff.strip():
+        raise ValueError("plan_details.payoff must be a non-empty string")
+    trade_off = value.get("trade_off")
+    if not isinstance(trade_off, str) or not trade_off.strip():
+        raise ValueError("plan_details.trade_off must be a non-empty string")
+    return {
+        "spending_phase_descriptions": normalized_descriptions,
+        "payoff": payoff.strip(),
+        "trade_off": trade_off.strip(),
+    }
+
+
+def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("Response must be a JSON object")
-    for key in ("scenario_id", "scenario_title", "mission", "result", "trade_off"):
-        val = parsed.get(key)
-        if not isinstance(val, str) or not val.strip():
-            raise ValueError(f"{key} must be a non-empty string")
-    blueprint = parsed.get("blueprint")
-    if not isinstance(blueprint, list) or not blueprint:
-        raise ValueError("blueprint must be a non-empty array of strings")
-    for i, item in enumerate(blueprint):
-        if not isinstance(item, str) or not item.strip():
-            raise ValueError(f"blueprint[{i}] must be a non-empty string")
-    if expected_scenario_id and parsed["scenario_id"] != expected_scenario_id:
-        raise ValueError(
-            f"scenario_id mismatch: expected {expected_scenario_id!r}, got {parsed['scenario_id']!r}"
-        )
-    if expected_scenario_title and parsed["scenario_title"] != expected_scenario_title:
-        raise ValueError(
-            f"scenario_title mismatch: expected {expected_scenario_title!r}, "
-            f"got {parsed['scenario_title']!r}"
-        )
-    return parsed
+    plan_title = parsed.get("plan_title")
+    if not isinstance(plan_title, str) or not plan_title.strip():
+        raise ValueError("plan_title must be a non-empty string")
+    plan_summary = parsed.get("plan_summary")
+    if not isinstance(plan_summary, str) or not plan_summary.strip():
+        raise ValueError("plan_summary must be a non-empty string")
+    plan_details = _validate_plan_details(parsed.get("plan_details"))
+    return {
+        "plan_title": plan_title.strip(),
+        "plan_summary": plan_summary.strip(),
+        "plan_details": plan_details,
+    }
 
 
 TEST_CASES: list[dict[str, Any]] = [
@@ -153,8 +242,6 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "debt_paydown_recommended",
         "batch": 1,
         "input": """
-<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
 # Financial Needs
 
 ## Primary needs
@@ -165,95 +252,43 @@ TEST_CASES: list[dict[str, Any]] = [
   - Interest tool: **$312** on Venture in 90 days.
   - Next due **2026-04-18** per payment schedule.
 
-## Credit Interest Rates
-* **Venture (11)**: **~24.9%** (from recent interest charges vs average daily balance).
-
 # Financial Strategy
 
 ## Recommended plan: gradual_paydown_savings
 * Phased dining and leisure trims keep month-1 cuts modest, then deepen after month 3 while routing **$200**/mo to savings once the card hits **$0**.
 
 ## Alternative plan: steady_cut
-* Flat **$700** meals and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
+* Flat **$700** food and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
 
-
-</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
-<GOAL_PLAN>
-
-```json
-[
-  {
-    "scenario_id": "gradual_paydown_savings",
-    "scenario_title": "Gradual Paydown Savings",
-    "is_active": true,
-    "current_spending": {
-      "meals": 974,
-      "leisure": 520
-    },
-    "spending_schedule": [
-      {
-        "start_end_month": "1-3",
-        "categories": {
-          "meals": 850,
-          "leisure": 450
-        }
-      },
-      {
-        "start_end_month": "4+",
-        "categories": {
-          "meals": 700,
-          "leisure": 350
-        }
-      }
-    ],
-    "spending_timeline": [
-      {
-        "categories": {
-          "meals": 850,
-          "leisure": 450
-        },
-        "start_month": "04/26",
-        "end_month": "06/26"
-      },
-      {
-        "categories": {
-          "meals": 700,
-          "leisure": 350
-        },
-        "start_month": "07/26",
-        "end_month": "03/28"
-      }
-    ],
-    "credit_balance_target": 0,
-    "savings_per_month": 200,
-    "savings_targets": [
-      6500
-    ]
-  }
-]
-```
-
-</GOAL_PLAN>
+### Spending Schedule
+- 04/26-06/26: Cap food $850, leisure $450 monthly
+- 07/26-03/28: Cap food $700, leisure $350 monthly
 """,
         "ideal_response": {
-            "scenario_id": "gradual_paydown_savings",
-            "scenario_title": "Gradual Paydown Savings",
-            "mission": "Phase dining and leisure cuts, then route $200/mo to savings after Venture hits $0.",
-            "blueprint": [
-                "Months 1-3: meals $850/mo, leisure $450/mo.",
-                "Month 4+: meals $700/mo, leisure $350/mo."
-            ],
-            "result": "Card balance targets $0 with $200/mo savings once paid off; $6,500 savings goal.",
-            "trade_off": "Debt clears slower than the flat-cut plan while buffers stay thicker early on."
+            "plan_title": "Gradual paydown path",
+            "plan_summary": "Phase dining and leisure cuts, then route $200/mo to savings after Venture hits $0.",
+            "plan_details": {
+                "payoff": "Route $200/mo to savings once Venture hits $0; savings target $6,500.",
+                "trade_off": "Phased trims keep month-1 cuts modest — debt clears slower than steady_cut but checking buffers stay thicker in the first quarter.",
+                "spending_phases": [
+                    {
+                        "period": "04/26-06/26",
+                        "caps": "food $850, leisure $450 monthly",
+                        "description": "Modest dining and leisure trim for the first three months.",
+                    },
+                    {
+                        "period": "07/26-03/28",
+                        "caps": "food $700, leisure $350 monthly",
+                        "description": "Deeper food and leisure caps through Mar '28.",
+                    },
+                ],
+            },
         },
     },
     {
         "name": "debt_paydown_alternative",
         "batch": 1,
         "input": """
-<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
 # Financial Needs
 
 ## Primary needs
@@ -264,75 +299,37 @@ TEST_CASES: list[dict[str, Any]] = [
   - Interest tool: **$312** on Venture in 90 days.
   - Next due **2026-04-18** per payment schedule.
 
-## Credit Interest Rates
-* **Venture (11)**: **~24.9%** (from recent interest charges vs average daily balance).
-
 # Financial Strategy
 
 ## Recommended plan: gradual_paydown_savings
 * Phased dining and leisure trims keep month-1 cuts modest, then deepen after month 3 while routing **$200**/mo to savings once the card hits **$0**.
 
 ## Alternative plan: steady_cut
-* Flat **$700** meals and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
+* Flat **$700** food and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
 
-
-</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
-<GOAL_PLAN>
-
-```json
-[
-  {
-    "scenario_id": "steady_cut",
-    "scenario_title": "Steady Cut",
-    "is_active": false,
-    "current_spending": {
-      "meals": 974,
-      "leisure": 520
-    },
-    "spending_schedule": [
-      {
-        "start_end_month": "1+",
-        "categories": {
-          "meals": 700,
-          "leisure": 350
-        }
-      }
-    ],
-    "spending_timeline": [
-      {
-        "categories": {
-          "meals": 700,
-          "leisure": 350
-        },
-        "start_month": "04/26",
-        "end_month": "03/28"
-      }
-    ],
-    "credit_balance_target": 0
-  }
-]
-```
-
-</GOAL_PLAN>
+### Spending Schedule
+- 04/26-03/28: Cap food $700, leisure $350 monthly
 """,
         "ideal_response": {
-            "scenario_id": "steady_cut",
-            "scenario_title": "Steady Cut",
-            "mission": "Hold meals at $700 and leisure at $350 from month 1 to clear Venture debt faster.",
-            "blueprint": [
-                "Month 1+: meals $700/mo, leisure $350/mo."
-            ],
-            "result": "Reaches $0 card balance about two months sooner than the gradual plan.",
-            "trade_off": "Thinner checking buffers in the first quarter while cuts stay flat."
+            "plan_title": "Steady cut from day one",
+            "plan_summary": "Hold food at $700/mo and leisure at $350/mo from month one to clear Venture faster.",
+            "plan_details": {
+                "payoff": "Targets $0 Venture balance about two months sooner than gradual_paydown_savings.",
+                "trade_off": "Thinner checking buffers in the first quarter while cuts hit immediately.",
+                "spending_phases": [
+                    {
+                        "period": "04/26-03/28",
+                        "caps": "food $700, leisure $350 monthly",
+                        "description": "Flat food and leisure caps from day one — no ramp.",
+                    },
+                ],
+            },
         },
     },
     {
         "name": "cash_flow_recommended",
         "batch": 1,
         "input": """
-<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
 # Financial Needs
 
 ## Primary needs
@@ -343,96 +340,37 @@ TEST_CASES: list[dict[str, Any]] = [
   - Checking **$800** vs mortgage **$2,100** on the 1st.
   - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 
-## Credit Interest Rates
-* **Rewards (21)**: **~22.4%** (derived from last-cycle interest charge).
-
 # Financial Strategy
 
 ## Recommended plan: protect_fixed_cut_flex
-* Hold checking above **$2,200** before the mortgage, trim **$200**/mo from meals and shopping months 1–3, then reassess.
+* Hold checking above **$2,200** before the mortgage, trim **$200**/mo from food and shopping months 1–3, then reassess.
 
 ## Alternative plan: aggressive_flex_cut
-* Cut meals to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
+* Cut food to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
 
-
-</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
-<GOAL_PLAN>
-
-```json
-[
-  {
-    "scenario_id": "protect_fixed_cut_flex",
-    "scenario_title": "Protect Fixed Cut Flex",
-    "is_active": true,
-    "current_spending": {
-      "meals": 620,
-      "shopping": 280
-    },
-    "spending_schedule": [
-      {
-        "start_end_month": "1-3",
-        "categories": {
-          "meals": 520,
-          "shopping": 180
-        }
-      },
-      {
-        "start_end_month": "4+",
-        "categories": {
-          "meals": 520,
-          "shopping": 180
-        }
-      }
-    ],
-    "spending_timeline": [
-      {
-        "categories": {
-          "meals": 520,
-          "shopping": 180
-        },
-        "start_month": "04/26",
-        "end_month": "06/26"
-      },
-      {
-        "categories": {
-          "meals": 520,
-          "shopping": 180
-        },
-        "start_month": "07/26",
-        "end_month": "03/28"
-      }
-    ],
-    "account_balance_targets": [
-      {
-        "account_id": 20,
-        "balance_target": 2200
-      }
-    ]
-  }
-]
-```
-
-</GOAL_PLAN>
+### Spending Schedule
+- 04/26-03/28: Cap food $520, shopping $180 monthly
 """,
         "ideal_response": {
-            "scenario_id": "protect_fixed_cut_flex",
-            "scenario_title": "Protect Fixed Cut Flex",
-            "mission": "Keep checking above $2,200 before the mortgage while trimming flexible spend.",
-            "blueprint": [
-                "Months 1-3: meals $520/mo, shopping $180/mo.",
-                "Month 4+: meals $520/mo, shopping $180/mo."
-            ],
-            "result": "Targets checking balance at $2,200 before the $2,100 mortgage on April 1.",
-            "trade_off": "Slower debt payoff than the aggressive flex cut if card balances remain."
+            "plan_title": "Protect fixed, trim flex",
+            "plan_summary": "Hold checking above $2,200 before the mortgage while trimming food and shopping.",
+            "plan_details": {
+                "payoff": "Keep checking above $2,200 before the $2,100 mortgage due 2026-04-01; trim flexible spend $200/mo in months 1–3, then reassess.",
+                "trade_off": "Debt-free timing is slower than aggressive_flex_cut, but liquidity risk eases first.",
+                "spending_phases": [
+                    {
+                        "period": "04/26-03/28",
+                        "caps": "food $520, shopping $180 monthly",
+                        "description": "Steady food and shopping caps while protecting fixed bills.",
+                    },
+                ],
+            },
         },
     },
     {
         "name": "cash_flow_alternative",
         "batch": 1,
         "input": """
-<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
 # Financial Needs
 
 ## Primary needs
@@ -443,75 +381,37 @@ TEST_CASES: list[dict[str, Any]] = [
   - Checking **$800** vs mortgage **$2,100** on the 1st.
   - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 
-## Credit Interest Rates
-* **Rewards (21)**: **~22.4%** (derived from last-cycle interest charge).
-
 # Financial Strategy
 
 ## Recommended plan: protect_fixed_cut_flex
-* Hold checking above **$2,200** before the mortgage, trim **$200**/mo from meals and shopping months 1–3, then reassess.
+* Hold checking above **$2,200** before the mortgage, trim **$200**/mo from food and shopping months 1–3, then reassess.
 
 ## Alternative plan: aggressive_flex_cut
-* Cut meals to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
+* Cut food to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
 
-
-</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
-<GOAL_PLAN>
-
-```json
-[
-  {
-    "scenario_id": "aggressive_flex_cut",
-    "scenario_title": "Aggressive Flex Cut",
-    "is_active": false,
-    "current_spending": {
-      "meals": 620,
-      "shopping": 280
-    },
-    "spending_schedule": [
-      {
-        "start_end_month": "1+",
-        "categories": {
-          "meals": 450,
-          "shopping": 150
-        }
-      }
-    ],
-    "spending_timeline": [
-      {
-        "categories": {
-          "meals": 450,
-          "shopping": 150
-        },
-        "start_month": "04/26",
-        "end_month": "03/28"
-      }
-    ],
-    "credit_balance_target": 0
-  }
-]
-```
-
-</GOAL_PLAN>
+### Spending Schedule
+- 04/26-03/28: Cap food $450, shopping $150 monthly
 """,
         "ideal_response": {
-            "scenario_id": "aggressive_flex_cut",
-            "scenario_title": "Aggressive Flex Cut",
-            "mission": "Cut meals and shopping immediately to stabilize cash before the mortgage hits.",
-            "blueprint": [
-                "Month 1+: meals $450/mo, shopping $150/mo."
-            ],
-            "result": "Debt-free by Aug 2026 but checking may dip below $500 in April.",
-            "trade_off": "Higher liquidity risk in April while spending cuts stay steep from day one."
+            "plan_title": "Aggressive flex cut",
+            "plan_summary": "Cut food to $450/mo and shopping to $150/mo immediately to be debt-free by Aug 2026.",
+            "plan_details": {
+                "payoff": "Debt-free by Aug 2026 — faster than protect_fixed_cut_flex.",
+                "trade_off": "Checking may dip below $500 in April while flexible spend drops hard from day one.",
+                "spending_phases": [
+                    {
+                        "period": "04/26-03/28",
+                        "caps": "food $450, shopping $150 monthly",
+                        "description": "Hard food and shopping caps from day one.",
+                    },
+                ],
+            },
         },
     },
     {
         "name": "slow_debt_recommended",
         "batch": 2,
         "input": """
-<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
 # Financial Needs
 
 ## Primary needs
@@ -522,75 +422,37 @@ TEST_CASES: list[dict[str, Any]] = [
   - Balance up **$300** over three months despite **$115**/mo payments.
   - APR tool: **~21.8%** on Platinum.
 
-## Credit Interest Rates
-* **Platinum (31)**: **~21.8%**
-
 # Financial Strategy
 
 ## Recommended plan: balanced_trim
-* Trim meals to **$520** and leisure to **$300** from month 1; **$0** debt by **Dec 2026**, saves about **$420** interest vs status quo.
+* Trim food to **$520** and leisure to **$300** from month 1; **$0** debt by **Dec 2026**, saves about **$420** interest vs status quo.
 
 ## Alternative plan: leisure_first
-* Protect leisure at **$380** but cut meals harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
+* Protect leisure at **$380** but cut food harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
 
-
-</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
-<GOAL_PLAN>
-
-```json
-[
-  {
-    "scenario_id": "balanced_trim",
-    "scenario_title": "Balanced Trim",
-    "is_active": true,
-    "current_spending": {
-      "meals": 640,
-      "leisure": 410
-    },
-    "spending_schedule": [
-      {
-        "start_end_month": "1+",
-        "categories": {
-          "meals": 520,
-          "leisure": 300
-        }
-      }
-    ],
-    "spending_timeline": [
-      {
-        "categories": {
-          "meals": 520,
-          "leisure": 300
-        },
-        "start_month": "04/26",
-        "end_month": "03/28"
-      }
-    ],
-    "credit_balance_target": 0
-  }
-]
-```
-
-</GOAL_PLAN>
+### Spending Schedule
+- 04/26-03/28: Cap food $520, leisure $300 monthly
 """,
         "ideal_response": {
-            "scenario_id": "balanced_trim",
-            "scenario_title": "Balanced Trim",
-            "mission": "Trim meals and leisure evenly to settle Platinum debt by Dec 2026.",
-            "blueprint": [
-                "Month 1+: meals $520/mo, leisure $300/mo."
-            ],
-            "result": "Hits $0 debt by Dec 2026 and saves about $420 interest versus status quo.",
-            "trade_off": "Leisure drops more than in the leisure-first alternative."
+            "plan_title": "Balanced trim",
+            "plan_summary": "Trim food to $520/mo and leisure to $300/mo from month one for a Dec 2026 debt-free date.",
+            "plan_details": {
+                "payoff": "$0 Platinum debt by Dec 2026; saves about $420 interest versus status quo at ~21.8% APR.",
+                "trade_off": "Both dining and social spend tighten together from the start — no leisure protection.",
+                "spending_phases": [
+                    {
+                        "period": "04/26-03/28",
+                        "caps": "food $520, leisure $300 monthly",
+                        "description": "Food and leisure tighten together from month one.",
+                    },
+                ],
+            },
         },
     },
     {
         "name": "slow_debt_alternative",
         "batch": 2,
         "input": """
-<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
 # Financial Needs
 
 ## Primary needs
@@ -601,67 +463,31 @@ TEST_CASES: list[dict[str, Any]] = [
   - Balance up **$300** over three months despite **$115**/mo payments.
   - APR tool: **~21.8%** on Platinum.
 
-## Credit Interest Rates
-* **Platinum (31)**: **~21.8%**
-
 # Financial Strategy
 
 ## Recommended plan: balanced_trim
-* Trim meals to **$520** and leisure to **$300** from month 1; **$0** debt by **Dec 2026**, saves about **$420** interest vs status quo.
+* Trim food to **$520** and leisure to **$300** from month 1; **$0** debt by **Dec 2026**, saves about **$420** interest vs status quo.
 
 ## Alternative plan: leisure_first
-* Protect leisure at **$380** but cut meals harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
+* Protect leisure at **$380** but cut food harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
 
-
-</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
-<GOAL_PLAN>
-
-```json
-[
-  {
-    "scenario_id": "leisure_first",
-    "scenario_title": "Leisure First",
-    "is_active": false,
-    "current_spending": {
-      "meals": 640,
-      "leisure": 410
-    },
-    "spending_schedule": [
-      {
-        "start_end_month": "1+",
-        "categories": {
-          "meals": 450,
-          "leisure": 380
-        }
-      }
-    ],
-    "spending_timeline": [
-      {
-        "categories": {
-          "meals": 450,
-          "leisure": 380
-        },
-        "start_month": "04/26",
-        "end_month": "03/28"
-      }
-    ],
-    "credit_balance_target": 0
-  }
-]
-```
-
-</GOAL_PLAN>
+### Spending Schedule
+- 04/26-03/28: Cap food $450, leisure $380 monthly
 """,
         "ideal_response": {
-            "scenario_id": "leisure_first",
-            "scenario_title": "Leisure First",
-            "mission": "Protect leisure spending while cutting meals harder to settle Platinum debt.",
-            "blueprint": [
-                "Month 1+: meals $450/mo, leisure $380/mo."
-            ],
-            "result": "Similar debt-free timing with more dining sacrifice and steadier social spend.",
-            "trade_off": "Meals stay tighter than the balanced trim plan throughout."
+            "plan_title": "Leisure-first trim",
+            "plan_summary": "Protect leisure at $380/mo but cut food harder to $450/mo for a similar debt-free date.",
+            "plan_details": {
+                "payoff": "Similar debt-free timing to balanced_trim on the $4,800 Platinum balance.",
+                "trade_off": "More dining sacrifice throughout; leisure stays steadier than the balanced plan.",
+                "spending_phases": [
+                    {
+                        "period": "04/26-03/28",
+                        "caps": "food $450, leisure $380 monthly",
+                        "description": "Protect leisure; food takes the deeper cut.",
+                    },
+                ],
+            },
         },
     },
     {
@@ -669,8 +495,6 @@ TEST_CASES: list[dict[str, Any]] = [
         "batch": 3,
         "simulate_agent_outcome_id": 1252,
         "input": """
-<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
 # Financial Needs
 
 ## Primary needs
@@ -680,7 +504,6 @@ TEST_CASES: list[dict[str, Any]] = [
 3. **Interest Leakage and Debt Cycle**: You are paying significant credit card interest—upwards of $180+ monthly—due to delayed payments or carrying balances that could be cleared if the discretionary "drift" were curtailed, creating a negative feedback loop where interest fees further restrict your liquidity.
 
 ## Evidence
-
 
 * **Structural Liquidity Trap**
   * Your fixed monthly overhead for shelter alone is $2,850, plus recurring school/daycare ($500), utilities (~$350), and insurance/connectivity (~$200). 
@@ -692,47 +515,6 @@ TEST_CASES: list[dict[str, Any]] = [
   * You are incurring consistent monthly finance charges (e.g., $148.33 and $36.34 on your credit cards in July 2026).
   * Because your checking account balance is often depleted to the "overdraft" or near-zero level by mid-month, you are forced to rely on credit cards for routine purchases. This triggers high interest charges, which further reduces your available income for the following month, maintaining the debt cycle.
 
-## Credit Interest Rates
-
-
-
-* **Sapphire Preferred (ID: 12827)**: **~24.99% APR**
-  * **Derivation Method:** Based on historical interest charges, such as the $256.13 charge on a balance that was hovering around $12,000–$12,500 in May/June, and the $148.33 charge in July on a balance that was recently reduced significantly, the implied monthly interest rate consistently aligns with a ~2.08% monthly factor. This mathematically maps to an Annual Percentage Rate (APR) of approximately 24.99%.
-
-* **Cash Magnet (ID: 12828)**: **~24.99% APR**
-  * **Derivation Method:** Analysis of consistent monthly interest charges (e.g., $36.34 in July, $38.49 in June) against average daily balances for this account reveals a similar interest trajectory. The charges remain highly proportional to a ~2.08% monthly interest rate, indicating the same ~24.99% APR as the Sapphire Preferred account. Note: Fluctuations in these specific amounts are likely due to balance timing/payment dates rather than rate variance.
-
-## Immediate Things to Do
-
-
-
-1. **Strategic Cash-Flow Buffer Synchronization**
-   * **The Move:** Shift your recurring bill payment dates—specifically those for utilities (Dominion, Mid-Carolina) and connectivity—to align with the 1st and 15th of the month, immediately following your two major payroll deposits. Use your high-balance periods (e.g., the 1st) to sweep a fixed "Debt & Fixed-Cost Pool" into a sub-ledger or separate account specifically for these payments.
-   * **The Strategic Why:** Currently, your rent ($2,850) and fixed costs hit while your account is already strained, leading to overdrafts and forcing you to use high-interest credit cards for basic necessities. By anchoring payments to your income arrival, you eliminate the "timing gap" that currently forces you into the 24.99% APR debt cycle.
-
-2. **Automated "Friction" for Discretionary Spending**
-   * **The Move:** In Penny, set an aggressive monthly limit of $500 for the combined categories of `meals_dining_out`, `meals_delivered_food`, and `leisure_entertainment`. Configure your alerts to trigger a high-friction notification the moment you hit 50% ($250) of this allocation.
-   * **The Strategic Why:** Your ledger shows you are "drifting" over $2,000/month in these categories. This creates an immediate structural deficit of ~30% of your net income. Reducing this "drift" by even 50% provides an extra $1,000/month of liquid cash that can be diverted to pay down your $1,600+ combined credit card balance, effectively ending the ~$180/month interest leakage.
-
-3. **Targeted Debt "Snowball" via Interest Elimination**
-   * **The Move:** Over the next 90 days, commit the $1,000+ "recovered" cash from your discretionary spending drift to pay down your credit card balances with the highest interest impact. Execute payments immediately upon receipt of your Genentech and CA State paychecks, rather than waiting for the statement due dates.
-   * **The Strategic Why:** Your 24.99% APR accounts are essentially an emergency tax on your lack of liquidity. By paying down the balances early in your monthly cycle, you lower your Average Daily Balance (ADB), which directly reduces the dollar amount of interest calculated at the end of the month, instantly improving your net cash flow.
-
-## Next Set of Milestones to Aspire
-
-
-
-1. **The "Zero-Interest" Debt Freedom — Target Timeline: 6 Months**
-   * **The Metric:** Reduce revolving credit balances on cards 12827 and 12828 to $0 balance by the statement closing date, effectively eliminating all ~$180+/month finance charges.
-   * **The Long-Term Path:** This requires transitioning from a "reactive" credit payer (paying bills *as* you spend) to a "proactive" manager. Once the high-interest debt is zeroed, the money previously lost to interest must be automatically diverted to a "Core Reserve" account. This permanently kills the debt cycle and increases your disposable monthly cash flow by 3% of your total income without increasing your earnings.
-
-2. **The "60-Day Runway" Liquidity Baseline — Target Timeline: 12 Months**
-   * **The Metric:** Maintain a minimum cash balance of $15,000 in your Checking/Savings accounts that never drops below this floor, covering roughly 60 days of your $7,500 average monthly outflow.
-   * **The Long-Term Path:** Establish a "savings gate" where 15% of every paycheck is automatically moved to a high-yield savings vehicle before discretionary spending begins. This habit removes the structural dependency on credit cards for routine expenses and transforms you from a "debt-borrower" into a "cash-buyer," providing the psychological buffer needed to cease the "spending drift" identified in Task 1.
-
-3. **Strategic Wealth-Building Ratio (The 20% Net Allocation) — Target Timeline: 3+ Years**
-   * **The Metric:** Achieve a consistent 20% monthly savings/investment rate of your gross take-home income, verified by a monthly surplus in your Penny analytics report.
-   * **The Long-Term Path:** By year three, the interest and overhead leakages are gone, and your liquid buffer is secure. You must move from "defensive financial management" to "offensive wealth building." This is maintained by institutionalizing your budget: treating your investments as a non-negotiable "bill" that must be paid on the 1st of the month. This habit compounds wealth and shields you from lifestyle inflation, ensuring that as your career earnings grow, your surplus grows proportionally rather than being consumed by increased discretionary drift.
 # Financial Strategy
 
 ## Recommended plan: empathetic_staged_adjustment
@@ -741,69 +523,35 @@ TEST_CASES: list[dict[str, Any]] = [
 ## Alternative plan: rapid_debt_sprint
 * This is a strong second choice for those who prioritize immediate math over psychological comfort. It eliminates interest charges the fastest, providing an immediate sense of relief and mathematical efficiency. It is the best choice if your top priority is to kill the 24.99% APR interest cycle as quickly as humanly possible, even if it feels more restrictive in the short term.
 
-
-</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>
-
-<GOAL_PLAN>
-
-```json
-[
-  {
-    "scenario_id": "empathetic_staged_adjustment",
-    "scenario_title": "Empathetic Staged Adjustment",
-    "is_active": true,
-    "spending_schedule": [
-      {
-        "categories": {
-          "meals": 1200,
-          "health": 80,
-          "leisure": 300,
-          "shopping": 50,
-          "education": 450,
-          "uncategorized": 300
-        },
-        "start_end_month": "1-3"
-      },
-      {
-        "categories": {
-          "meals": 750,
-          "health": 80,
-          "leisure": 200,
-          "shopping": 50,
-          "education": 450,
-          "uncategorized": 300
-        },
-        "start_end_month": "4-6"
-      },
-      {
-        "categories": {
-          "meals": 500,
-          "health": 80,
-          "leisure": 100,
-          "shopping": 50,
-          "education": 450,
-          "uncategorized": 300
-        },
-        "start_end_month": "7+"
-      }
-    ]
-  }
-]
-```
-
-</GOAL_PLAN>
+### Spending Schedule
+- 08/26-10/26: Cap food $1200, leisure $300, shopping $50, health $80, education $450, uncategorized $300 monthly
+- 11/26-01/27: Cap food $750, leisure $200, shopping $50, health $80, education $450, uncategorized $300 monthly
+- 02/27-: Cap food $500, leisure $100, shopping $50, health $80, education $450, uncategorized $300 monthly
 """,
         "ideal_response": {
-            "scenario_id": "empathetic_staged_adjustment",
-            "scenario_title": "Empathetic Staged Adjustment",
-            "mission": "Step down discretionary drift over six months while clearing high-interest card debt.",
-            "blueprint": [
-                "Months 1-3: meals $1,200/mo, leisure $300/mo, plus fixed education and health lines.",
-                "Months 4-6: meals $750/mo, leisure $200/mo with other categories held steady.",
-                "Month 7+: meals $500/mo, leisure $100/mo to kill the 24.99% APR cycle."
-            ],
-            "result": "Clears revolving balances within the quarter while building sustainable spending habits.",
-            "trade_off": "Slower than a rapid debt sprint while discretionary cuts ramp gradually."
+            "plan_title": "Staged drift reset",
+            "plan_summary": "Step down food and leisure over three phases to kill 24.99% APR interest without a shock cut.",
+            "plan_details": {
+                "payoff": "Clears high-interest revolving balances within the quarter while building sustainable spending habits.",
+                "trade_off": "Slower than rapid_debt_sprint, but the six-month step-down is easier to sustain than a shock cut.",
+                "spending_phases": [
+                    {
+                        "period": "08/26-10/26",
+                        "caps": "food $1200, leisure $300, shopping $50, health $80, education $450, uncategorized $300 monthly",
+                        "description": "Warm-up: modest trim on food and leisure.",
+                    },
+                    {
+                        "period": "11/26-01/27",
+                        "caps": "food $750, leisure $200, shopping $50, health $80, education $450, uncategorized $300 monthly",
+                        "description": "Step down food and leisure again before the long hold.",
+                    },
+                    {
+                        "period": "02/27-:",
+                        "caps": "food $500, leisure $100, shopping $50, health $80, education $450, uncategorized $300 monthly",
+                        "description": "Sustain target caps indefinitely from Feb '27.",
+                    },
+                ],
+            },
         },
     },
 ]
@@ -811,6 +559,62 @@ TEST_CASES: list[dict[str, Any]] = [
 
 
 
+
+def _strip_financial_strategy_plan_section(simulate_md: str, *, section: str) -> str:
+    if section not in ("recommended", "alternative"):
+        raise ValueError(f"section must be 'recommended' or 'alternative', got {section!r}")
+    header = "Recommended plan" if section == "recommended" else "Alternative plan"
+    pattern = (
+        rf"(?ms)^[ \t]*## {re.escape(header)}:.*?(?=^[ \t]*## |\Z)"
+    )
+    text = re.sub(pattern, "", simulate_md or "")
+    text = re.sub(r"\n{3,}", "\n\n", text.strip())
+    return text + "\n"
+
+
+def filter_financial_strategy_for_scenario(
+    simulate_md: str,
+    scenario_id: str,
+    *,
+    is_active: bool | None = None,
+) -> str:
+    """Keep only the ``# Financial Strategy`` subsection for the intended scenario."""
+    sid = str(scenario_id or "").strip()
+    if not sid:
+        return simulate_md
+
+    rec_id, alt_id = _scenario_ids_from_simulate_strategy(simulate_md)
+    if rec_id and sid == rec_id:
+        return _strip_financial_strategy_plan_section(simulate_md, section="alternative")
+    if alt_id and sid == alt_id:
+        return _strip_financial_strategy_plan_section(simulate_md, section="recommended")
+    if is_active is True:
+        return _strip_financial_strategy_plan_section(simulate_md, section="alternative")
+    if is_active is False:
+        return _strip_financial_strategy_plan_section(simulate_md, section="recommended")
+    return simulate_md
+
+
+def _apply_strategy_filter_to_plan_bundle(
+    bundle_md: str,
+    scenario_id: str,
+    *,
+    is_active: bool | None = None,
+) -> str:
+    marker = SPENDING_SCHEDULE_H3
+    if marker not in bundle_md:
+        return filter_financial_strategy_for_scenario(
+            bundle_md,
+            scenario_id,
+            is_active=is_active,
+        )
+    before, after = bundle_md.split(marker, 1)
+    filtered = filter_financial_strategy_for_scenario(
+        before,
+        scenario_id,
+        is_active=is_active,
+    )
+    return filtered.rstrip() + "\n\n" + marker + after
 
 
 def _select_goal_plan_scenario(goal_plan: Any, *, scenario_id: str | None = None) -> dict[str, Any]:
@@ -836,14 +640,20 @@ def build_plan_verbalizer_input_bundle(
     simulate_outcome_md: str,
     goal_plan_scenario: dict[str, Any],
 ) -> str:
-    """Same bundle shape as need-plans, with only the intended scenario in ``<GOAL_PLAN>``."""
-    entries = _goal_plan_entries_for_bundle([goal_plan_scenario])
-    if not entries:
-        raise ValueError("goal_plan_scenario must be non-empty")
-    return build_need_plans_verbalizer_input_bundle(
-        simulate_outcome_md=simulate_outcome_md,
-        goal_plan=entries,
-    )
+    """Trimmed needs markdown plus ``### Spending Schedule`` for one scenario."""
+    simulate = trim_simulate_outcome_for_plan_bundle(simulate_outcome_md)
+    scenario_id = str(goal_plan_scenario.get("scenario_id") or "").strip()
+    if scenario_id:
+        simulate = filter_financial_strategy_for_scenario(
+            simulate,
+            scenario_id,
+            is_active=goal_plan_scenario.get("is_active"),
+        )
+    plan_block = _format_goal_plan_narrative([goal_plan_scenario])
+    parts = [simulate.rstrip()]
+    if plan_block:
+        parts.append(plan_block.rstrip())
+    return "\n\n".join(parts) + "\n"
 
 
 def build_plan_verbalizer_input(
@@ -875,43 +685,29 @@ def build_plan_verbalizer_input(
     )
 
 
-def _goal_plan_from_bundled_input(bundled: str) -> list[dict[str, Any]]:
-    marker = "<GOAL_PLAN>"
-    if marker not in bundled:
-        raise ValueError("bundled input missing <GOAL_PLAN>")
-    block = bundled.split(marker, 1)[1].split("</GOAL_PLAN>", 1)[0]
-    fence = re.search(r"```json\s*(\[.*?\])\s*```", block, re.DOTALL)
-    if not fence:
-        raise ValueError("bundled <GOAL_PLAN> missing JSON array")
-    parsed = json.loads(fence.group(1))
-    if not isinstance(parsed, list) or not parsed:
-        raise ValueError("bundled <GOAL_PLAN> must be a non-empty JSON array")
-    return [entry for entry in parsed if isinstance(entry, dict)]
-
-
-def _simulate_md_from_bundled_input(bundled: str) -> str:
-    simulate_block = bundled.split("<SIMULATE_FINANCIAL_STRATEGY_OUTCOME>", 1)[1]
-    return simulate_block.split("</SIMULATE_FINANCIAL_STRATEGY_OUTCOME>", 1)[0].strip() + "\n"
-
-
 def resolve_plan_test_case_input(
     test_case: dict[str, Any],
     *,
     scenario_id: str | None = None,
 ) -> str:
-    """Return single-scenario bundle from a test-case dict."""
-    bundled = _bundled_input_from_test_case(test_case)
-    if not bundled:
+    """Return bundled input from a test-case dict."""
+    bundle: str | None = None
+    for key in ("input", "bundled_input"):
+        raw = test_case.get(key)
+        if isinstance(raw, str) and raw.strip():
+            bundle = raw.strip() + "\n"
+            break
+    if bundle is None:
+        bundled = _bundled_input_from_test_case(test_case)
+        if bundled:
+            bundle = bundled.strip() + "\n"
+    if bundle is None:
         raise ValueError("test case must include bundled input")
-    sid = scenario_id or test_case.get("scenario_id")
-    if not sid:
-        return bundled
-    goal_plan = _goal_plan_from_bundled_input(bundled)
-    scenario = _select_goal_plan_scenario(goal_plan, scenario_id=sid)
-    return build_plan_verbalizer_input_bundle(
-        simulate_outcome_md=_simulate_md_from_bundled_input(bundled),
-        goal_plan_scenario=scenario,
-    )
+
+    sid = str(scenario_id or test_case.get("scenario_id") or "").strip()
+    if sid:
+        bundle = _apply_strategy_filter_to_plan_bundle(bundle, sid)
+    return bundle
 
 
 def format_plan_verbalizer_user_message(profile_input: str) -> str:
@@ -921,27 +717,15 @@ def format_plan_verbalizer_user_message(profile_input: str) -> str:
     return body + "\n"
 
 
-def _expected_scenario_fields_from_bundle(bundle_md: str) -> tuple[str, str]:
-    marker = "<GOAL_PLAN>"
-    if marker not in bundle_md:
-        return "", ""
-    block = bundle_md.split(marker, 1)[1]
-    fence = re.search(r"```json\s*(\[.*?\])\s*```", block, re.DOTALL)
-    if not fence:
-        return "", ""
+def _parse_plan_json_response(text: str) -> dict[str, Any]:
     try:
-        parsed = json.loads(fence.group(1))
-    except json.JSONDecodeError:
-        return "", ""
-    if not isinstance(parsed, list) or not parsed:
-        return "", ""
-    first = parsed[0]
-    if not isinstance(first, dict):
-        return "", ""
-    return (
-        str(first.get("scenario_id") or "").strip(),
-        str(first.get("scenario_title") or "").strip(),
-    )
+        return _parse_model_json_object(text)
+    except (json.JSONDecodeError, ValueError):
+        raw = (text or "").strip()
+        start, end = raw.find("{"), raw.rfind("}")
+        if start >= 0 and end > start:
+            return _parse_model_json_object(raw[start:end + 1])
+        raise
 
 
 def _collect_model_response(response: Any) -> tuple[str, str, Any]:
@@ -960,15 +744,8 @@ def _collect_model_response(response: Any) -> tuple[str, str, Any]:
             if not isinstance(t, str) or not t:
                 continue
             if getattr(part, "thought", False):
-                thought_summary = (thought_summary + t) if thought_summary else t
-            else:
-                output_text += t
-    if not output_text:
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", message=r".*non-text parts in the response.*")
-            agg = getattr(response, "text", None)
-            if isinstance(agg, str) and agg:
-                output_text = agg
+                continue
+            output_text += t
     return output_text, thought_summary, finish_reason
 
 
@@ -1003,66 +780,94 @@ class PlanVerbalizerOptimizer:
         self.system_prompt = SYSTEM_PROMPT
         self.output_schema = _build_output_schema()
 
-    def generate_response(self, profile_input: str) -> dict[str, Any]:
-        user_text = format_plan_verbalizer_user_message(profile_input)
-        request_text = types.Part.from_text(text=user_text)
-        contents = [types.Content(role="user", parts=[request_text])]
-        cfg = types.GenerateContentConfig(
+    def _build_generate_config(self, *, max_output_tokens: int) -> "types.GenerateContentConfig":
+        return types.GenerateContentConfig(
             temperature=self.temperature,
             top_p=self.top_p,
             top_k=self.top_k,
-            max_output_tokens=self.max_output_tokens,
+            max_output_tokens=max_output_tokens,
             safety_settings=self.safety_settings,
             system_instruction=[types.Part.from_text(text=self.system_prompt)],
             thinking_config=types.ThinkingConfig(
                 thinking_budget=self.thinking_budget,
-                include_thoughts=True,
+                include_thoughts=False,
             ),
             response_mime_type="application/json",
             response_schema=self.output_schema,
         )
 
-        output_text = ""
-        thought_summary = ""
-        finish_reason = None
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=cfg,
-            )
-            output_text, thought_summary, finish_reason = _collect_model_response(response)
-        except ClientError as e:
-            if self.thinking_budget == 0 and "only works in thinking mode" in (str(e) or ""):
-                print(
-                    "\n[NOTE] This model requires thinking mode; use default (no --no-thinking) or a different model.",
-                    flush=True,
+    def generate_response(self, profile_input: str) -> dict[str, Any]:
+        user_text = format_plan_verbalizer_user_message(profile_input)
+        request_text = types.Part.from_text(text=user_text)
+        contents = [types.Content(role="user", parts=[request_text])]
+
+        token_limits = [self.max_output_tokens]
+        retry_limit = self.max_output_tokens * 2
+        if retry_limit > self.max_output_tokens:
+            token_limits.append(retry_limit)
+
+        last_error: Exception | None = None
+        for attempt_idx, max_tokens in enumerate(token_limits):
+            cfg = self._build_generate_config(max_output_tokens=max_tokens)
+            output_text = ""
+            finish_reason = None
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                    config=cfg,
                 )
-                sys.exit(1)
-            raise
+                output_text, _, finish_reason = _collect_model_response(response)
+            except ClientError as e:
+                if self.thinking_budget == 0 and "only works in thinking mode" in (str(e) or ""):
+                    print(
+                        "\n[NOTE] This model requires thinking mode; use default (no --no-thinking) or a different model.",
+                        flush=True,
+                    )
+                    sys.exit(1)
+                raise
 
-        if thought_summary:
-            print("\n" + "-" * 80)
-            print("THOUGHT SUMMARY:")
-            print("-" * 80)
-            print(thought_summary.strip())
-            print("-" * 80 + "\n")
+            if not (output_text or "").strip():
+                last_error = ValueError(
+                    f"Empty JSON response from model. finish_reason={finish_reason!r}"
+                )
+                if attempt_idx < len(token_limits) - 1:
+                    print(
+                        f"\n[RETRY] Empty response at max_output_tokens={max_tokens}; "
+                        f"retrying with {token_limits[attempt_idx + 1]}.\n",
+                        flush=True,
+                    )
+                    continue
+                raise last_error
 
-        if not (output_text or "").strip():
-            hint = " Model returned thoughts only." if thought_summary else ""
-            raise ValueError(f"Empty response from model.{hint} Check API key and model availability.")
-        try:
-            parsed = json.loads(output_text)
-        except json.JSONDecodeError as exc:
-            reason = str(finish_reason or "unknown")
-            raise ValueError(f"Invalid JSON response. finish_reason={reason!r}") from exc
+            try:
+                parsed = _parse_plan_json_response(output_text)
+            except (json.JSONDecodeError, ValueError) as exc:
+                reason = str(finish_reason or "unknown")
+                preview = output_text.strip()[:240].replace("\n", " ")
+                last_error = ValueError(
+                    f"Invalid JSON response. finish_reason={reason!r}; "
+                    f"max_output_tokens={max_tokens}; preview={preview!r}"
+                )
+                last_error.__cause__ = exc
+                if "MAX_TOKENS" in reason and attempt_idx < len(token_limits) - 1:
+                    print(
+                        f"\n[RETRY] MAX_TOKENS at max_output_tokens={max_tokens}; "
+                        f"retrying with {token_limits[attempt_idx + 1]}.\n",
+                        flush=True,
+                    )
+                    continue
+                raise last_error from exc
 
-        expected_id, expected_title = _expected_scenario_fields_from_bundle(user_text)
-        return _validate_plan_response(
-            parsed,
-            expected_scenario_id=expected_id or None,
-            expected_scenario_title=expected_title or None,
-        )
+            try:
+                validated = _validate_plan_response(parsed)
+                return _attach_spending_phases(validated, profile_input)
+            except ValueError as exc:
+                raise ValueError(f"Response failed validation: {exc}") from exc
+
+        if last_error is not None:
+            raise last_error
+        raise ValueError("Invalid JSON response from model.")
 
 
 def _run_test(
