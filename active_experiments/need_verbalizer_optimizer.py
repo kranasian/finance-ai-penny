@@ -72,6 +72,10 @@ _EXCLUDED_SIMULATE_SECTIONS = (
 )
 
 _MONTH_RANGE_RE = re.compile(r"^\s*(\d+)\s*(?:-\s*(\d+)|\+)?\s*$")
+_RE_PLAN_SCENARIO_HEADING = re.compile(
+    r"(?m)^(## (?:Recommended|Alternative) plan:\s*[^\n]+)\n(?!\n)",
+)
+_SPENDING_SCHEDULE_H3 = "### Spending Schedule"
 _OPEN_ENDED_PLAN_HORIZON_MONTHS = 24
 
 _CATEGORY_ORDER = ("meals", "leisure", "shopping", "health", "education", "uncategorized")
@@ -420,6 +424,11 @@ def _goal_plan_rows_for_need_bundle(goal_plan: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def ensure_blank_line_after_plan_headings(markdown: str) -> str:
+    """Insert a blank line after ``## Recommended/Alternative plan:`` headings."""
+    return _RE_PLAN_SCENARIO_HEADING.sub(r"\1\n\n", markdown or "")
+
+
 def _format_goal_plan_narrative(goal_plan: Any) -> str:
     rows = _goal_plan_rows_for_need_bundle(goal_plan)
     if not rows:
@@ -432,7 +441,7 @@ def _format_goal_plan_narrative(goal_plan: Any) -> str:
             bullets.extend(timeline_block.splitlines())
     if not bullets:
         return ""
-    return "### Spending Schedule\n" + "\n".join(bullets) + "\n"
+    return _SPENDING_SCHEDULE_H3 + "\n\n" + "\n".join(bullets) + "\n"
 
 
 def build_need_verbalizer_input_bundle(

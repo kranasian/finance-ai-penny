@@ -64,6 +64,7 @@ from active_experiments.verbalizer_optimizer_db import (
 from active_experiments.need_verbalizer_optimizer import (
     _format_goal_plan_narrative,
     _parse_model_json_object,
+    ensure_blank_line_after_plan_headings,
     trim_simulate_outcome_for_plan_bundle,
 )
 
@@ -651,6 +652,7 @@ def build_plan_verbalizer_input_bundle(
             scenario_id,
             is_active=goal_plan_scenario.get("is_active"),
         )
+    simulate = ensure_blank_line_after_plan_headings(simulate)
     plan_block = _format_goal_plan_narrative([goal_plan_scenario])
     parts = [simulate.rstrip()]
     if plan_block:
