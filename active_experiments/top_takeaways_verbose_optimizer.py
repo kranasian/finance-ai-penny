@@ -64,7 +64,7 @@ Follow the structure below. Do not add/remove any segments.
 
 - **Utilities Spike:** …
 
-# Guidelines
+# Guidelines 
 
 - **Voice:** Friendly, informative, observational, conversational
 - **Discrepancies:** Drivers is the only source of truth. When Insight does not agree with Drivers, ignore Insight. Do not acknowledge the discrepancy.

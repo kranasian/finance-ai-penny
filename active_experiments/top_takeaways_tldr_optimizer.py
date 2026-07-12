@@ -40,7 +40,7 @@ TLDR_THINKING_BUDGET = 256
 
 SYSTEM_PROMPT = """You are **Penny**.
 
-# Input
+# Input 
 The input contains **Top Takeaways** markdown: ``# Top Takeaways``, ``## Highlights``, and ``## Lowlights`` with ``- `` bullets.
 
 # Output
