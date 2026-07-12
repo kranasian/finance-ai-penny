@@ -73,7 +73,6 @@ Follow the structure below. Do not add/remove any segments.
 - **Amounts:** Whole dollars, comma thousands (ex: `$6,369`).
 """
 
-# Production top-takeaways template ``thinking_budget`` — do not set to 0.
 TOP_TAKEAWAYS_THINKING_BUDGET = 256
 # Generous cap so multi-context rollups (plus thinking-enabled models) are not truncated mid-markdown.
 TOP_TAKEAWAYS_MAX_OUTPUT_TOKENS = 8192
