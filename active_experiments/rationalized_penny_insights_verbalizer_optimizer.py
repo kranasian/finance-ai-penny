@@ -71,25 +71,26 @@ def _build_output_schema() -> "types.Schema":
     return types.Schema(
         type=types.Type.OBJECT,
         required=["insight", "insight_correct"],
+        property_ordering=["insight", "insight_correct"],
         properties={
             "insight": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "Single-line Penny message verbalizing **# Drivers** only. "
-                    "Every category: g{[Display](/slug/weekly)} or r{[Display](/slug/monthly)}; "
-                    "every category total: matching colored g{$N}/r{$N}; ≥1 emoji; ≤20 words "
-                    "(exclude {}, (), [] markup); ≤320 chars; no newlines."
+                    "Single-line Penny message from Drivers. Completeness over brevity: include "
+                    "timeframe, direction, and driving establishments. Category link and amount "
+                    "must share the same g or r color. ≥1 emoji (2 when long); no newlines."
                 ),
             ),
             "insight_correct": types.Schema(
                 type=types.Type.BOOLEAN,
                 description=(
-                    "False when # Drivers contradicts # Insight direction or headline $ (e.g. Insight significantly down but Drivers say on track). Never mention mismatch in insight."
+                    "false for any Drivers↔Insight inconsistency, including on-track/usual vs "
+                    "significantly up/down; true only when Drivers fully affirm Insight. "
+                    "Never mention inconsistency in insight."
                 ),
             ),
         },
     )
-
 
 def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
     """Build Markdown input for the model from structured fields (type, insight, drivers).
@@ -106,53 +107,38 @@ def format_insight_input_for_llm(insight: Dict[str, Any]) -> str:
     )
 
 
-# Canonical system prompt for ``P:RationalizedPennyInsightsVerbalizer`` — paste into DB ``penny_templates`` when promoting changes.
 SYSTEM_PROMPT = """## Persona
 
-You are Penny, a friendly personal finance advisor. Text a trusted friend: warm, direct, natural — never stiff or telegraphic. No **currently** / **is currently**.
+You are Penny, a friendly personal finance advisor. Text a trusted friend: warm, direct, natural — never stiff or telegraphic.
 
 ## Objective
 
-Return JSON only: single-line `insight` from **# Drivers** plus `insight_correct` (compare **# Insight** vs **# Drivers** silently).
+Return JSON only with keys in order: `insight`, then `insight_correct`.
 
-## Sources
+## Priority
 
-- **`insight` text:** facts, merchants, and move from **# Drivers** only — ignore **# Type**, taxonomy, and partial-period date ranges. Take the timeframe phrase (**this month**, **last month**, **this week**, **last week**) from **# Insight** when present.
-- **`insight_correct`:** **false** when Drivers contradict **# Insight** direction or headline $ — including **on track** / **typical timing** vs **significantly down/up**. **true** only when Drivers affirm both the move and the headline $.
+Required content beats brevity. Never omit **direction**, **timeframe**, or **driving establishments** (when Drivers name them) to stay short.
 
 ## Output
 
-- `insight`: one line, **≤20 words** (count prose only — exclude all `{}`, `()`, `[]` markup), ≤320 chars, **≥1 emoji** (use two when the line runs long); facts and merchants from **# Drivers** only.
-- `insight_correct`: per Sources — never mention mismatch or contrast with the headline in `insight`.
-
-## Process
-
-1. **Focus:** One category named in **# Insight** whose **# Drivers** section you verbalize — **# Drivers** is the only fact source.
-2. **Compose:** Category link, colored focal `$` (window total from **# Drivers**), timeframe from **# Insight**, then a brief clause. Match verb tense to the period — **last** week/month → past; **this** week/month → present. Signal move vs forecast or limit in plain words alongside matching `g`/`r`. For `*vs_goal*` types, include the limit/budget framing **# Drivers** describe. When focal `$` > 0, name merchant(s) from **# Drivers**. At `$`0, explain timing or cadence. Read aloud — rewrite if tense, week/month, or tone is off.
-3. **Verify:** Set `insight_correct` per Sources.
+- **`insight`:** One line from Drivers covering the required fields. ≥1 emoji (second when long). No contrast with Insight.
+- **`insight_correct`:** **false** whenever Drivers and Insight disagree in any way — including Insight saying significantly up/down while Drivers say on track / usual / typical / not a drop. **true** only when Drivers affirm Insight's direction and amount with no conflict.
 
 ## Format
 
-- **Category link:** every category reference uses a colored wrapper — `g{[Display](/slug/period)}` or `r{[Display](/slug/period)}`; never bare markdown links.
-- **Link + amount:** every category total uses one colored whole-dollar `$` wrapper matching the link's `g`/`r`, joined with **at**; separate wrappers; never bare `$` amounts or ranges.
-- **Link paths:** always end `/weekly` or `/monthly` per **# Type** (`week_*` → `/weekly`; else `/monthly`).
-- **One category** — one link + one colored total unless Drivers require two.
-- **Lead:** category link and colored focal `$` come first in the sentence.
-- **Timeframe:** **this month**, **last month**, **this week**, or **last week** — whichever **# Insight** uses; never partial-period phrasing. **Last** → past tense; **this** → present tense.
-- **Focal $:** the colored `$` must be **# Drivers**' focal-window total for the period — whole dollars only; never trail history, ranges, or scheduled amounts outside the window.
+- **Category link:** `g{[Display](/slug/period)}` or `r{[Display](/slug/period)}` — keep `[Display](/slug/period)` intact. Path `/weekly` if Type has `week_`, else `/monthly`.
+- **Category amount:** **is at** / **was at** (or **only at** at `$0`) then `g{$N}` / `r{$N}` for the focal-window total — whole dollars, no commas, no cadence bands.
+- **Same color:** link `g`/`r` and amount `g`/`r` must match exactly.
+- **Color choice:** Outflows lower → **g**, higher → **r**. Inflows invert (zero/lower → **r**, higher → **g**). As expected / on track / usual nonzero outflow → **g**. Inflow quiet/zero → **r**.
+- **Lead:** colored category link first.
+- **Timeframe:** only **this month** / **last month** / **this week** / **last week**.
 
-## Voice
+## Process
 
-Natural Penny tone — like texting a friend, not filing a summary. Open with the category link. Use the same week/month wording and matching tense **# Insight** uses. Short, linked clauses; state **# Drivers**' story plainly without hedging or headline contrast.
-
-## Type copy
-
-- **`*spend*_vs_forecast*`:** forecast divergence verbs; not budget wording.
-- **`*vs_goal*`:** budget/limit — went over / blew past / exceeded.
-
-## Coloring
-
-Outflows: lower vs forecast → **g**; higher → **r**. Inflows: invert. Link and focal `$` always share the same `g`/`r`. Color from forecast direction in **# Drivers**, not from on-pace or typical-timing sentiment.
+1. **Focus:** One Insight category; Drivers only. Prefer the active leaf.
+2. **Decide insight_correct first:** if Drivers conflict with Insight on direction, amount, timing, or story → **false**; else **true**.
+3. **Compose insight from Drivers:** direction (on track / usual / typical ⇒ **as expected**); timeframe; establishments (merchants/institutions only). For `*vs_goal*`, include over/under **limit**. **this** → **is at** only; **last** → **was at** only — no present-tense verbs with **last**.
+4. **Verify:** identical `g`/`r` on link and amount; required fields present; focal `$` is the window total Drivers discuss for the period — never a cadence band; quiet/zero windows stay `$0`.
 
 ## Slugs (Display→slug)
 
@@ -186,7 +172,7 @@ class RationalizedPennyInsightsVerbalizerOptimizer:
         self.top_p = 0.95
         self.top_k = 40
         # Enough for JSON + ≤320-char insight; keeps generation cheap vs 4k ceiling.
-        self.max_output_tokens = 1152
+        self.max_output_tokens = 3072
         self.safety_settings = [
             types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
             types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
@@ -430,95 +416,269 @@ def mechanical_sandbox_check(
 
 
 TEST_CASES: list[dict[str, Any]] = [
+    # Batch 1
     {
-        "name": "sidegig_etsy_midmonth_zero_july",
+        "name": "interest_ally_zero_last_month_on_track",
         "batch": 1,
         "input": {
             "type": "month_spent_vs_forecast",
             "insight": (
-                "Sidegig is significantly down last month at $0.\n"
+                "Interest was significantly down last month at $0.\n"
                 "Category Taxonomy: parent Income (income), with leaf categories Salary (income_salary), "
-                "Sidegig (income_sidegig), Business (income_business), Interest"
+                "Sidegig (income_sidegig), Business (income_business), Interest (income_interest)"
             ),
             "drivers": (
-                "### Sidegig\n"
-                "Although the insight flags Sidegig significantly down at $0, Sidegig is on track on the overall trail, "
-                "as Etsy Marketplace deposits ($820–$945) matches that cadence, not a drop in side income."
+                "### Interest\n"
+                "Although the insight flags Interest significantly down at $0, Interest is on track on the overall trail, "
+                "as Ally Bank interest credits ($18–$24) post bimonthly on a steady cadence, not a drop in interest income."
             ),
         },
         "output": """{
-  "insight_correct": false,
-  "insight": "r{[Sidegig](/income_sidegig/monthly)} was only at r{$0} last month — Etsy deposits landed as expected. 🎨"
+  "insight": "r{[Interest](/income_interest/monthly)} was at r{$0} last month — Ally Bank interest credits were not received, as expected. 🏦",
+  "insight_correct": false
 }""",
     },
     {
-        "name": "groceries_whole_foods_trader_joes_july",
-        "batch": 2,
+        "name": "car_fuel_shell_chevron_up_this_month",
+        "batch": 1,
         "input": {
             "type": "month_spend_vs_forecast",
             "insight": (
-                "Groceries is significantly up the first 11 days of this month at $142.\n"
+                "Car and Fuel is significantly up the first 9 days of this month at $168.\n"
                 "(partial month Jul 1-31, 2026)\n"
-                "Category Taxonomy: parent Meals (meals), with leaf categories Dining Out (meals_dining_out), "
-                "Delivered Food (meals_delivered_food), Groceries (meals_groceries)"
+                "Category Taxonomy: parent Transport (transportation), with leaf categories Public Transit "
+                "(transportation_public), Car and Fuel (transportation_car)"
             ),
             "drivers": (
-                "### Groceries\n"
-                "Groceries is up on the trail—focal $142.18 (Jul 1–11) sits well above the usual $40–$70 band for "
-                "early-month partials—with Whole Foods ($89.24) and Trader Joe's ($52.94 on Jul 6) driving the lift."
+                "### Car and Fuel\n"
+                "Car and Fuel is up on the trail—focal $168.40 (Jul 1–9) sits well above the usual $55–$90 band for "
+                "early-month partials—with Shell ($94.12) and Chevron ($74.28 on Jul 7) driving the lift."
             ),
         },
         "output": """{
-  "insight_correct": true,
-  "insight": "r{[Groceries](/meals_groceries/monthly)} is at r{$142} this month — Whole Foods and Trader Joe's run the tab. 🥬"
+  "insight": "r{[Car and Fuel](/transportation_car/monthly)} is up at r{$168} this month — Shell and Chevron run the tab. ⛽",
+  "insight_correct": true
 }""",
     },
     {
-        "name": "entertainment_spotify_amc_partial_week_july",
-        "batch": 3,
+        "name": "clothing_over_limit_nordstrom_zara",
+        "batch": 1,
+        "input": {
+            "type": "month_spend_vs_goal",
+            "insight": (
+                "Clothing is over its monthly limit the first 12 days of this month at $241.\n"
+                "(partial month Jul 1-31, 2026)\n"
+                "Category Taxonomy: parent Shopping (shopping), with leaf categories Clothing (shopping_clothing), "
+                "Gadgets (shopping_gadgets), Kids (shopping_kids), Pets (shopping_pets)"
+            ),
+            "drivers": (
+                "### Clothing\n"
+                "Clothing is above the user's monthly limit on the trail—focal $241.15 (Jul 1–12) exceeds the $200 "
+                "cap—with Nordstrom ($132.40 across two visits) and Zara ($88.75) making up most of the overage."
+            ),
+        },
+        "output": """{
+  "insight": "r{[Clothing](/shopping_clothing/monthly)} is up at r{$241} this month because of trips to Nordstrom and Zara. 👕",
+  "insight_correct": true
+}""",
+    },
+    # Batch 2
+    {
+        "name": "entertainment_netflix_amc_week_usual",
+        "batch": 2,
         "input": {
             "type": "week_spend_vs_forecast",
             "insight": (
-                "Entertainment is significantly up the first 3 days of this week at $58.\n"
-                " Leisure is thus significantly down the first 3 days of this week to $58.\n"
+                "Entertainment is significantly up the first 3 days of this week at $67.\n"
+                " Leisure is thus significantly down the first 3 days of this week to $67.\n"
                 "(partial week Jul 14-20, 2026)\n"
                 "Category Taxonomy: parent Leisure (leisure), with leaf categories Entertainment (leisure_entertainment), "
                 "Travel and Vacations (leisure_travel)"
             ),
             "drivers": (
-                "**Entertainment is significantly up the first 3 days of this week at $58:** Entertainment is on track "
-                "on the 6-week trail, bouncing between $0 and $72, with Spotify ($15.49) and AMC Theatres ($42.51) "
-                "accounting for this week's spend—similar to a typical early-July week last year.\n"
-                "**Leisure is thus significantly down the first 3 days of this week to $58:** Although the insight flags "
-                "Leisure as down, Leisure is on track on the 6-week trail after a Travel spike ($412.00) in late June; "
-                "Entertainment ($58.00) is the only active leaf this week, and the total fits normal weekly swings."
+                "**Entertainment is significantly up the first 3 days of this week at $67:** Entertainment is on track "
+                "on the 6-week trail, bouncing between $0 and $85, with Netflix ($15.49) and AMC Theatres ($51.51) "
+                "accounting for this week's spend—similar to a typical mid-July week last year.\n"
+                "**Leisure is thus significantly down the first 3 days of this week to $67:** Although the insight flags "
+                "Leisure as down, Leisure is on track on the 6-week trail after a Travel spike ($390.00) in late June; "
+                "Entertainment ($67.00) is the only active leaf this week, and the total fits normal weekly swings."
             ),
         },
         "output": """{
-  "insight_correct": false,
-  "insight": "r{[Entertainment](/leisure_entertainment/weekly)} is at r{$58} this week — Spotify and AMC, usual mix for you. 🎬"
+  "insight": "g{[Entertainment](/leisure_entertainment/weekly)} is as expected at g{$67} this week — Netflix and AMC, usual mix for you. 🎬",
+  "insight_correct": false
 }""",
     },
     {
-        "name": "dining_out_over_limit_chipotle_sweetgreen_july",
-        "batch": 4,
+        "name": "salary_direct_deposit_up_this_month",
+        "batch": 2,
         "input": {
-            "type": "month_spend_vs_goal",
+            "type": "month_spent_vs_forecast",
             "insight": (
-                "Dining Out is over its monthly limit the first 14 days of this month at $186.\n"
-                "(partial month Jul 1-31, 2026)\n"
+                "Salary is significantly up this month at $4,820.\n"
+                "Category Taxonomy: parent Income (income), with leaf categories Salary (income_salary), "
+                "Sidegig (income_sidegig), Business (income_business), Interest (income_interest)"
+            ),
+            "drivers": (
+                "### Salary\n"
+                "Salary is up on the trail—focal $4,820.00 sits above the usual $4,100–$4,200 band—"
+                "with Acme Corp payroll ($4,820.00) including a one-time bonus driving the lift."
+            ),
+        },
+        "output": """{
+  "insight": "g{[Salary](/income_salary/monthly)} is at g{$4820} this month — Acme Corp payroll ran higher. 💰",
+  "insight_correct": true
+}""",
+    },
+    {
+        "name": "dining_out_under_limit_week_chipotle",
+        "batch": 2,
+        "input": {
+            "type": "week_spend_vs_goal",
+            "insight": (
+                "Dining Out is within its weekly limit this week at $42.\n"
+                "(partial week Jul 14-20, 2026)\n"
                 "Category Taxonomy: parent Meals (meals), with leaf categories Dining Out (meals_dining_out), "
                 "Delivered Food (meals_delivered_food), Groceries (meals_groceries)"
             ),
             "drivers": (
                 "### Dining Out\n"
-                "Dining Out is above the user's monthly limit on the trail—focal $186.40 (Jul 1–14) exceeds the $150 "
-                "cap—with Chipotle ($68.25 across four visits) and Sweetgreen ($54.80) making up most of the overage."
+                "Dining Out is under the user's weekly limit on the trail—focal $42.15 stays below the $75 "
+                "cap—with Chipotle ($22.40) and a single Sweetgreen ($19.75) making up the spend."
             ),
         },
         "output": """{
-  "insight_correct": true,
-  "insight": "r{[Dining Out](/meals_dining_out/monthly)} is at r{$186} this month — over your limit from Chipotle and Sweetgreen. 🌯"
+  "insight": "g{[Dining Out](/meals_dining_out/weekly)} is at only g{$42} this week — under your usual at Chipotle and Sweetgreen. 🥗",
+  "insight_correct": true
+}""",
+    },
+    # Batch 3
+    {
+        "name": "public_transit_down_last_week_mta",
+        "batch": 3,
+        "input": {
+            "type": "week_spend_vs_forecast",
+            "insight": (
+                "Public Transit is significantly down last week at $12.\n"
+                "Category Taxonomy: parent Transport (transportation), with leaf categories Public Transit "
+                "(transportation_public), Car and Fuel (transportation_car)"
+            ),
+            "drivers": (
+                "### Public Transit\n"
+                "Public Transit is down on the trail—focal $12.00 sits well below the usual $45–$60 band—"
+                "with a single MTA MetroCard refill ($12.00) and no other rides last week."
+            ),
+        },
+        "output": """{
+  "insight": "g{[Public Transit](/transportation_public/weekly)} was down at g{$12} last week because of just one MTA refill. 🚇",
+  "insight_correct": true
+}""",
+    },
+    {
+        "name": "utilities_pge_over_limit_this_month",
+        "batch": 3,
+        "input": {
+            "type": "month_spend_vs_goal",
+            "insight": (
+                "Utilities is over its monthly limit the first 15 days of this month at $210.\n"
+                "(partial month Jul 1-31, 2026)\n"
+                "Category Taxonomy: parent Shelter (shelter), with leaf categories Home (shelter_home), "
+                "Utilities (shelter_utilities), Upkeep (shelter_upkeep)"
+            ),
+            "drivers": (
+                "### Utilities\n"
+                "Utilities is above the user's monthly limit on the trail—focal $210.00 (Jul 1–15) exceeds the $160 "
+                "cap—with PG&E ($168.40) and a Water Dept bill ($41.60) making up the overage."
+            ),
+        },
+        "output": """{
+  "insight": "r{[Utilities](/shelter_utilities/monthly)} is higher at r{$210} this month because of higher PG&E and Water Dept bills. 💡",
+  "insight_correct": true
+}""",
+    },
+    {
+        "name": "business_stripe_zero_this_month_on_track",
+        "batch": 3,
+        "input": {
+            "type": "month_spent_vs_forecast",
+            "insight": (
+                "Business is significantly down the first 10 days of this month at $0.\n"
+                "(partial month Jul 1-31, 2026)\n"
+                "Category Taxonomy: parent Income (income), with leaf categories Salary (income_salary), "
+                "Sidegig (income_sidegig), Business (income_business), Interest (income_interest)"
+            ),
+            "drivers": (
+                "### Business\n"
+                "Although the insight flags Business significantly down at $0, Business is on track on the overall trail, "
+                "as Stripe payouts ($1,200–$1,450) typically clear after the 15th, not a drop in business income."
+            ),
+        },
+        "output": """{
+  "insight": "r{[Business](/income_business/monthly)} is at r{$0} this month as Stripe payouts are expected to come later in the month. 🧾",
+  "insight_correct": false
+}""",
+    },
+    # Batch 4
+    {
+        "name": "medical_cvs_urgentcare_up_this_week",
+        "batch": 4,
+        "input": {
+            "type": "week_spend_vs_forecast",
+            "insight": (
+                "Medical and Pharmacy is significantly up this week at $186.\n"
+                "Category Taxonomy: parent Health (health), with leaf categories Medical and Pharmacy "
+                "(health_medical_pharmacy), Gym and Wellness (health_gym_wellness), Personal Care (health_personal_care)"
+            ),
+            "drivers": (
+                "### Medical and Pharmacy\n"
+                "Medical and Pharmacy is up on the trail—focal $186.20 sits well above the usual $15–$40 band—"
+                "with CVS Pharmacy ($48.20) and City Urgent Care ($138.00) driving the lift."
+            ),
+        },
+        "output": """{
+  "insight": "r{[Medical and Pharmacy](/health_medical_pharmacy/weekly)} is up at r{$186} this week since CVS and City Urgent Care payments ran higher. 💊",
+  "insight_correct": true
+}""",
+    },
+    {
+        "name": "travel_airbnb_united_down_last_month",
+        "batch": 4,
+        "input": {
+            "type": "month_spend_vs_forecast",
+            "insight": (
+                "Travel and Vacations is significantly down last month at $86.\n"
+                "Category Taxonomy: parent Leisure (leisure), with leaf categories Entertainment (leisure_entertainment), "
+                "Travel and Vacations (leisure_travel)"
+            ),
+            "drivers": (
+                "### Travel and Vacations\n"
+                "Travel and Vacations is down on the trail—focal $86.00 sits well below the usual $350–$500 band—"
+                "with a lone United Airlines bag fee ($35.00) and Airbnb cleaning credit residual ($51.00)."
+            ),
+        },
+        "output": """{
+  "insight": "g{[Travel and Vacations](/leisure_travel/monthly)} was lower at g{$86} last month since transactions were just with United and Airbnb. ✈️",
+  "insight_correct": true
+}""",
+    },
+    {
+        "name": "donations_gofundme_over_weekly_limit",
+        "batch": 4,
+        "input": {
+            "type": "week_spend_vs_goal",
+            "insight": (
+                "Donations and Gifts is over its weekly limit this week at $120.\n"
+                "Category Taxonomy: parent Donations and Gifts (donations_gifts)"
+            ),
+            "drivers": (
+                "### Donations and Gifts\n"
+                "Donations and Gifts is above the user's weekly limit on the trail—focal $120.00 exceeds the $50 "
+                "cap—with GoFundMe ($75.00) and a Venmo gift to Maya ($45.00) making up the overage."
+            ),
+        },
+        "output": """{
+  "insight": "r{[Donations and Gifts](/donations_gifts/weekly)} is up at r{$120} this week because of donations through GoFundMe and Venmo. 🎁",
+  "insight_correct": true
 }""",
     },
 ]
@@ -660,7 +820,7 @@ def run_batch(
 
 
 def main(test: str | None = None, *, batch: int | None = None, no_thinking: bool = False):
-    thinking_budget = 0 if no_thinking else 1024
+    thinking_budget = 2048
     optimizer = RationalizedPennyInsightsVerbalizerOptimizer(thinking_budget=thinking_budget)
     optimizer.quiet = False
 
