@@ -1,15 +1,11 @@
 """
-Optimizer runner for multi-context **top takeaways** inputs (plain markdown user message).
+Optimizer runner for **P:TopTakeawaysVerbose** (Gemini one-shot prompt tuning).
 
-The **user message** is built by ``build_top_takeaways_user_message_from_contexts`` (or the shorthand
-``build_top_takeaways_user_message`` for all-rationalize runs). Each **context** has a required ``tap_link`` and
-**exactly one** of: ``rationalize_agent_outcome`` (full rationalize markdown) or ``insight`` (plain text for
-non-rationalized transaction alerts such as ``uncat_txn`` / ``large_txn``). Rationalize headings are renamed to
-``# {Category} Insight`` / ``# {Category} Rationalization``; drill-down URLs appear under
-``## Helpful Links to Information`` as Markdown bullets.
+Test fixtures are pre-built markdown user messages (final shape after input prep in
+``finance-ai-llm-server/insights/top_takeaways_verbose.py``): ``# {Category} Insight``, ``Explain:``,
+``## Drivers``, and ``## Helpful Links to Information``.
 
-The **system instruction** is the canonical top-takeaways prompt (``SYSTEM_PROMPT``) for **P:TopTakeawaysVerbose**.
-This one-shot Gemini path has **no** finance tools; the model should rely on the pasted rationalize markdown only.
+The **system instruction** is the canonical top-takeaways prompt (``SYSTEM_PROMPT``).
 
 Run from ``finance-ai-penny`` repo root:
 
@@ -24,15 +20,8 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import sys
 import warnings
 from typing import Any
-
-_PENNY_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _PENNY_REPO_ROOT not in sys.path:
-  sys.path.insert(0, _PENNY_REPO_ROOT)
-
-from categories import get_name
 
 try:
     from dotenv import load_dotenv
@@ -54,11 +43,11 @@ GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
 # Canonical prompt for **P:TopTakeawaysVerbose** (rollup instructions for multi-context top takeaways).
 SYSTEM_PROMPT = """You are **Penny**.
 
-Context blocks (markdown, blank-line separated): rationalize body (`Explain:`, `## Figures`, `## Drivers`) or plain insight, plus `## Helpful Links to Information` (`- [name](/cashflow/...)`).
+Context blocks (markdown, blank-line separated): rationalize body (`Explain:`, `## Drivers`) or plain insight, plus `## Helpful Links to Information` (`- [name](/cashflow/...)`).
 
 Synthesize **# Top Takeaways** with **## Highlights** (stability, savings, flat costs) and **## Lowlights** (spikes, overspending, miscategorization). Omit **## Lowlights** when none apply.
 
-Each `- ` bullet: **Short headline:** + 2–4 sentences (what, amount, comparison, driver) from Figures/Drivers. The headline names the **story** (e.g. **Income Growth:**, **Utilities Spike:**, **Miscategorization:**)—not the category alone (**Salary:**, **Food:**). Put `[Category](/cashflow/...)` links in the sentence. When Explain disagrees with Figures or Drivers, use Figures/Drivers only—state the trend as a plain fact (e.g. "total spend reached $974" not "despite the insight flagging … as down"). **Never** use the word **insight**, **flagging**, **alert**, or meta phrases about upstream text, Explain, or disagreement. ≤3 bullets per section; one primary context per bullet.
+Each `- ` bullet: **Short headline:** + 2–4 sentences (what, amount, comparison, driver) from Explain/Drivers. The headline names the **story** (e.g. **Income Growth:**, **Utilities Spike:**, **Miscategorization:**)—not the category alone (**Salary:**, **Food:**). Put `[Category](/cashflow/...)` links in the sentence. When Explain disagrees with Drivers, use Drivers only—state the trend as a plain fact (e.g. "total spend reached $974" not "despite the insight flagging … as down"). **Never** use the word **insight**, **flagging**, **alert**, or meta phrases about upstream text, Explain, or disagreement. ≤3 bullets per section; one primary context per bullet.
 
 **Amounts:** Whole dollars, comma thousands (`$6,369`).
 
@@ -81,331 +70,10 @@ Each `- ` bullet: **Short headline:** + 2–4 sentences (what, amount, compariso
 - **Utilities Spike:** …
 """
 
-
-
-def _category_id_from_cashflow_path(path: str) -> int | None:
-    """Leading integer category id in ``/cashflow/<id>/…``, else ``None``."""
-    p = (path or "").strip()
-    if not p.startswith("/cashflow/"):
-        return None
-    rest = p[len("/cashflow/") :].lstrip("/")
-    if not rest or rest.lower().startswith("transaction/"):
-        return None
-    m = re.match(r"^-?\d+", rest)
-    if not m:
-        return None
-    try:
-        return int(m.group(0))
-    except ValueError:
-        return None
-
-
-def _tap_link_name_for_category_id(cat_id: int) -> str | None:
-    """Display name for helpful links when derived from a Penny category id (id ``1`` is shown as **Food**)."""
-    if cat_id == 1:
-        return "Food"
-    nm = get_name(cat_id)
-    if isinstance(nm, str) and nm.strip():
-        return nm.strip()
-    return None
-
-
-def _tap_link_category_display_name(*, tap_path: str, ctx: dict[str, Any]) -> str:
-    raw = ctx.get("tap_link_category_name")
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip()
-    meta = ctx.get("metadata")
-    if isinstance(meta, dict):
-        for k in ("tap_link_category_name", "category_display_name", "category_name"):
-            v = meta.get(k)
-            if isinstance(v, str) and v.strip():
-                return v.strip()
-        cid_raw = meta.get("category_id")
-        if cid_raw is not None:
-            try:
-                cid = int(cid_raw)
-            except (TypeError, ValueError):
-                cid = None
-            if cid is not None:
-                nm = _tap_link_name_for_category_id(cid)
-                if nm:
-                    return nm
-    cid = _category_id_from_cashflow_path(tap_path)
-    if cid is not None:
-        nm = _tap_link_name_for_category_id(cid)
-        if nm:
-            return nm
-    return ""
-
-
-_RE_RATIONALIZE_WHAT = re.compile(r"^#\s*Rationalize\s+What\s*$", re.IGNORECASE | re.MULTILINE)
-_RE_RATIONALIZE_RESPONSE = re.compile(r"^#\s*Rationalize\s+Response\s*$", re.IGNORECASE | re.MULTILINE)
-_RE_CATEGORY_TAXONOMY_LINE = re.compile(r"^Category Taxonomy:.*$", re.IGNORECASE | re.MULTILINE)
-_RE_EXPLAIN_CATEGORY = re.compile(r"^Explain:\s*([A-Za-z][A-Za-z0-9 _/&-]*)", re.IGNORECASE | re.MULTILINE)
-_RE_CASHFLOW_CATEGORY_PATH = re.compile(r"^(/cashflow/)(-?\d+)((?:/[^)\s]+)*)$")
-
-# Same taxonomy as Hermes ``format_category_taxonomy_line`` (``rationalize_task.py``).
-_TOP_LEVEL_CATEGORY_IDS = frozenset({41, 42, 43, 44, 46})
-_PARENT_CATEGORY_IDS = frozenset({-1, 1, 5, 9, 14, 18, 21, 25, 28, 32, 45, 47})
-_TOP_LEVEL_TO_DESCENDANTS: dict[int, tuple[int, ...]] = {
-    41: (1, 2, 3, 4),
-    42: (5, 6, 7, 18, 19, 25, 27, 28, 29, 30, 31, 32, 33, -1),
-    43: (9, 10, 11, 12, 13, 14, 15, 16, 17, 20, 26),
-    44: (21, 22, 23, 24, 8),
-    46: (47, 36, 37, 38, 39),
-}
-_PARENT_TO_LEAF_IDS: dict[int, tuple[int, ...]] = {
-    -1: (-1,),
-    1: (1, 2, 3, 4),
-    5: (5, 6, 7),
-    9: (9, 10, 11, 12, 13),
-    14: (14, 15, 16, 17),
-    18: (18, 19, 20),
-    21: (21, 22, 23, 24, 8),
-    25: (25, 26, 27),
-    28: (28, 29, 30, 31),
-    32: (32,),
-    33: (33,),
-    45: (45,),
-    47: (36, 37, 38, 39),
-}
-_RE_HELPFUL_LINKS_SECTION = re.compile(
-    r"##\s+Helpful\s+Links\s+to\s+Information\s*\n(.*?)(?=\n##\s+|\n#\s+|\Z)",
-    re.IGNORECASE | re.DOTALL,
-)
-_RE_MD_LINK_PATH = re.compile(r"\]\(\s*(/cashflow/[^)\s]+)\s*\)")
-
-
-def _parse_category_from_explain(md: str) -> str | None:
-    m = _RE_EXPLAIN_CATEGORY.search(md or "")
-    if not m:
-        return None
-    label = (m.group(1) or "").strip()
-    return label.split()[0].strip() if label else None
-
-
-def _context_category_label(*, ctx: dict[str, Any], rationalize_md: str | None = None) -> str:
-    nm = _tap_link_category_display_name(tap_path=str(ctx.get("tap_link") or ""), ctx=ctx)
-    if nm:
-        return nm
-    if isinstance(rationalize_md, str) and rationalize_md.strip():
-        from_explain = _parse_category_from_explain(rationalize_md)
-        if from_explain:
-            return from_explain
-    return "Category"
-
-
-def _strip_category_taxonomy(md: str) -> str:
-    """Remove Hermes ``Category Taxonomy: …`` lines from rationalize markdown."""
-    if not isinstance(md, str) or not md.strip():
-        return md if isinstance(md, str) else ""
-    s = _RE_CATEGORY_TAXONOMY_LINE.sub("", md)
-    return re.sub(r"\n{3,}", "\n\n", s).strip("\n")
-
-
-def _rename_rationalize_headings(md: str, category: str) -> str:
-    cat = (category or "Category").strip()
-    s = _RE_RATIONALIZE_WHAT.sub(f"# {cat} Insight\n\n", md)
-    s = _RE_RATIONALIZE_RESPONSE.sub(f"# {cat} Rationalization\n\n", s)
-    insight_h = re.compile(rf"^#\s*{re.escape(cat)}\s+Insight\s*$", re.IGNORECASE | re.MULTILINE)
-    rat_h = re.compile(rf"^#\s*{re.escape(cat)}\s+Rationalization\s*$", re.IGNORECASE | re.MULTILINE)
-    s = insight_h.sub(f"# {cat} Insight\n\n", s)
-    s = rat_h.sub(f"# {cat} Rationalization\n\n", s)
-    return re.sub(r"\n{3,}", "\n\n", s).strip("\n")
-
-
-def _prepare_rationalize_markdown_for_top_takeaways(md: str, category: str) -> str:
-    """Strip taxonomy, rename headings, and ensure a blank line after each insight heading."""
-    return _rename_rationalize_headings(_strip_category_taxonomy(md), category)
-
-
-def _leaf_ids_for_top_level_rollups(top_id: int) -> list[int]:
-    descendants = set(_TOP_LEVEL_TO_DESCENDANTS.get(top_id, ()))
-    intermediate_parents = {p for p in _PARENT_CATEGORY_IDS if p in descendants}
-    return sorted(descendants - intermediate_parents - {top_id})
-
-
-def _leaf_ids_for_parent_category(parent_id: int) -> list[int]:
-    leaves = _PARENT_TO_LEAF_IDS.get(parent_id, (parent_id,))
-    return sorted(lid for lid in leaves if lid != parent_id)
-
-
-def _taxonomy_leaf_category_ids(root_category_id: int) -> list[int]:
-    try:
-        cid = int(root_category_id)
-    except (TypeError, ValueError):
-        return []
-    if cid in _TOP_LEVEL_CATEGORY_IDS:
-        return _leaf_ids_for_top_level_rollups(cid)
-    if cid in _PARENT_CATEGORY_IDS:
-        return _leaf_ids_for_parent_category(cid)
-    return []
-
-
-def _root_category_id_from_ctx(ctx: dict[str, Any]) -> int | None:
-    meta = ctx.get("metadata")
-    if isinstance(meta, dict):
-        raw = meta.get("category_id")
-        if raw is not None:
-            try:
-                return int(raw)
-            except (TypeError, ValueError):
-                pass
-    tl = ctx.get("tap_link")
-    if isinstance(tl, str):
-        return _category_id_from_cashflow_path(tl)
-    return None
-
-
-def _cashflow_path_for_category_id(base_path: str, category_id: int) -> str | None:
-    m = _RE_CASHFLOW_CATEGORY_PATH.match((base_path or "").strip())
-    if not m:
-        return None
-    return f"{m.group(1)}{int(category_id)}{m.group(3)}"
-
-
-def _display_name_for_category_id(cat_id: int) -> str | None:
-    nm = _tap_link_name_for_category_id(cat_id)
-    if nm:
-        return nm
-    got = get_name(cat_id)
-    return got.strip() if isinstance(got, str) and got.strip() else None
-
-
-def _helpful_link_entries(ctx: dict[str, Any]) -> list[tuple[str, str]]:
-    raw_links = ctx.get("helpful_links")
-    if isinstance(raw_links, list) and raw_links:
-        out: list[tuple[str, str]] = []
-        for item in raw_links:
-            if isinstance(item, dict):
-                label = item.get("label") or item.get("name") or item.get("title")
-                path = item.get("path") or item.get("tap_link") or item.get("href")
-            elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                label, path = item[0], item[1]
-            else:
-                continue
-            if isinstance(label, str) and isinstance(path, str) and label.strip() and path.strip():
-                out.append((label.strip(), path.strip()))
-        if out:
-            return out
-    tl_raw = ctx.get("tap_link")
-    if not isinstance(tl_raw, str) or not tl_raw.strip():
-        raise ValueError("tap_link must be a non-empty string when helpful_links is omitted")
-    base_path = tl_raw.strip()
-    entries: list[tuple[str, str]] = []
-    seen_paths: set[str] = set()
-
-    def append(label: str, path: str) -> None:
-        p = path.strip()
-        if not p or p in seen_paths:
-            return
-        seen_paths.add(p)
-        entries.append((label.strip(), p))
-
-    parent_label = _tap_link_category_display_name(tap_path=base_path, ctx=ctx) or "Detail"
-    append(parent_label, base_path)
-
-    root_cid = _root_category_id_from_ctx(ctx)
-    if root_cid is not None:
-        for lid in _taxonomy_leaf_category_ids(root_cid):
-            leaf_path = _cashflow_path_for_category_id(base_path, lid)
-            if not leaf_path:
-                continue
-            leaf_label = _display_name_for_category_id(lid)
-            if leaf_label:
-                append(leaf_label, leaf_path)
-
-    if not entries:
-        raise ValueError("helpful_links could not be built from tap_link and category taxonomy")
-    return entries
-
-
-def _format_helpful_links_section(ctx: dict[str, Any]) -> str:
-    lines = ["## Helpful Links to Information", ""]
-    for label, path in _helpful_link_entries(ctx):
-        lines.append(f"- [{label}]({path})")
-    return "\n".join(lines)
-
-
-def extract_helpful_link_paths_from_user_message(user_message: str) -> list[str]:
-    """Paths from each ``## Helpful Links to Information`` section (canonical drill-down URLs)."""
-    if not isinstance(user_message, str) or not user_message.strip():
-        return []
-    out: list[str] = []
-    for m in _RE_HELPFUL_LINKS_SECTION.finditer(user_message):
-        section = m.group(1) or ""
-        for lm in _RE_MD_LINK_PATH.finditer(section):
-            path = (lm.group(1) or "").strip()
-            if path:
-                out.append(path)
-    return out
-
-
 # Production top-takeaways template ``thinking_budget`` — do not set to 0.
 TOP_TAKEAWAYS_THINKING_BUDGET = 256
 # Generous cap so multi-context rollups (plus thinking-enabled models) are not truncated mid-markdown.
 TOP_TAKEAWAYS_MAX_OUTPUT_TOKENS = 8192
-
-
-def build_top_takeaways_user_message_from_contexts(*, contexts: list[dict[str, Any]]) -> str:
-    """Build the top-takeaways user task from a list of per-context dicts (plain markdown).
-
-    Each dict **must** include:
-
-    - ``tap_link`` (str): relative drill-down URL (``/cashflow/...``), unless ``helpful_links`` is set.
-
-    Optional:
-
-    - ``helpful_links`` (list): ``[{label, path}, …]`` or ``[(label, path), …]`` for ``## Helpful Links to Information``.
-    - ``tap_link_category_name`` (str): category label for headings and link text (defaults from ``metadata`` or path id).
-    - ``metadata`` (dict): may include ``category_id``, ``category_name``, or ``tap_link_category_name``.
-
-    And **exactly one** of:
-
-    - ``rationalize_agent_outcome`` (str): full rationalize markdown; ``# Rationalize What`` / ``# Rationalize Response`` are renamed.
-    - ``insight`` (str): non-rationalized insight text only (e.g. ``uncat_txn`` / ``large_txn``).
-    """
-    if not isinstance(contexts, list) or not contexts:
-        raise ValueError("contexts must be a non-empty list")
-    blocks: list[str] = []
-    for i, ctx in enumerate(contexts, start=1):
-        if not isinstance(ctx, dict):
-            raise TypeError(f"contexts[{i - 1}] must be a dict")
-        ra = ctx.get("rationalize_agent_outcome")
-        ins = ctx.get("insight")
-        has_ra = isinstance(ra, str) and bool(ra.strip())
-        has_ins = isinstance(ins, str) and bool(ins.strip())
-        if has_ra and has_ins:
-            raise ValueError(f"contexts[{i - 1}]: set only one of rationalize_agent_outcome or insight, not both")
-        if not has_ra and not has_ins:
-            raise ValueError(f"contexts[{i - 1}]: set exactly one of rationalize_agent_outcome or insight")
-        parts: list[str] = []
-        if has_ra:
-            raw = ra.strip().rstrip("\n")  # type: ignore[union-attr]
-            cat = _context_category_label(ctx=ctx, rationalize_md=raw)
-            parts.append(_prepare_rationalize_markdown_for_top_takeaways(raw, cat))
-        else:
-            parts.append(ins.strip())  # type: ignore[union-attr]
-        parts.append(_format_helpful_links_section(ctx))
-        blocks.append("\n\n".join(parts))
-    return "\n\n".join(blocks) + "\n"
-
-
-def build_top_takeaways_user_message(
-    *,
-    rationalize_agent_outcomes: list[str],
-    tap_links: list[str],
-) -> str:
-    """Shorthand when every context is a full rationalize outcome (same as zip → ``build_top_takeaways_user_message_from_contexts``)."""
-    if not isinstance(rationalize_agent_outcomes, list) or not rationalize_agent_outcomes:
-        raise ValueError("rationalize_agent_outcomes must be a non-empty list")
-    if not isinstance(tap_links, list) or len(tap_links) != len(rationalize_agent_outcomes):
-        raise ValueError("tap_links must be a list with the same length as rationalize_agent_outcomes.")
-    contexts: list[dict[str, Any]] = [
-        {"rationalize_agent_outcome": ra, "tap_link": tl} for ra, tl in zip(rationalize_agent_outcomes, tap_links)
-    ]
-    return build_top_takeaways_user_message_from_contexts(contexts=contexts)
-
 
 
 def _normalize_markdown_relative_links(text: str) -> str:
@@ -434,7 +102,7 @@ def _extract_stream_chunk_text(chunk: Any) -> str:
 
 
 class TopTakeawaysVerboseOptimizer:
-    """One-shot Gemini runner: canonical top-takeaways system prompt plus ``<CONTEXTS>`` user message."""
+    """One-shot Gemini runner: canonical top-takeaways system prompt plus user message markdown."""
 
     def __init__(
         self,
@@ -467,7 +135,7 @@ class TopTakeawaysVerboseOptimizer:
 
     def generate_markdown(self, user_message: str) -> str:
         if not isinstance(user_message, str) or not user_message.strip():
-            raise ValueError("user_message must be a non-empty <CONTEXTS> bundle string.")
+            raise ValueError("user_message must be a non-empty markdown string.")
         request_text = types.Part.from_text(text=user_message.strip())
         contents = [types.Content(role="user", parts=[request_text])]
         cfg = types.GenerateContentConfig(
@@ -516,14 +184,6 @@ TEST_CASES: list[dict[str, Any]] = [
 
 Explain: Salary is significantly down this month at $4200. (2026-05-01 to 2026-05-10)
 
-# Salary Rationalization
-
-## Figures
-
-*   **May 1–10, 2026:** $6,369.24
-*   **April 1–10, 2026:** $6,369.24
-*   **March 1–10, 2026:** $17,369.24
-
 ## Drivers
 
 The Explain line describes salary as significantly down at $4,200 this month, but Figures show $6,369 for May 1–10—the same as the $6,369 from the same window in April—so pay is flat month-over-month, not down. The "significant drop" compared to early March is due to a large, one-time bonus payout received in the first half of March 2026. Specifically, you received $8,800 in total "Genentech US Bonus" payments on March 11, alongside higher "CA State Payroll" amounts ($8,600 total) compared to your standard bi-weekly payroll cycle. Your income for the first 10 days of May is consistent with your regular pay cycle, mirroring the amount received during the same period in April.
@@ -535,17 +195,6 @@ The Explain line describes salary as significantly down at $4,200 this month, bu
 # Food Insight
 
 Explain: Groceries is significantly down this month at $937.  Food is thus significantly down this month to $1859. (2026-05-01 to 2026-05-10)
-
-# Food Rationalization
-
-## Figures
-
-*   **Total Meals (May 1–10, 2026):** $1,859.34
-*   **Total Meals (Apr 1–30, 2026):** $4,039.28
-*   **Total Meals (Mar 1–31, 2026):** $3,300.28
-*   **Groceries (May 1–10, 2026):** $937.22
-*   **Groceries (Apr 1–30, 2026):** $1,513.40
-*   **Groceries (Mar 1–31, 2026):** $1,562.82
 
 ## Drivers
 
@@ -564,14 +213,6 @@ Additionally, your transaction history shows some potential miscategorization: s
 
 Explain: Uncategorized is significantly up last week at $6382. (2026-05-03 to 2026-05-09)
 
-# Uncategorized Rationalization
-
-## Figures
-
-*   **Uncategorized:** $6,382.12 (May 3–9, 2026)
-*   **Uncategorized:** $725.52 (Apr 26–May 2, 2026)
-*   **Uncategorized:** $500.46 (Apr 19–25, 2026)
-
 ## Drivers
 
 The spike in uncategorized spending is primarily driven by two large payments to "Property Group LLC" totaling $5,700 ($2,850 each). Additionally, duplicate entries appear for several recurring transactions, such as "Community Pool" ($83.06 x 2), "Costco" ($69.71 x 2), and "BP" ($49.56 x 2), which suggests some transactions might be showing up twice across different accounts.
@@ -579,26 +220,6 @@ The spike in uncategorized spending is primarily driven by two large payments to
 ## Helpful Links to Information
 
 - [Uncategorized](/cashflow/-1/weekly/2026-05-03)
-
-# Uncategorized Insight
-
-Explain: Uncategorized is slightly down this month at $6644. (2026-05-01 to 2026-05-10)
-
-# Uncategorized Rationalization
-
-## Figures
-
-* **May 1–10, 2026**: $6,644.34 (Uncategorized)
-* **Apr 1–30, 2026**: $7,681.54 (Uncategorized)
-* **Mar 1–31, 2026**: $8,111.90 (Uncategorized)
-
-## Drivers
-
-The "Uncategorized" spend is trending downward compared to prior months. A significant portion of this category consists of recurring transactions like "Property Group LLC," which appears twice monthly at $2,850.00 each time ($5,700 total). The lower total for May so far is primarily due to a lower volume of smaller miscellaneous transactions (18 transactions in May vs. 28 in April) rather than a change in the major recurring charges.
-
-## Helpful Links to Information
-
-- [Uncategorized](/cashflow/-1/monthly/2026-05)
 """,
         "output": """
 # Top Takeaways
@@ -606,7 +227,6 @@ The "Uncategorized" spend is trending downward compared to prior months. A signi
 ## Highlights
 
 - **Income Stability:** This month [Salary](/cashflow/36/monthly/2026-05) tracks at $6,369, which is consistent with the amount received at this point last month. While income appears significantly lower than in Mar, that variance is driven by a one-time $8,800 bonus and higher payroll amounts received during the first half of Mar, rather than a change in the standard bi-weekly pay cycle.
-- **Transaction Volume:** The total [Uncategorized](/cashflow/-1/monthly/2026-05) spend is trending downward this month at $6,644, compared to $7,682 for the entirety of last month. This improvement is driven by a lower volume of smaller miscellaneous transactions, with 18 recorded so far in May compared to 28 in Apr, even though major recurring charges remain constant.
 
 ## Lowlights
 
@@ -615,26 +235,11 @@ The "Uncategorized" spend is trending downward compared to prior months. A signi
 """,
     },
     {
-        "name": "single_context_delivered_food_long_figures",
+        "name": "single_context_delivered_food",
         "input": """
 # Delivered Food Insight
 
 Explain: Delivered Food is significantly down this month at $0. (2026-05-01 to 2026-05-23)
-
-# Delivered Food Rationalization
-
-## Figures
-
-*   **Delivered Food (meals_delivered_food)**:
-    *   May 2026: from May 1–23, $0 · entire month $0
-    *   Apr 2026: from Apr 1–23, $0 · entire month $0
-    *   Mar 2026: from Mar 1–23, $0 · entire month $0
-    *   Feb 2026: from Feb 1–23, $0 · entire month $0
-    *   Jan 2026: from Jan 1–23, $9.99 · entire month $9.99
-    *   Dec 2025: from Dec 1–23, $149.88 · entire month $149.88
-    *   Nov 2025: from Nov 1–23, $29.36 · entire month $29.36
-    *   Oct 2025: from Oct 1–23, $0 · entire month $0
-    *   Sep 2025: from Sep 1–23, $54.18 · entire month $54.18
 
 ## Drivers
 
@@ -658,13 +263,6 @@ This consistent behavior mirrors the $0 activity recorded at this point last mon
 
 Explain: Salary is slightly up this month at $4210. (2026-05-01 to 2026-05-10)
 
-# Salary Rationalization
-
-## Figures
-
-*   **May 1–10, 2026:** $4,210.00
-*   **April 1–10, 2026:** $4,105.50
-
 ## Drivers
 
 Payroll landed on the usual bi-weekly schedule with no bonus lines this month.
@@ -676,13 +274,6 @@ Payroll landed on the usual bi-weekly schedule with no bonus lines this month.
 # Side-Gig Insight
 
 Explain: Side-Gig is significantly up this month at $1850. (2026-05-01 to 2026-05-10)
-
-# Side-Gig Rationalization
-
-## Figures
-
-*   **Side-Gig (May 1–10, 2026):** $1,850.00
-*   **Side-Gig (Apr 1–10, 2026):** $420.00
 
 ## Drivers
 
@@ -696,13 +287,6 @@ A $1,200 consulting deposit from "Brightline Studio" posted May 6, plus two smal
 
 Explain: Connectivity is flat this month at $189. (2026-05-01 to 2026-05-10)
 
-# Connectivity Rationalization
-
-## Figures
-
-*   **Connectivity (May 1–10, 2026):** $189.00
-*   **Connectivity (Apr 1–30, 2026):** $189.00
-
 ## Drivers
 
 Recurring Comcast and mobile plans unchanged.
@@ -714,13 +298,6 @@ Recurring Comcast and mobile plans unchanged.
 # Insurance Insight
 
 Explain: Insurance is slightly up this month at $312. (2026-05-01 to 2026-05-10)
-
-# Insurance Rationalization
-
-## Figures
-
-*   **Insurance (May 1–10, 2026):** $312.40
-*   **Insurance (Apr 1–30, 2026):** $298.00
 
 ## Drivers
 
@@ -734,14 +311,6 @@ Auto premium installment rose $14.40 after policy renewal effective May 1; homeo
 
 Explain: Utilities is significantly up this month at $428. (2026-05-01 to 2026-05-10)
 
-# Utilities Rationalization
-
-## Figures
-
-*   **Utilities (May 1–10, 2026):** $428.15
-*   **Utilities (Apr 1–30, 2026):** $241.80
-*   **Utilities (Mar 1–31, 2026):** $265.10
-
 ## Drivers
 
 PG&E bill jumped to $286.40 on May 4 versus $118.20 at this point last month, reflecting higher cooling use and a rate adjustment. Water district charge ($92.75) also posted earlier in the cycle than in Apr, when it landed on the 18th. Together those two lines explain most of the month-over-month lift; garbage service stayed flat at $49.00.
@@ -753,13 +322,6 @@ PG&E bill jumped to $286.40 on May 4 versus $118.20 at this point last month, re
 # Interest Insight
 
 Explain: Interest is slightly up this month at $18. (2026-05-01 to 2026-05-10)
-
-# Interest Rationalization
-
-## Figures
-
-*   **Interest (May 1–10, 2026):** $18.22
-*   **Interest (Apr 1–10, 2026):** $12.05
 
 ## Drivers
 
@@ -792,17 +354,6 @@ Additionally, [Interest](/cashflow/39/monthly/2026-05) income rose to $18 from $
 
 Explain: Utilities is significantly up this month at $428.  Shelter is thus significantly up this month to $2840. (2026-05-01 to 2026-05-10)
 
-# Shelter Rationalization
-
-## Figures
-
-*   **Shelter (May 1–10, 2026):** $2,840.55
-*   **Shelter (Apr 1–30, 2026):** $2,653.20
-*   **Utilities (May 1–10, 2026):** $428.15
-*   **Utilities (Apr 1–30, 2026):** $241.80
-*   **Home (May 1–10, 2026):** $2,412.40
-*   **Home (Apr 1–30, 2026):** $2,412.40
-
 ## Drivers
 
 Shelter costs rose this month almost entirely because **Utilities** accelerated, not because rent moved. The **Home** (mortgage) payment is identical to last month at $2,412.40 and posted on May 1 as usual. **Utilities** jumped mainly on PG&E: $286.40 on May 4 compared with $118.20 at this point last month, which Drivers tie to earlier cooling use and a tariff step-up that took effect May 1. The water district bill ($92.75) also landed May 3 instead of mid-month as in Apr, front-loading the category. **Upkeep** was $0 this month versus $42.50 in Apr when a sprinkler repair posted — that absence partially offsets the utility spike but does not fully neutralize it. Net shelter is up $187.35 versus the full prior month even though fixed housing charges are flat.
@@ -817,14 +368,6 @@ Shelter costs rose this month almost entirely because **Utilities** accelerated,
 # Entertainment Insight
 
 Explain: Entertainment is significantly up last week at $186. (2026-05-03 to 2026-05-09)
-
-# Entertainment Rationalization
-
-## Figures
-
-*   **Entertainment (May 3–9, 2026):** $186.40
-*   **Entertainment (Apr 26–May 2, 2026):** $24.00
-*   **Entertainment (Apr 19–25, 2026):** $31.50
 
 ## Drivers
 
@@ -854,17 +397,6 @@ Last week’s entertainment spike is concentrated in two tickets: **AMC Theaters
 
 Explain: Medical & Pharmacy is significantly up this month at $342.  Health is thus significantly up this month to $518. (2026-05-01 to 2026-05-10)
 
-# Health Rationalization
-
-## Figures
-
-*   **Health (May 1–10, 2026):** $518.60
-*   **Health (Apr 1–30, 2026):** $212.30
-*   **Medical & Pharmacy (May 1–10, 2026):** $342.15
-*   **Medical & Pharmacy (Apr 1–30, 2026):** $88.40
-*   **Gym & Wellness (May 1–10, 2026):** $176.45
-*   **Gym & Wellness (Apr 1–30, 2026):** $123.90
-
 ## Drivers
 
 Medical & Pharmacy dominates the health lift: **CVS Pharmacy** $156.80 and **Kaiser Copay** $142.00 posted May 2–5 versus $88.40 for all of last month. Gym & Wellness rose mainly because annual **Peloton** renewal $176.45 hit May 1; last month gym lines were $123.90 with no renewal.
@@ -880,13 +412,6 @@ Medical & Pharmacy dominates the health lift: **CVS Pharmacy** $156.80 and **Kai
 
 Explain: Tuition is slightly up last week at $650. (2026-05-03 to 2026-05-09)
 
-# Tuition Rationalization
-
-## Figures
-
-*   **Tuition (May 3–9, 2026):** $650.00
-*   **Tuition (Apr 26–May 2, 2026):** $0.00
-
 ## Drivers
 
 Spring semester installment to **State University** posted May 5.
@@ -898,14 +423,6 @@ Spring semester installment to **State University** posted May 5.
 # Clothing Insight
 
 Explain: Clothing is significantly down this month at $45. (2026-05-01 to 2026-05-10)
-
-# Clothing Rationalization
-
-## Figures
-
-*   **Clothing (May 1–10, 2026):** $45.00
-*   **Clothing (Apr 1–30, 2026):** $312.80
-*   **Clothing (Mar 1–31, 2026):** $189.50
 
 ## Drivers
 
@@ -919,13 +436,6 @@ No department-store runs this month; the only charge is **Target** socks $45.00 
 
 Explain: Gadgets is significantly up this month at $279. (2026-05-01 to 2026-05-10)
 
-# Gadgets Rationalization
-
-## Figures
-
-*   **Gadgets (May 1–10, 2026):** $279.99
-*   **Gadgets (Apr 1–30, 2026):** $0.00
-
 ## Drivers
 
 **Apple Store** Magic Keyboard $279.99 on May 8.
@@ -937,13 +447,6 @@ Explain: Gadgets is significantly up this month at $279. (2026-05-01 to 2026-05-
 # Donations & Gifts Insight
 
 Explain: Donations & Gifts is flat this month at $50. (2026-05-01 to 2026-05-10)
-
-# Donations & Gifts Rationalization
-
-## Figures
-
-*   **Donations & Gifts (May 1–10, 2026):** $50.00
-*   **Donations & Gifts (Apr 1–30, 2026):** $50.00
 
 ## Drivers
 
@@ -1001,9 +504,6 @@ def mechanical_sandbox_check(*, ideal: str, actual: str) -> dict[str, Any]:
         "first 10 days",
         "first X days",
         " so far",
-        "April",
-        "February",
-        "January ",
         "the previous week",
         "None.",
     )
