@@ -37,59 +37,42 @@ SCHEMA = types.Schema(
 
 SYSTEM_PROMPT = r"""You return one JSON object per input row.
 
-**Input (each row):** `id`, `account_name`, `bank_name` (nullable), `long_account_name`. These fields are **not standardized**: purpose cues, product wording, and bank names can appear **in any field** or be split across them. Read **`account_name`**, **`long_account_name`**, and **`bank_name` together as one picture**—do not assume a fixed slot per concept.
+# Input
+Bank account data. Ignore differentiation among `account_name`, `long_account_name`, and `bank_name`. Look at all three as a whole.
 
-**Output (key order in each object):** `id` → `purpose_name` (only when customized—omit the key otherwise; never `"purpose_name": null`) → `crisp_name` → `bank_added_name`. Always emit `crisp_name` and `bank_added_name`. When `purpose_name` is included, it must appear **between** `id` and `crisp_name` in the JSON object.
+# Output
+- `id`
+- `purpose_name`
+- `crisp_name`
+- `bank_added_name`
 
----
+# Processing
 
-## 1. Identify (per row)
+## 1. Identify bank name, product name, account type, and purpose.
 
-Synthesize from the **entire row** (all text fields). Extract three things; each may be evidenced **anywhere** in `account_name`, `long_account_name`, or `bank_name`—including duplicates, fragments, or legal names you normalize away.
+Do not consider which part of the input the detail came from since the input may be mixed up. (Ex: bank name is not necessarily from `bank_name`)
 
-- **Purpose** — User-specific **use, goal, or nickname** if the **combined** text shows customization beyond a plain generic product line. If, taken as a whole, the row is just standard product naming for that FI, **there is no purpose** (uncustomized).
-- **Product name** — Short, accurate **product/card/loan** wording **inferred from the full inputs** (not only `account_name`): strip mask tails (`…1234`, `****`); use real tokens (e.g. Total Checking, Sapphire Preferred, 360 Savings). No leading **institution** in `crisp_name` except true in-product sub-brands (`360`, `Venture`, etc.).
-- **Bank** — **Short consumer brand**, taken from whichever field(s) carry the FI (often `bank_name`, but sometimes only `long_account_name` or `account_name`). Infer when missing (`Chase` not `JPMorgan Chase`; `Marcus` not `Marcus by Goldman Sachs`; keep `Ally Bank`, `Bank of America`, `Charles Schwab` when that is how people say the bank).
+- **Bank Name:** Commonly-known name of the bank that the account uses.
+- **Product Name:** Brand of the bank's product that the account uses, excluding the bank's name.
+- **Account Type:** Type of financial tool that the account is (eg. Checking, Credit Card, Auto Loan)
+- **Customized Name (if any):** Name set by the accountholder. Blank if there are no identifiers additional to the bank name, product name, and account type.
 
-Ignore masked number tails when reasoning. Do not invent a purpose the inputs do not support.
+## 2. Build the three name options.
+1. `purpose_name`: customized name (do not output purpose_name at all if none; never `null`)
+2. `crisp_name`: customized name + product name
+3. `bank_added_name`: bank name + product name
 
----
+### Guidelines
+- Each name should independently be able to identify the account.
+- Use Title Case while preserving brand casing for bank and product names.
+- Keep as short as possible (5 words maximum) while still keeping all relevant information.
+- Remove redundancies, if any (ie. word/s that do not add value/specificity to the name).
+- Remove the word "Account".
+- Remove unnecessary symbols.
 
-## 2. Build (then apply step 3)
-
-**`purpose_name` (optional in JSON)** — The **purpose string alone**: how the user identifies the account **by purpose**. Output this key **only** when step 1 found customization. It is **not** emitted when the account is uncustomized.
-
-- Shortest faithful phrase from the display (you will **Title Case** it in step 3).
-- **Never** use a generic product type **by itself** (solo Checking, Savings, Credit Card, Mortgage, Brokerage, Loan).
-
-**`crisp_name`** — How the user identifies the account **by purpose and product name**.
-
-- **No purpose:** product only — e.g. **`Total Checking`**, **`Sapphire Preferred`** (minimal tokens; disambiguate similar rows with the fewest real product words from inputs).
-- **With purpose:** **purpose + product** — every word of `purpose_name` **verbatim once**, plus the smallest set of real product tokens needed — e.g. **`Gabby's Total Checking`**, **`Europe Trip 360 Savings`**. Keep possessives coherent (`Gabby's …`); for business-style labels, tight compounds like **`Citi Business`** / **`Business Citi`** are both OK—pick the shorter clear form.
-
-**`bank_added_name`** — How the user identifies the account **by purpose and bank**.
-
-- **No purpose:** **bank only** — e.g. **`Citi`**, **`Chase`** (no product words).
-- **With purpose:** **purpose + bank**, **fewest words**, prefer **juxtaposition** over filler — e.g. **`Gabby's Citi`**, **`Truist Business Petty Cash`**. Prefer **`Citi Business`** over **`Business at Citi`**. **Personal / possessive:** **`Gabby's Chase`**, not **`Chase Gabby's`**. Avoid wordy **`… at [Bank]`** when a short compound is clear.
-
----
-
-## 3. Clean up
-
-Apply to every output string:
-
-- **Title Case** with a **proper title shape** (capitalize major words; small words like prepositions stay lower when conventional unless they start the string).
-- Preserve **brand/product casing** where standard (`360`, `Venture`, `Sapphire Preferred`).
-- **Concision:** as short as possible without dropping required purpose/product/bank content.
-- **Forbidden:** substring **Account** in any field. Preserve `id`.
-
----
-
-<EXAMPLES>
-- Uncustomized: product `Total Checking`, bank `Chase` → omit `purpose_name`; `crisp_name` **`Total Checking`**; `bank_added_name` **`Chase`**.
-- Personal: purpose `Gabby's`, product `Total Checking`, bank `Citi` → `purpose_name` **`Gabby's`** (or as in source); `crisp_name` **`Gabby's Total Checking`**; `bank_added_name` **`Gabby's Citi`** (not **`Citi Gabby's`**).
-- Business + bank: purpose `Business Petty Cash`, bank `Truist`, product tokens from inputs → `bank_added_name` **`Truist Business Petty Cash`** or compact equivalent; avoid **`Business Petty Cash at Truist`** when unnecessary.
-</EXAMPLES>
+## 3. Verification
+- Does purpose_name just restate the bank name, product name, or account type? Remove purpose_name if yes.
+- Does each outputted name work well even when taken independently? Reprocess output if no.
 """
 
 _TEST_SEPARATOR = "=" * 72
@@ -120,9 +103,9 @@ TEST_CASES: list[dict[str, Any]] = [
             {"id": 9513, "account_name": "Capital One Venture Rewards", "bank_name": "Capital One", "long_account_name": "Capital One Venture Rewards"},
         ],
         "output": """[
-  {"id": 9512, "crisp_name": "360 Checking", "bank_added_name": "Capital One"},
-  {"id": 9514, "purpose_name": "Europe Trip", "crisp_name": "Europe Trip 360 Savings", "bank_added_name": "Europe Trip Capital One"},
-  {"id": 9513, "crisp_name": "Venture Rewards", "bank_added_name": "Capital One"}
+  {"id": 9512, "crisp_name": "360 Checking", "bank_added_name": "Capital One 360 Checking"},
+  {"id": 9514, "purpose_name": "Europe Trip", "crisp_name": "Europe Trip 360 Savings", "bank_added_name": "Capital One 360 Savings"},
+  {"id": 9513, "crisp_name": "Venture Rewards", "bank_added_name": "Capital One Venture Rewards"}
 ]""",
     },
     {
@@ -135,10 +118,10 @@ TEST_CASES: list[dict[str, Any]] = [
             {"id": 104, "account_name": "Brokerage Account", "bank_name": "Charles Schwab", "long_account_name": "Schwab Individual Brokerage Account"},
         ],
         "output": """[
-  {"id": 101, "crisp_name": "Sapphire Preferred", "bank_added_name": "Chase"},
-  {"id": 102, "purpose_name": "Emergency Buffer", "crisp_name": "Emergency Buffer High Yield Savings", "bank_added_name": "Emergency Buffer Marcus"},
-  {"id": 103, "crisp_name": "Secure Banking", "bank_added_name": "Chase"},
-  {"id": 104, "crisp_name": "Individual Brokerage", "bank_added_name": "Charles Schwab"}
+  {"id": 101, "crisp_name": "Sapphire Preferred", "bank_added_name": "Chase Sapphire Preferred"},
+  {"id": 102, "purpose_name": "Emergency Buffer", "crisp_name": "Emergency Buffer High Yield Savings", "bank_added_name": "Marcus High Yield Savings"},
+  {"id": 103, "crisp_name": "Secure Banking", "bank_added_name": "Chase Secure Banking"},
+  {"id": 104, "crisp_name": "Individual Brokerage", "bank_added_name": "Charles Schwab Individual Brokerage"}
 ]""",
     },
     {
@@ -150,9 +133,9 @@ TEST_CASES: list[dict[str, Any]] = [
             {"id": 3217, "account_name": "Business Petty Cash Truist Core Checking", "bank_name": "Truist", "long_account_name": "Core Checking - 7891"},
         ],
         "output": """[
-  {"id": 201, "crisp_name": "First Banking", "bank_added_name": "Chase"},
-  {"id": 202, "crisp_name": "Advantage Savings", "bank_added_name": "Bank of America"},
-  {"id": 3217, "purpose_name": "Business Petty Cash", "crisp_name": "Business Petty Cash Core Checking", "bank_added_name": "Truist Business Petty Cash"}
+  {"id": 201, "crisp_name": "First Banking", "bank_added_name": "Chase First Banking"},
+  {"id": 202, "crisp_name": "Advantage Savings", "bank_added_name": "Bank of America Advantage Savings"},
+  {"id": 3217, "purpose_name": "Business Petty Cash", "crisp_name": "Business Petty Cash Core Checking", "bank_added_name": "Truist Core Checking"}
 ]""",
     },
     {
@@ -160,13 +143,13 @@ TEST_CASES: list[dict[str, Any]] = [
         "batch": 3,
         "input": [
             {"id": 301, "account_name": "Mortgage", "bank_name": "Rocket Mortgage", "long_account_name": "Rocket Mortgage Conventional Fixed"},
-            {"id": 302, "account_name": "Ally Car Payment Auto Loan", "bank_name": "Ally Bank", "long_account_name": "Ally Auto Finance Loan"},
+            {"id": 302, "account_name": "Ally - Car Payment Auto Loan", "bank_name": "Ally Bank", "long_account_name": "Ally - Auto Finance Loan"},
             {"id": 303, "account_name": "Student Loan", "bank_name": "Navient", "long_account_name": "Navient Federal Student Loan"},
         ],
         "output": """[
-  {"id": 301, "crisp_name": "Conventional Fixed", "bank_added_name": "Rocket Mortgage"},
-  {"id": 302, "purpose_name": "Car Payment", "crisp_name": "Car Payment Auto Loan", "bank_added_name": "Car Payment Ally Bank"},
-  {"id": 303, "crisp_name": "Federal Student Loan", "bank_added_name": "Navient"}
+  {"id": 301, "purpose_name": "Mortgage", "crisp_name": "Mortgage Conventional Fixed", "bank_added_name": "Rocket Mortgage Conventional Fixed"},
+  {"id": 302, "purpose_name": "Car Payment", "crisp_name": "Car Payment Auto Finance Loan", "bank_added_name": "Ally Bank Auto Finance Loan"},
+  {"id": 303, "purpose_name": "Student Loan", "crisp_name": "Federal Student Loan", "bank_added_name": "Navient Federal Student Loan"}
 ]""",
     },
 ]
