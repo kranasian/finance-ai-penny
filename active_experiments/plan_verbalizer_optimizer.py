@@ -6,9 +6,8 @@ Input is verbalized ``# Financial Need`` (with ``## Need Details``), the matchin
 bullets for one scenario (recommended by default, or
 ``--scenario-id``).
 
-Objective: verbalize that one plan as ``plan_title``, ``plan_summary``, and ``plan_details``
-(``spending_phase_descriptions``, ``payoff``, ``trade_off`` from the model; ``spending_phases`` with
-``period``, ``caps``, and ``description`` assembled after the call from ``### Spending Schedule``).
+Objective: verbalize that one plan as ``plan_title``, ``plan_badge``, ``plan_summary``,
+``table_title``, ``spending_budget_table``, and ``chart_type``.
 
 Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance-ai-llm-server/llm``):
 
@@ -63,8 +62,11 @@ from active_experiments.verbalizer_optimizer_db import (
 )
 from active_experiments.need_verbalizer_optimizer import (
     NeedVerbalizerOptimizer,
+    _category_display_label,
     _format_goal_plan_narrative,
+    _ordered_category_amounts,
     _parse_model_json_object,
+    _positive_category_amounts,
     build_need_verbalizer_input_bundle,
     ensure_blank_line_after_plan_headings,
     format_financial_need_block,
@@ -80,45 +82,23 @@ PLAN_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
 
-Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, and the spending caps under ``### Spending Schedule``.
+Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, and caps under ``### Spending Schedule``.
 
-- ``plan_title``: short headline for this plan (max **8 words**; punchy, no jargon).
-- ``plan_summary``: one sentence on what this plan does (max **25 words**); ground every **$** and date in the input.
-- ``plan_details``: JSON object with:
-  - ``spending_phase_descriptions``: array with one entry per spending-schedule line, in order. Each entry is one sentence describing that phase (max **20 words**). Name only categories whose caps change in that phase; do not list every dollar amount.
-  - ``payoff``: one sentence — balance or savings targets and interest impact when stated (max **20 words**).
-  - ``trade_off``: one sentence — main sacrifice from ``# Financial Strategy`` (max **20 words**).
-  Exact ``period`` and caps live under ``### Spending Schedule`` — do not repeat them in descriptions.
+- ``plan_title``: one-line headline for this plan (max **5 words**; punchy, no jargon).
+- ``plan_badge``: adjective for how hard or how unique this plan is.
+- ``plan_summary``: short description of what this plan does (max **20 words**, max **3 lines**); ground every **$** and date in the input.
+- ``table_title``: short title for the spending comparison table (max **6 words**).
+- ``spending_budget_table``: one markdown table with columns ``Spending``, ``Current``, ``Budget``.
+  - One row per category in ``### Spending Schedule`` (use display names from the schedule).
+  - ``Current`` from ``### Current Spending`` for that category (ground every **$**).
+  - ``Budget`` may use multiple lines in a cell (separate with ``<br>``) when the schedule has multiple phases:
+    - first phase: ``$amount (n% cut)`` vs Current (use ``0% cut`` or ``n% up`` if not a cut)
+    - later phases: ``$amount N months later`` (months from plan start to that phase)
+  - Final row: ``Total`` with summed Current and Budget totals (Budget totals also multi-line when phased).
+- ``chart_type``: short plain-language description of the chart that best complements this plan — name the series and the shape/trend only, never dollar amounts, dates, or account names.
 
-Keep ``plan_summary`` to one sentence (max **25 words**). Output compact JSON only — no extra fields or whitespace padding.
+Do not invent Current amounts — only use ``### Current Spending``. Output compact JSON only — no extra fields.
 """
-
-
-def _build_plan_details_schema() -> "types.Schema":
-    if types is None:  # pragma: no cover
-        raise RuntimeError("Install `google-genai` for this optimizer.")
-    return types.Schema(
-        type=types.Type.OBJECT,
-        required=["spending_phase_descriptions", "payoff", "trade_off"],
-        properties={
-            "spending_phase_descriptions": types.Schema(
-                type=types.Type.ARRAY,
-                items=types.Schema(
-                    type=types.Type.STRING,
-                    description="One-sentence description of a spending-schedule phase.",
-                ),
-                description="One entry per ### Spending Schedule line, in order.",
-            ),
-            "payoff": types.Schema(
-                type=types.Type.STRING,
-                description="Payoff timeline, balance or savings targets, and interest impact when stated.",
-            ),
-            "trade_off": types.Schema(
-                type=types.Type.STRING,
-                description="Main sacrifice or risk for this plan.",
-            ),
-        },
-    )
 
 
 def _build_output_schema() -> "types.Schema":
@@ -126,106 +106,59 @@ def _build_output_schema() -> "types.Schema":
         raise RuntimeError("Install `google-genai` for this optimizer.")
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["plan_title", "plan_summary", "plan_details"],
+        required=[
+            "plan_title",
+            "plan_badge",
+            "plan_summary",
+            "table_title",
+            "spending_budget_table",
+            "chart_type",
+        ],
         properties={
             "plan_title": types.Schema(
                 type=types.Type.STRING,
-                description="Short headline for this plan (max 8 words).",
+                description="One-line plan headline (max 5 words).",
+            ),
+            "plan_badge": types.Schema(
+                type=types.Type.STRING,
+                description="Adjective for how hard or unique the plan is.",
             ),
             "plan_summary": types.Schema(
                 type=types.Type.STRING,
-                description="One-sentence summary of what this plan does (max 25 words).",
+                description="Short plan description (max 20 words, max 3 lines).",
             ),
-            "plan_details": _build_plan_details_schema(),
+            "table_title": types.Schema(
+                type=types.Type.STRING,
+                description="Title for the spending comparison table (max 6 words).",
+            ),
+            "spending_budget_table": types.Schema(
+                type=types.Type.STRING,
+                description="Markdown table: Spending, Current, Budget; Total row; phased Budget cells use <br>.",
+            ),
+            "chart_type": types.Schema(
+                type=types.Type.STRING,
+                description="Chart that best complements the plan; shape only, no values.",
+            ),
         },
     )
 
 
 SPENDING_SCHEDULE_H3 = "### Spending Schedule"
+CURRENT_SPENDING_H3 = "### Current Spending"
 FINANCIAL_NEED_H1 = "# Financial Need"
 _FINANCIAL_STRATEGY_H1 = "# Financial Strategy"
 
-_RE_SPENDING_SCHEDULE_BULLET = re.compile(r"^-\s+(.+):\s+Cap\s+(.+)$")
 
-
-def _spending_phases_from_bundle(bundle_md: str) -> list[dict[str, str]]:
-    if SPENDING_SCHEDULE_H3 not in bundle_md:
-        return []
-    block_lines: list[str] = []
-    started = False
-    for line in bundle_md.splitlines():
-        if line.strip() == SPENDING_SCHEDULE_H3:
-            started = True
-            continue
-        if not started:
-            continue
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            break
-        if stripped:
-            block_lines.append(stripped)
-    phases: list[dict[str, str]] = []
-    for stripped in block_lines:
-        match = _RE_SPENDING_SCHEDULE_BULLET.match(stripped)
-        if not match:
-            continue
-        period = match.group(1).strip()
-        if period.endswith("-"):
-            period = f"{period}:"
-        phases.append({
-            "period": period,
-            "caps": match.group(2).strip(),
-        })
-    return phases
-
-
-def _attach_spending_phases(response: dict[str, Any], profile_input: str) -> dict[str, Any]:
-    phases = _spending_phases_from_bundle(profile_input)
-    if not phases:
-        return response
-    plan_details = dict(response["plan_details"])
-    descriptions = plan_details.pop("spending_phase_descriptions", None)
-    if not isinstance(descriptions, list) or not descriptions:
-        raise ValueError("plan_details.spending_phase_descriptions must be a non-empty array")
-    if len(descriptions) != len(phases):
-        raise ValueError(
-            "plan_details.spending_phase_descriptions length must match "
-            f"spending-schedule lines ({len(phases)} expected, {len(descriptions)} got)"
-        )
-    merged_phases: list[dict[str, str]] = []
-    for phase, description in zip(phases, descriptions, strict=True):
-        if not isinstance(description, str) or not description.strip():
-            raise ValueError("each spending_phase_descriptions entry must be a non-empty string")
-        merged_phases.append({
-            **phase,
-            "description": description.strip(),
-        })
-    plan_details["spending_phases"] = merged_phases
-    return {**response, "plan_details": plan_details}
-
-
-def _validate_plan_details(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError("plan_details must be a JSON object")
-    descriptions = value.get("spending_phase_descriptions")
-    if not isinstance(descriptions, list) or not descriptions:
-        raise ValueError("plan_details.spending_phase_descriptions must be a non-empty array")
-    normalized_descriptions: list[str] = []
-    for i, description in enumerate(descriptions):
-        if not isinstance(description, str) or not description.strip():
-            raise ValueError(f"plan_details.spending_phase_descriptions[{i}] must be a non-empty string")
-        normalized_descriptions.append(description.strip())
-    payoff = value.get("payoff")
-    if not isinstance(payoff, str) or not payoff.strip():
-        raise ValueError("plan_details.payoff must be a non-empty string")
-    trade_off = value.get("trade_off")
-    if not isinstance(trade_off, str) or not trade_off.strip():
-        raise ValueError("plan_details.trade_off must be a non-empty string")
-    return {
-        "spending_phase_descriptions": normalized_descriptions,
-        "payoff": payoff.strip(),
-        "trade_off": trade_off.strip(),
-    }
+def _format_current_spending_block(current_spending: Any) -> str:
+    if not isinstance(current_spending, dict):
+        return ""
+    cats = _positive_category_amounts(current_spending)
+    if not cats:
+        return ""
+    lines = [CURRENT_SPENDING_H3, ""]
+    for slug, amount in _ordered_category_amounts(cats):
+        lines.append(f"- {_category_display_label(slug)} ${amount}")
+    return "\n".join(lines) + "\n"
 
 
 def _validate_plan_response(parsed: Any) -> dict[str, Any]:
@@ -234,14 +167,28 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     plan_title = parsed.get("plan_title")
     if not isinstance(plan_title, str) or not plan_title.strip():
         raise ValueError("plan_title must be a non-empty string")
+    plan_badge = parsed.get("plan_badge")
+    if not isinstance(plan_badge, str) or not plan_badge.strip():
+        raise ValueError("plan_badge must be a non-empty string")
     plan_summary = parsed.get("plan_summary")
     if not isinstance(plan_summary, str) or not plan_summary.strip():
         raise ValueError("plan_summary must be a non-empty string")
-    plan_details = _validate_plan_details(parsed.get("plan_details"))
+    table_title = parsed.get("table_title")
+    if not isinstance(table_title, str) or not table_title.strip():
+        raise ValueError("table_title must be a non-empty string")
+    spending_budget_table = parsed.get("spending_budget_table")
+    if not isinstance(spending_budget_table, str) or not spending_budget_table.strip():
+        raise ValueError("spending_budget_table must be a non-empty string")
+    chart_type = parsed.get("chart_type")
+    if not isinstance(chart_type, str) or not chart_type.strip():
+        raise ValueError("chart_type must be a non-empty string")
     return {
         "plan_title": plan_title.strip(),
+        "plan_badge": plan_badge.strip(),
         "plan_summary": plan_summary.strip(),
-        "plan_details": plan_details,
+        "table_title": table_title.strip(),
+        "spending_budget_table": spending_budget_table.strip(),
+        "chart_type": chart_type.strip(),
     }
 
 
@@ -261,34 +208,32 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 # Financial Strategy
 
 ## Recommended plan: gradual_paydown_savings
-* Phased dining and leisure trims keep month-1 cuts modest, then deepen after month 3 while routing **$200**/mo to savings once the card hits **$0**.
+* Goal: pay Venture to **$0**. Phased dining and leisure trims keep month-1 cuts modest, then deepen after month 3; route **$200**/mo to savings only after the card hits **$0**.
 
 ## Alternative plan: steady_cut
-* Flat **$700** food and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
+* Goal: pay Venture to **$0**. Flat **$700** food and **$350** leisure from month 1 clears the card about two months sooner but leaves thinner checking buffers in the first quarter.
+
+### Current Spending
+- food $1000
+- leisure $500
 
 ### Spending Schedule
 - 04/26-06/26: Cap food $850, leisure $450 monthly
 - 07/26-03/28: Cap food $700, leisure $350 monthly
 """,
         "ideal_response": {
-            "plan_title": "Gradual paydown path",
-            "plan_summary": "Phase dining and leisure cuts, then route $200/mo to savings after Venture hits $0.",
-            "plan_details": {
-                "payoff": "Route $200/mo to savings once Venture hits $0; savings target $6,500.",
-                "trade_off": "Phased trims keep month-1 cuts modest — debt clears slower than steady_cut but checking buffers stay thicker in the first quarter.",
-                "spending_phases": [
-                    {
-                        "period": "04/26-06/26",
-                        "caps": "food $850, leisure $450 monthly",
-                        "description": "Modest dining and leisure trim for the first three months.",
-                    },
-                    {
-                        "period": "07/26-03/28",
-                        "caps": "food $700, leisure $350 monthly",
-                        "description": "Deeper food and leisure caps through Mar '28.",
-                    },
-                ],
-            },
+            "plan_title": "Gradual paydown",
+            "plan_badge": "Gentle",
+            "plan_summary": "Pay Venture to $0 with phased cuts, then save $200/mo.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $1,000 | $850 (15% cut)<br>$700 3 months later |\n"
+                "| leisure | $500 | $450 (10% cut)<br>$350 3 months later |\n"
+                "| Total | $1,500 | $1,300<br>$1,050 |"
+            ),
+            "chart_type": "Credit balance stepping down to zero across phased months.",
         },
     },
     {
@@ -307,28 +252,31 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 # Financial Strategy
 
 ## Recommended plan: gradual_paydown_savings
-* Phased dining and leisure trims keep month-1 cuts modest, then deepen after month 3 while routing **$200**/mo to savings once the card hits **$0**.
+* Goal: pay Venture to **$0**. Phased dining and leisure trims keep month-1 cuts modest, then deepen after month 3; route **$200**/mo to savings only after the card hits **$0**.
 
 ## Alternative plan: steady_cut
-* Flat **$700** food and **$350** leisure from month 1 hits **$0** debt about two months sooner but leaves thinner checking buffers in the first quarter.
+* Goal: pay Venture to **$0**. Flat **$700** food and **$350** leisure from month 1 clears the card about two months sooner but leaves thinner checking buffers in the first quarter.
+
+### Current Spending
+- food $1000
+- leisure $500
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $700, leisure $350 monthly
 """,
         "ideal_response": {
-            "plan_title": "Steady cut from day one",
-            "plan_summary": "Hold food at $700/mo and leisure at $350/mo from month one to clear Venture faster.",
-            "plan_details": {
-                "payoff": "Targets $0 Venture balance about two months sooner than gradual_paydown_savings.",
-                "trade_off": "Thinner checking buffers in the first quarter while cuts hit immediately.",
-                "spending_phases": [
-                    {
-                        "period": "04/26-03/28",
-                        "caps": "food $700, leisure $350 monthly",
-                        "description": "Flat food and leisure caps from day one — no ramp.",
-                    },
-                ],
-            },
+            "plan_title": "Steady cut",
+            "plan_badge": "Hard",
+            "plan_summary": "Pay Venture to $0 with food at $700/mo and leisure at $350/mo from month one.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $1,000 | $700 (30% cut) |\n"
+                "| leisure | $500 | $350 (30% cut) |\n"
+                "| Total | $1,500 | $1,050 |"
+            ),
+            "chart_type": "Credit balance declining steeply to zero from month one.",
         },
     },
     {
@@ -346,28 +294,31 @@ Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows
 # Financial Strategy
 
 ## Recommended plan: protect_fixed_cut_flex
-* Hold checking above **$2,200** before the mortgage, trim **$200**/mo from food and shopping months 1–3, then reassess.
+* Goal: save **$2,200** in checking before the mortgage. Trim **$200**/mo from food and shopping months 1–3, then reassess.
 
 ## Alternative plan: aggressive_flex_cut
-* Cut food to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
+* Goal: pay revolving credit down to **$1,500**. Cut food to **$450** and shopping to **$150** immediately — faster paydown, but checking may dip below **$500** in April.
+
+### Current Spending
+- food $650
+- shopping $250
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $520, shopping $180 monthly
 """,
         "ideal_response": {
-            "plan_title": "Protect fixed, trim flex",
-            "plan_summary": "Hold checking above $2,200 before the mortgage while trimming food and shopping.",
-            "plan_details": {
-                "payoff": "Keep checking above $2,200 before the $2,100 mortgage due 2026-04-01; trim flexible spend $200/mo in months 1–3, then reassess.",
-                "trade_off": "Debt-free timing is slower than aggressive_flex_cut, but liquidity risk eases first.",
-                "spending_phases": [
-                    {
-                        "period": "04/26-03/28",
-                        "caps": "food $520, shopping $180 monthly",
-                        "description": "Steady food and shopping caps while protecting fixed bills.",
-                    },
-                ],
-            },
+            "plan_title": "Protect fixed bills",
+            "plan_badge": "Moderate",
+            "plan_summary": "Save $2,200 in checking before the mortgage while trimming food and shopping.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $650 | $520 (20% cut) |\n"
+                "| shopping | $250 | $180 (28% cut) |\n"
+                "| Total | $900 | $700 |"
+            ),
+            "chart_type": "Checking balance rising toward a savings target.",
         },
     },
     {
@@ -386,28 +337,31 @@ Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows
 # Financial Strategy
 
 ## Recommended plan: protect_fixed_cut_flex
-* Hold checking above **$2,200** before the mortgage, trim **$200**/mo from food and shopping months 1–3, then reassess.
+* Goal: save **$2,200** in checking before the mortgage. Trim **$200**/mo from food and shopping months 1–3, then reassess.
 
 ## Alternative plan: aggressive_flex_cut
-* Cut food to **$450** and shopping to **$150** immediately — debt-free by **Aug 2026** but checking may dip below **$500** in April.
+* Goal: pay revolving credit down to **$1,500**. Cut food to **$450** and shopping to **$150** immediately — faster paydown, but checking may dip below **$500** in April.
+
+### Current Spending
+- food $650
+- shopping $250
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $450, shopping $150 monthly
 """,
         "ideal_response": {
             "plan_title": "Aggressive flex cut",
-            "plan_summary": "Cut food to $450/mo and shopping to $150/mo immediately to be debt-free by Aug 2026.",
-            "plan_details": {
-                "payoff": "Debt-free by Aug 2026 — faster than protect_fixed_cut_flex.",
-                "trade_off": "Checking may dip below $500 in April while flexible spend drops hard from day one.",
-                "spending_phases": [
-                    {
-                        "period": "04/26-03/28",
-                        "caps": "food $450, shopping $150 monthly",
-                        "description": "Hard food and shopping caps from day one.",
-                    },
-                ],
-            },
+            "plan_badge": "Strict",
+            "plan_summary": "Pay revolving credit down to $1,500 with food at $450/mo and shopping at $150/mo.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $650 | $450 (31% cut) |\n"
+                "| shopping | $250 | $150 (40% cut) |\n"
+                "| Total | $900 | $600 |"
+            ),
+            "chart_type": "Credit balance declining toward a set payoff floor.",
         },
     },
     {
@@ -425,28 +379,31 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 # Financial Strategy
 
 ## Recommended plan: balanced_trim
-* Trim food to **$520** and leisure to **$300** from month 1; **$0** debt by **Dec 2026**, saves about **$420** interest vs status quo.
+* Goal: pay Platinum to **$0** by **Dec 2026**. Trim food to **$520** and leisure to **$300** from month 1; saves about **$420** interest vs status quo.
 
 ## Alternative plan: leisure_first
-* Protect leisure at **$380** but cut food harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
+* Goal: pay Platinum down to **$2,000**. Protect leisure at **$380** but cut food harder to **$450** — reaches the **$2,000** floor with more dining sacrifice and less social spend risk.
+
+### Current Spending
+- food $650
+- leisure $400
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $520, leisure $300 monthly
 """,
         "ideal_response": {
             "plan_title": "Balanced trim",
-            "plan_summary": "Trim food to $520/mo and leisure to $300/mo from month one for a Dec 2026 debt-free date.",
-            "plan_details": {
-                "payoff": "$0 Platinum debt by Dec 2026; saves about $420 interest versus status quo at ~21.8% APR.",
-                "trade_off": "Both dining and social spend tighten together from the start — no leisure protection.",
-                "spending_phases": [
-                    {
-                        "period": "04/26-03/28",
-                        "caps": "food $520, leisure $300 monthly",
-                        "description": "Food and leisure tighten together from month one.",
-                    },
-                ],
-            },
+            "plan_badge": "Moderate",
+            "plan_summary": "Pay Platinum to $0 by Dec 2026 with food at $520/mo and leisure at $300/mo.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $650 | $520 (20% cut) |\n"
+                "| leisure | $400 | $300 (25% cut) |\n"
+                "| Total | $1,050 | $820 |"
+            ),
+            "chart_type": "Credit balance declining steadily to zero.",
         },
     },
     {
@@ -465,28 +422,31 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 # Financial Strategy
 
 ## Recommended plan: balanced_trim
-* Trim food to **$520** and leisure to **$300** from month 1; **$0** debt by **Dec 2026**, saves about **$420** interest vs status quo.
+* Goal: pay Platinum to **$0** by **Dec 2026**. Trim food to **$520** and leisure to **$300** from month 1; saves about **$420** interest vs status quo.
 
 ## Alternative plan: leisure_first
-* Protect leisure at **$380** but cut food harder to **$450** — similar debt-free date with more dining sacrifice and less social spend risk.
+* Goal: pay Platinum down to **$2,000**. Protect leisure at **$380** but cut food harder to **$450** — reaches the **$2,000** floor with more dining sacrifice and less social spend risk.
+
+### Current Spending
+- food $650
+- leisure $400
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $450, leisure $380 monthly
 """,
         "ideal_response": {
-            "plan_title": "Leisure-first trim",
-            "plan_summary": "Protect leisure at $380/mo but cut food harder to $450/mo for a similar debt-free date.",
-            "plan_details": {
-                "payoff": "Similar debt-free timing to balanced_trim on the $4,800 Platinum balance.",
-                "trade_off": "More dining sacrifice throughout; leisure stays steadier than the balanced plan.",
-                "spending_phases": [
-                    {
-                        "period": "04/26-03/28",
-                        "caps": "food $450, leisure $380 monthly",
-                        "description": "Protect leisure; food takes the deeper cut.",
-                    },
-                ],
-            },
+            "plan_title": "Leisure-first",
+            "plan_badge": "Unique",
+            "plan_summary": "Pay Platinum down to $2,000 with leisure at $380/mo and food at $450/mo.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $650 | $450 (31% cut) |\n"
+                "| leisure | $400 | $380 (5% cut) |\n"
+                "| Total | $1,050 | $830 |"
+            ),
+            "chart_type": "Credit balance declining toward a set payoff floor.",
         },
     },
     {
@@ -505,10 +465,18 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
 # Financial Strategy
 
 ## Recommended plan: empathetic_staged_adjustment
-* This plan is the most sustainable because it recognizes that a sudden, drastic cut in discretionary spending is often unsustainable and stressful. By allowing for a "step-down" period over six months, you build the discipline to manage your "spending drift" while still successfully clearing your high-interest debt within the same quarter as the more aggressive options. This builds confidence and creates a long-term habit rather than just a temporary fix.
+* Goal: pay high-interest revolving credit to **$0**. Step down discretionary spend over six months so the cut sticks, clearing the balance in the same quarter as faster options without a shock cut.
 
 ## Alternative plan: rapid_debt_sprint
-* This is a strong second choice for those who prioritize immediate math over psychological comfort. It eliminates interest charges the fastest, providing an immediate sense of relief and mathematical efficiency. It is the best choice if your top priority is to kill the 24.99% APR interest cycle as quickly as humanly possible, even if it feels more restrictive in the short term.
+* Goal: pay high-interest revolving credit to **$0**. Kill the 24.99% APR cycle as fast as possible with harder immediate caps, even if the short-term cut feels restrictive.
+
+### Current Spending
+- food $1400
+- leisure $400
+- shopping $80
+- health $80
+- education $450
+- uncategorized $350
 
 ### Spending Schedule
 - 08/26-10/26: Cap food $1200, leisure $300, shopping $50, health $80, education $450, uncategorized $300 monthly
@@ -517,28 +485,21 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
 """,
         "ideal_response": {
             "plan_title": "Staged drift reset",
-            "plan_summary": "Step down food and leisure over three phases to kill 24.99% APR interest without a shock cut.",
-            "plan_details": {
-                "payoff": "Clears high-interest revolving balances within the quarter while building sustainable spending habits.",
-                "trade_off": "Slower than rapid_debt_sprint, but the six-month step-down is easier to sustain than a shock cut.",
-                "spending_phases": [
-                    {
-                        "period": "08/26-10/26",
-                        "caps": "food $1200, leisure $300, shopping $50, health $80, education $450, uncategorized $300 monthly",
-                        "description": "Warm-up: modest trim on food and leisure.",
-                    },
-                    {
-                        "period": "11/26-01/27",
-                        "caps": "food $750, leisure $200, shopping $50, health $80, education $450, uncategorized $300 monthly",
-                        "description": "Step down food and leisure again before the long hold.",
-                    },
-                    {
-                        "period": "02/27-:",
-                        "caps": "food $500, leisure $100, shopping $50, health $80, education $450, uncategorized $300 monthly",
-                        "description": "Sustain target caps indefinitely from Feb '27.",
-                    },
-                ],
-            },
+            "plan_badge": "Gentle",
+            "plan_summary": "Pay high-interest credit to $0 by stepping food and leisure down over three phases.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $1,400 | $1,200 (14% cut)<br>$750 3 months later<br>$500 6 months later |\n"
+                "| leisure | $400 | $300 (25% cut)<br>$200 3 months later<br>$100 6 months later |\n"
+                "| shopping | $80 | $50 (38% cut)<br>$50 3 months later<br>$50 6 months later |\n"
+                "| health | $80 | $80 (0% cut)<br>$80 3 months later<br>$80 6 months later |\n"
+                "| education | $450 | $450 (0% cut)<br>$450 3 months later<br>$450 6 months later |\n"
+                "| uncategorized | $350 | $300 (14% cut)<br>$300 3 months later<br>$300 6 months later |\n"
+                "| Total | $2,760 | $2,380<br>$1,830<br>$1,480 |"
+            ),
+            "chart_type": "Credit balance stepping down to zero across phased months.",
         },
     },
 ]
@@ -645,7 +606,7 @@ def build_plan_verbalizer_input_bundle(
     simulate_outcome_md: str,
     goal_plan_scenario: dict[str, Any],
 ) -> str:
-    """Verbalized need + matching strategy subsection + ``### Spending Schedule`` for one scenario."""
+    """Verbalized need + matching strategy subsection + current spend + ``### Spending Schedule``."""
     need_block = format_financial_need_block(need_verbalizer_response)
     simulate = trim_simulate_outcome_for_plan_bundle(simulate_outcome_md)
     scenario_id = str(goal_plan_scenario.get("scenario_id") or "").strip()
@@ -656,8 +617,11 @@ def build_plan_verbalizer_input_bundle(
             is_active=goal_plan_scenario.get("is_active"),
         )
     simulate = ensure_blank_line_after_plan_headings(simulate)
+    current_block = _format_current_spending_block(goal_plan_scenario.get("current_spending"))
     plan_block = _format_goal_plan_narrative([goal_plan_scenario])
     parts = [need_block.rstrip(), simulate.rstrip()]
+    if current_block:
+        parts.append(current_block.rstrip())
     if plan_block:
         parts.append(plan_block.rstrip())
     return "\n\n".join(parts) + "\n"
@@ -889,7 +853,7 @@ class PlanVerbalizerOptimizer:
 
             try:
                 validated = _validate_plan_response(parsed)
-                return _attach_spending_phases(validated, profile_input)
+                return validated
             except ValueError as exc:
                 raise ValueError(f"Response failed validation: {exc}") from exc
 

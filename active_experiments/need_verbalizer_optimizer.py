@@ -91,13 +91,15 @@ def _category_display_label(slug: str) -> str:
 
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who turns the diagnosed financial need into copy users actually want to read.
 
-`need_title`: short headline for the primary need from ``# Financial Needs`` (max **8 words**; punchy, no jargon).
+`need_title`: punchy primary-need headline from ``# Financial Needs`` (max **6 words**; no jargon).
 
-`need_summary`: one sentence expanding the need (max **25 words**); ground every **$** and date in the input. Fun and confident, never cheesy, patronizing, or naggy.
+`need_summary`: one sentence on the need (max **12 words**); ground every **$** and date in the input. Fun and confident, never cheesy, patronizing, or naggy.
 
-`need_details`: grounded evidence text for the **primary** need only (max **80 words**). Ground every **$** and date in the input.
+`need_details`: primary-need evidence only (max **40 words**). Ground every **$** and date in the input.
 
-Max **35 words** across ``need_title`` and ``need_summary``. No exclamation marks, superlatives, or emoji.
+`chart_info`: short plain-language description of the chart shape implied by the need — describe the line/trend only, never dollar amounts, dates, or account names. Match the need, e.g. credit paydown with rising balances → credit balance climbing over time; emergency fund when savings fall short → flat savings line.
+
+Max **18 words** across ``need_title`` and ``need_summary``. No exclamation marks, superlatives, or emoji.
 """
 
 
@@ -106,19 +108,23 @@ def _build_output_schema() -> "types.Schema":
         raise RuntimeError("Install `google-genai` for this optimizer.")
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["need_title", "need_summary", "need_details"],
+        required=["need_title", "need_summary", "need_details", "chart_info"],
         properties={
             "need_title": types.Schema(
                 type=types.Type.STRING,
-                description="Short headline for the primary financial need (max 8 words).",
+                description="Primary need headline (max 6 words).",
             ),
             "need_summary": types.Schema(
                 type=types.Type.STRING,
-                description="One-sentence expansion of the need (max 25 words).",
+                description="Need in one sentence (max 12 words).",
             ),
             "need_details": types.Schema(
                 type=types.Type.STRING,
-                description="Grounded evidence text for the primary need (max 80 words).",
+                description="Primary need evidence (max 40 words).",
+            ),
+            "chart_info": types.Schema(
+                type=types.Type.STRING,
+                description="Chart shape from the need; no values.",
             ),
         },
     )
@@ -144,10 +150,14 @@ def _validate_need_response(parsed: Any) -> dict[str, Any]:
             )
     if not isinstance(need_details, str) or not need_details.strip():
         raise ValueError("need_details must be a non-empty string")
+    chart_info = parsed.get("chart_info")
+    if not isinstance(chart_info, str) or not chart_info.strip():
+        raise ValueError("chart_info must be a non-empty string")
     return {
         "need_title": need_title.strip(),
         "need_summary": need_summary.strip(),
         "need_details": need_details.strip(),
+        "chart_info": chart_info.strip(),
     }
 
 
@@ -671,12 +681,10 @@ TEST_CASES: list[dict[str, Any]] = [
   - Next due **2026-04-18** per payment schedule.
 """,
         "ideal_response": {
-            "need_title": "Venture interest drag",
-            "need_summary": "$312 in interest every 90 days on your $8,400 balance while spending tracks income.",
-            "need_details": (
-                "Interest tool: **$312** on Venture in 90 days. "
-                "Next due **2026-04-18** per payment schedule."
-            ),
+            "need_title": "Venture interest",
+            "need_summary": "$312 interest each 90 days on $8,400.",
+            "need_details": "Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18**.",
+            "chart_info": "Credit balance climbing steadily over time.",
         },
     },
     {
@@ -694,12 +702,10 @@ TEST_CASES: list[dict[str, Any]] = [
   - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 """,
         "ideal_response": {
-            "need_title": "April mortgage crunch",
-            "need_summary": "Checking at $800 cannot cover the $2,100 mortgage due April 1.",
-            "need_details": (
-                "Checking **$800** vs mortgage **$2,100** on the 1st. "
-                "Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo."
-            ),
+            "need_title": "April mortgage",
+            "need_summary": "$800 checking vs $2,100 mortgage April 1.",
+            "need_details": "Checking **$800** vs mortgage **$2,100** on the 1st. Outflows **$3,600**/mo vs income **$4,000**/mo.",
+            "chart_info": "Cash balance dipping toward zero ahead of a large outflow.",
         },
     },
     {
@@ -717,12 +723,10 @@ TEST_CASES: list[dict[str, Any]] = [
   - APR tool: **~21.8%** on Platinum.
 """,
         "ideal_response": {
-            "need_title": "Platinum debt creep",
-            "need_summary": "Balance rose $300 in three months despite $115/mo payments on $4,800 owed.",
-            "need_details": (
-                "Balance up **$300** over three months despite **$115**/mo payments. "
-                "APR tool: **~21.8%** on Platinum."
-            ),
+            "need_title": "Platinum creep",
+            "need_summary": "Balance up $300 in three months on $4,800.",
+            "need_details": "Balance up **$300** over three months despite **$115**/mo payments. APR **~21.8%**.",
+            "chart_info": "Credit balance rising slowly over time.",
         },
     },
 ]
