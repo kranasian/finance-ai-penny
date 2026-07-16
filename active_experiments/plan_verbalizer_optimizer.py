@@ -285,19 +285,19 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
         "input": """
 # Financial Need
 
-Checking at $800 cannot cover the $2,100 mortgage due April 1.
+Credit card balance sits at **$4,200** and keeps climbing with minimum-style payments.
 
 ## Need Details
 
-Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
+Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 
 # Financial Strategy
 
 ## Recommended plan: protect_fixed_cut_flex
-* Goal: save **$2,200** in checking before the mortgage. Trim **$200**/mo from food and shopping months 1–3, then reassess.
+* Goal: pay the card down to **$3,000**. Trim **$200**/mo from food and shopping months 1–3, then reassess.
 
 ## Alternative plan: aggressive_flex_cut
-* Goal: pay revolving credit down to **$1,500**. Cut food to **$450** and shopping to **$150** immediately — faster paydown, but checking may dip below **$500** in April.
+* Goal: pay the card down to **$1,500**. Cut food to **$450** and shopping to **$150** immediately — deeper paydown, but checking may dip below **$500** early on.
 
 ### Current Spending
 - food $650
@@ -307,9 +307,9 @@ Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows
 - 04/26-03/28: Cap food $520, shopping $180 monthly
 """,
         "ideal_response": {
-            "plan_title": "Protect fixed bills",
+            "plan_title": "Pay to three thousand",
             "plan_badge": "Moderate",
-            "plan_summary": "Save $2,200 in checking before the mortgage while trimming food and shopping.",
+            "plan_summary": "Pay the card down to $3,000 while trimming food and shopping.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -318,7 +318,7 @@ Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows
                 "| shopping | $250 | $180 (28% cut) |\n"
                 "| Total | $900 | $700 |"
             ),
-            "chart_type": "Checking balance rising toward a savings target.",
+            "chart_type": "Credit balance declining toward a set payoff floor.",
         },
     },
     {
@@ -328,19 +328,19 @@ Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows
         "input": """
 # Financial Need
 
-Checking at $800 cannot cover the $2,100 mortgage due April 1.
+Credit card balance sits at **$4,200** and keeps climbing with minimum-style payments.
 
 ## Need Details
 
-Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
+Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 
 # Financial Strategy
 
 ## Recommended plan: protect_fixed_cut_flex
-* Goal: save **$2,200** in checking before the mortgage. Trim **$200**/mo from food and shopping months 1–3, then reassess.
+* Goal: pay the card down to **$3,000**. Trim **$200**/mo from food and shopping months 1–3, then reassess.
 
 ## Alternative plan: aggressive_flex_cut
-* Goal: pay revolving credit down to **$1,500**. Cut food to **$450** and shopping to **$150** immediately — faster paydown, but checking may dip below **$500** in April.
+* Goal: pay the card down to **$1,500**. Cut food to **$450** and shopping to **$150** immediately — deeper paydown, but checking may dip below **$500** early on.
 
 ### Current Spending
 - food $650
@@ -352,7 +352,7 @@ Checking **$800** vs mortgage **$2,100** on the 1st. Forecast committed outflows
         "ideal_response": {
             "plan_title": "Aggressive flex cut",
             "plan_badge": "Strict",
-            "plan_summary": "Pay revolving credit down to $1,500 with food at $450/mo and shopping at $150/mo.",
+            "plan_summary": "Pay the card down to $1,500 with food at $450/mo and shopping at $150/mo.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -500,6 +500,50 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
                 "| Total | $2,760 | $2,380<br>$1,830<br>$1,480 |"
             ),
             "chart_type": "Credit balance stepping down to zero across phased months.",
+        },
+    },
+    {
+        "name": "emergency_savings_target_recommended",
+        "batch": 4,
+        "input": """
+# Financial Need
+
+You want an emergency buffer of **$6,000**, but your current savings is only **$1,000**, and spending is close to income.
+
+## Need Details
+
+Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little slack, so steady discretionary cuts are needed.
+
+# Financial Strategy
+
+## Recommended plan: save_to_emergency
+* Goal: save **$6,000**. Trim food and leisure for the first stretch, then hold steady to finish the gap.
+
+## Alternative plan: faster_saving
+* Goal: save **$4,000** sooner with harder cuts, but less breathing room if spending drifts.
+
+### Current Spending
+- food $650
+- leisure $400
+- shopping $80
+
+### Spending Schedule
+- 04/26-03/28: Cap food $520, leisure $300, shopping $50 monthly
+""",
+        "ideal_response": {
+            "plan_title": "Emergency fund target",
+            "plan_badge": "Focused",
+            "plan_summary": "Save $6,000 by keeping food at $520/mo and leisure at $300/mo, then holding to finish the gap.",
+            "table_title": "Spending vs plan budget",
+            "spending_budget_table": (
+                "| Spending | Current | Budget |\n"
+                "| --- | --- | --- |\n"
+                "| food | $650 | $520 (20% cut) |\n"
+                "| leisure | $400 | $300 (25% cut) |\n"
+                "| shopping | $80 | $50 (38% cut) |\n"
+                "| Total | $1,130 | $870 |"
+            ),
+            "chart_type": "Savings line rising toward a target amount.",
         },
     },
 ]
