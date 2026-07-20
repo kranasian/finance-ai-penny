@@ -136,15 +136,21 @@ def _build_output_schema() -> "types.Schema":
         properties={
             "plan_title": types.Schema(
                 type=types.Type.STRING,
-                description="One-line plan headline (max 5 words and 40 characters).",
+                description="One-line plan headline (max 5 words and 40 characters; punchy, no jargon).",
             ),
             "plan_badge": types.Schema(
                 type=types.Type.STRING,
-                description="Adjective for how hard or unique the plan is.",
+                description=(
+                    "Adjective for plan difficulty, exactly one of: Disciplined, Balanced, "
+                    "Austerity, Rigorous, Empathetic, Steady (Title Case)."
+                ),
             ),
             "plan_summary": types.Schema(
                 type=types.Type.STRING,
-                description="Short plan description (max 20 words, max 3 lines, and 155 characters).",
+                description=(
+                    "Short plan description (strictly max 20 words, max 3 lines, and 155 characters). "
+                    "Ground every $ and date."
+                ),
             ),
             "table_title": types.Schema(
                 type=types.Type.STRING,
@@ -152,7 +158,11 @@ def _build_output_schema() -> "types.Schema":
             ),
             "spending_budget_table": types.Schema(
                 type=types.Type.STRING,
-                description="Markdown table: Spending, Current, Budget; Total row; phased Budget cells use <br>.",
+                description=(
+                    "Markdown table with columns: Spending, Current, Budget. Separate rows using "
+                    "standard newlines \\n (do not use <br> to separate rows). Capitalize category "
+                    "names. Phased Budget cells use <br>. Total row at bottom."
+                ),
             ),
             "chart_title": types.Schema(
                 type=types.Type.STRING,
