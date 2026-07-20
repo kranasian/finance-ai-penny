@@ -90,25 +90,25 @@ _MIN_CHART_INFO_MONTHS = 3
 
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
 
-Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, caps under ``### Spending Schedule``, and ``### Projection`` when present.
+Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, and caps under ``### Spending Schedule``.
 
-- ``plan_title``: one-line headline for this plan (max **5 words**; punchy, no jargon).
-- ``plan_badge``: adjective for how hard or how unique this plan is.
-- ``plan_summary``: short description of what this plan does (max **20 words**, max **3 lines**); ground every **$** and date in the input.
-- ``table_title``: short title for the spending comparison table (max **6 words**).
-- ``spending_budget_table``: one markdown table with columns ``Spending``, ``Current``, ``Budget``.
-  - One row per category in ``### Spending Schedule`` (use display names from the schedule).
+- ``plan_title``: one-line headline for this plan (max **5 words** and **40 characters**; punchy, no jargon).
+- ``plan_badge``: adjective for how hard or how unique this plan is (e.g., "Disciplined", "Balanced", "Austerity", "Rigorous", "Empathetic", "Steady"). Use Title Case.
+- ``plan_summary``: short description of what this plan does (max **20 words**, max **3 lines**, and **155 characters**); ground every **$** and date in the input.
+- ``table_title``: short title for the spending comparison table (max **6 words** and **40 characters**).
+- ``spending_budget_table``: one markdown table with columns ``Spending``, ``Current``, ``Budget`` (separate rows using standard markdown newlines `\\n`, do NOT use `<br>` to separate rows).
+  - One row per category in ``### Spending Schedule`` (use display names from the schedule, capitalized for a premium look).
   - ``Current`` from ``### Current Spending`` for that category (ground every **$**).
   - ``Budget`` may use multiple lines in a cell (separate with ``<br>``) when the schedule has multiple phases:
     - first phase: ``$amount (n% cut)`` vs Current (use ``0% cut`` or ``n% up`` if not a cut)
     - later phases: ``$amount N months later`` (months from plan start to that phase)
   - Final row: ``Total`` with summed Current and Budget totals (Budget totals also multi-line when phased).
-- ``chart_title``: short title for the plan chart (max **6 words**); describe what the selected ``chart_type`` shows.
+- ``chart_title``: short title for the plan chart (max **6 words** and **40 characters**); describe what the selected ``chart_type`` shows.
 - ``chart_type``: choose the projected chart that best shows the plan's primary outcome over time. Must be exactly one of:
   * ``projected_total_credit_balance`` — when the plan goal is paying credit down (to ``$0`` or a stated floor)
   * ``projected_total_depository_balance`` — when the plan goal is building savings, an emergency fund, or holding a cash buffer
   * ``projected_combined_net_balance`` — when net position (depository minus credit) is the main story
-- ``chart_info_months``: months from ``### Projection`` (``Projection: N mo``); minimum 3.
+- ``chart_info_months``: integer months of projected data to display (minimum 3).
 - ``chart_target_balance``: integer goal line (``0`` for full credit payoff, the payoff floor for partial paydown, the savings target for depository charts).
 
 The budget table already shows category caps over time. The chart should show the primary outcome the plan is driving toward.
@@ -136,7 +136,7 @@ def _build_output_schema() -> "types.Schema":
         properties={
             "plan_title": types.Schema(
                 type=types.Type.STRING,
-                description="One-line plan headline (max 5 words).",
+                description="One-line plan headline (max 5 words and 40 characters).",
             ),
             "plan_badge": types.Schema(
                 type=types.Type.STRING,
@@ -144,11 +144,11 @@ def _build_output_schema() -> "types.Schema":
             ),
             "plan_summary": types.Schema(
                 type=types.Type.STRING,
-                description="Short plan description (max 20 words, max 3 lines).",
+                description="Short plan description (max 20 words, max 3 lines, and 155 characters).",
             ),
             "table_title": types.Schema(
                 type=types.Type.STRING,
-                description="Title for the spending comparison table (max 6 words).",
+                description="Title for the spending comparison table (max 6 words and 40 characters).",
             ),
             "spending_budget_table": types.Schema(
                 type=types.Type.STRING,
@@ -156,12 +156,12 @@ def _build_output_schema() -> "types.Schema":
             ),
             "chart_title": types.Schema(
                 type=types.Type.STRING,
-                description="Title for the plan chart (max 6 words); aligned with chart_type.",
+                description="Title for the plan chart (max 6 words and 40 characters); aligned with chart_type.",
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
                 enum=list(_CHART_TYPES),
-                description="Projected chart type that best shows how the plan plays out over time.",
+                description="Projected chart showing the plan's primary outcome.",
             ),
             "chart_info_months": types.Schema(
                 type=types.Type.INTEGER,
@@ -169,7 +169,10 @@ def _build_output_schema() -> "types.Schema":
             ),
             "chart_target_balance": types.Schema(
                 type=types.Type.INTEGER,
-                description="Goal line: 0 for full credit payoff, payoff floor, or savings target.",
+                description=(
+                    "Goal line: 0 for full credit payoff, payoff floor for partial paydown, "
+                    "or savings target for depository charts."
+                ),
             ),
         },
     )
