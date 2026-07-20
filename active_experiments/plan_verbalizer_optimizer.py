@@ -7,7 +7,7 @@ bullets for one scenario (recommended by default, or
 ``--scenario-id``), plus ``### Projection`` when simulation months are known.
 
 Objective: verbalize that one plan as ``plan_title``, ``plan_badge``, ``plan_summary``,
-``table_title``, ``spending_budget_table``, ``chart_type``, ``chart_info_months``,
+``table_title``, ``spending_budget_table``, ``chart_title``, ``chart_type``, ``chart_info_months``,
 and ``chart_target_balance``.
 
 Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance-ai-llm-server/llm``):
@@ -103,6 +103,7 @@ Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financ
     - first phase: ``$amount (n% cut)`` vs Current (use ``0% cut`` or ``n% up`` if not a cut)
     - later phases: ``$amount N months later`` (months from plan start to that phase)
   - Final row: ``Total`` with summed Current and Budget totals (Budget totals also multi-line when phased).
+- ``chart_title``: short title for the plan chart (max **6 words**); describe what the selected ``chart_type`` shows.
 - ``chart_type``: choose the projected chart that best shows the plan's primary outcome over time. Must be exactly one of:
   * ``projected_total_credit_balance`` — when the plan goal is paying credit down (to ``$0`` or a stated floor)
   * ``projected_total_depository_balance`` — when the plan goal is building savings, an emergency fund, or holding a cash buffer
@@ -110,7 +111,7 @@ Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financ
 - ``chart_info_months``: months from ``### Projection`` (``Projection: N mo``); minimum 3.
 - ``chart_target_balance``: integer goal line (``0`` for full credit payoff, the payoff floor for partial paydown, the savings target for depository charts).
 
-The budget table already shows category caps over time. The chart should show the balance outcome the plan is driving toward.
+The budget table already shows category caps over time. The chart should show the primary outcome the plan is driving toward.
 
 Do not invent Current amounts — only use ``### Current Spending``. Output compact JSON only — no extra fields.
 """
@@ -127,6 +128,7 @@ def _build_output_schema() -> "types.Schema":
             "plan_summary",
             "table_title",
             "spending_budget_table",
+            "chart_title",
             "chart_type",
             "chart_info_months",
             "chart_target_balance",
@@ -151,6 +153,10 @@ def _build_output_schema() -> "types.Schema":
             "spending_budget_table": types.Schema(
                 type=types.Type.STRING,
                 description="Markdown table: Spending, Current, Budget; Total row; phased Budget cells use <br>.",
+            ),
+            "chart_title": types.Schema(
+                type=types.Type.STRING,
+                description="Title for the plan chart (max 6 words); aligned with chart_type.",
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
@@ -221,6 +227,9 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     spending_budget_table = parsed.get("spending_budget_table")
     if not isinstance(spending_budget_table, str) or not spending_budget_table.strip():
         raise ValueError("spending_budget_table must be a non-empty string")
+    chart_title = parsed.get("chart_title")
+    if not isinstance(chart_title, str) or not chart_title.strip():
+        raise ValueError("chart_title must be a non-empty string")
     chart_type = parsed.get("chart_type")
     if not isinstance(chart_type, str) or chart_type not in _CHART_TYPES:
         raise ValueError(f"chart_type must be one of: {', '.join(_CHART_TYPES)}")
@@ -244,6 +253,7 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
         "plan_summary": plan_summary.strip(),
         "table_title": table_title.strip(),
         "spending_budget_table": spending_budget_table.strip(),
+        "chart_title": chart_title.strip(),
         "chart_type": chart_type,
         "chart_info_months": chart_info_months,
         "chart_target_balance": chart_target_balance,
@@ -294,6 +304,7 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
                 "| leisure | $500 | $450 (10% cut)<br>$350 3 months later |\n"
                 "| Total | $1,500 | $1,300<br>$1,050 |"
             ),
+            "chart_title": "Credit balance paydown",
             "chart_type": "projected_total_credit_balance",
             "chart_info_months": 12,
             "chart_target_balance": 0,
@@ -342,6 +353,7 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
                 "| leisure | $500 | $350 (30% cut) |\n"
                 "| Total | $1,500 | $1,050 |"
             ),
+            "chart_title": "Credit balance paydown",
             "chart_type": "projected_total_credit_balance",
             "chart_info_months": 8,
             "chart_target_balance": 0,
@@ -389,6 +401,7 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
                 "| shopping | $250 | $180 (28% cut) |\n"
                 "| Total | $900 | $700 |"
             ),
+            "chart_title": "Credit balance paydown",
             "chart_type": "projected_total_credit_balance",
             "chart_info_months": 6,
             "chart_target_balance": 3000,
@@ -437,6 +450,7 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
                 "| shopping | $250 | $150 (40% cut) |\n"
                 "| Total | $900 | $600 |"
             ),
+            "chart_title": "Credit balance paydown",
             "chart_type": "projected_total_credit_balance",
             "chart_info_months": 5,
             "chart_target_balance": 1500,
@@ -484,6 +498,7 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
                 "| leisure | $400 | $300 (25% cut) |\n"
                 "| Total | $1,050 | $820 |"
             ),
+            "chart_title": "Credit balance paydown",
             "chart_type": "projected_total_credit_balance",
             "chart_info_months": 12,
             "chart_target_balance": 0,
@@ -532,6 +547,7 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
                 "| leisure | $400 | $380 (5% cut) |\n"
                 "| Total | $1,050 | $830 |"
             ),
+            "chart_title": "Credit balance paydown",
             "chart_type": "projected_total_credit_balance",
             "chart_info_months": 9,
             "chart_target_balance": 2000,
@@ -590,6 +606,7 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
                 "| uncategorized | $350 | $300 (14% cut)<br>$300 3 months later<br>$300 6 months later |\n"
                 "| Total | $2,760 | $2,380<br>$1,830<br>$1,480 |"
             ),
+            "chart_title": "Credit balance paydown",
             "chart_type": "projected_total_credit_balance",
             "chart_info_months": 9,
             "chart_target_balance": 0,
@@ -639,6 +656,7 @@ Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little sla
                 "| shopping | $80 | $50 (38% cut) |\n"
                 "| Total | $1,130 | $870 |"
             ),
+            "chart_title": "Savings balance growth",
             "chart_type": "projected_total_depository_balance",
             "chart_info_months": 12,
             "chart_target_balance": 6000,
