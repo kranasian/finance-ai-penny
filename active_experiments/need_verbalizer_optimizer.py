@@ -80,6 +80,19 @@ _RE_PLAN_SCENARIO_HEADING = re.compile(
 _SPENDING_SCHEDULE_H3 = "### Spending Schedule"
 _OPEN_ENDED_PLAN_HORIZON_MONTHS = 24
 
+_CHART_TYPES = (
+    "total_accounts_balance",
+    "total_all_depository_accounts_balance",
+    "total_all_credit_accounts_balance",
+    "total_credit_accounts_balance",
+    "sum_categories_spending",
+)
+_CHART_TYPES_REQUIRING_ACCOUNT_IDS = frozenset({
+    "total_accounts_balance",
+    "total_credit_accounts_balance",
+})
+_MIN_CHART_INFO_MONTHS = 3
+
 _CATEGORY_ORDER = ("meals", "leisure", "shopping", "health", "education", "uncategorized")
 _CATEGORY_DISPLAY_LABELS: dict[str, str] = {
     "meals": "food",
@@ -89,17 +102,32 @@ _CATEGORY_DISPLAY_LABELS: dict[str, str] = {
 def _category_display_label(slug: str) -> str:
     return _CATEGORY_DISPLAY_LABELS.get(slug, slug)
 
-SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who turns the diagnosed financial need into copy users actually want to read.
+SYSTEM_PROMPT = """You are Penny — a positive, empathetic money coach who turns the diagnosed financial need into copy users actually want to read.
 
-`need_title`: punchy primary-need headline from ``# Financial Needs`` (max **6 words**; no jargon).
+## Penny's Personality & Tone Rules:
+- **Empathetic & Supportive Partnership:** Money is emotional and stressful. Frame suggestions as a partnership (e.g. "Let's look at this together", "Our move here is..."). Recognize and validate life's complexity and the difficulty of the situation. Never shame, lecture, mock, or sound sarcastic or patronizing.
+- **Positive & Encouraging:** Support the user through their difficulty. Avoid being off-putting or naggy.
+- **No Imperatives / Commanding Language:** Do not command the user. Avoid imperative verbs like "Do this" or "Stop that".
+- **No Financial Jargon:** Avoid cheesy copy and dry financial jargon.
 
-`need_summary`: one sentence on the need (max **12 words**); ground every **$** and date in the input. Fun and confident, never cheesy, patronizing, or naggy.
+## Output Schema Properties & Length Limits:
 
-`need_details`: primary-need evidence only (max **40 words**). Ground every **$** and date in the input.
+- `needs_title`: punchy primary-need headline from `# Financial Needs` (max 5 words and under 40 characters). Do not use jargon. Include exactly 1 emoji placed at the very end of the title.
+- `needs_short_description`: one sentence on the need (max 18 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Focus on a single high-level insight rather than listing multiple numbers. Include 1 to 2 emojis placed at the very end of the sentence.
+- `needs_more_detail`: primary-need evidence only (max 40 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Prioritize conciseness and flow over listing too many figures in a row. Include 1 to 2 emojis placed at the very end of the paragraph.
 
-`chart_info`: short plain-language description of the chart shape implied by the need — describe the line/trend only, never dollar amounts, dates, or account names. Match the need, e.g. credit paydown with rising balances → credit balance climbing over time; emergency fund when savings fall short → flat savings line.
+Do not include any greetings, intros, or sign-offs (e.g. "Hi", "Hello", "Thanks").
+- `chart_type`: choose the ideal chart to showcase the user's need, aiming to visually explain as much of the problem as possible. Must be exactly one of:
+  * `total_accounts_balance` (requires specifying `chart_account_ids`)
+  * `total_all_depository_accounts_balance`
+  * `total_all_credit_accounts_balance`
+  * `total_credit_accounts_balance` (requires specifying `chart_account_ids`)
+  * `sum_categories_spending` (requires specifying `chart_categories`)
+- `chart_info_months`: integer specifying how many months of data to display in the chart (minimum 3).
+- `chart_account_ids`: if the chosen chart type requires accounts, list the relevant integer account IDs from the input. Otherwise, output `[]`.
+- `chart_categories`: if the chosen chart type is `sum_categories_spending`, list the category slugs to display. Otherwise, output `[]`.
 
-Max **18 words** across ``need_title`` and ``need_summary``. No exclamation marks, superlatives, or emoji.
+No exclamation marks or superlatives.
 """
 
 
@@ -108,56 +136,122 @@ def _build_output_schema() -> "types.Schema":
         raise RuntimeError("Install `google-genai` for this optimizer.")
     return types.Schema(
         type=types.Type.OBJECT,
-        required=["need_title", "need_summary", "need_details", "chart_info"],
+        required=[
+            "needs_title",
+            "needs_short_description",
+            "needs_more_detail",
+            "chart_type",
+            "chart_info_months",
+            "chart_account_ids",
+            "chart_categories",
+        ],
         properties={
-            "need_title": types.Schema(
+            "needs_title": types.Schema(
                 type=types.Type.STRING,
-                description="Primary need headline (max 6 words).",
+                description="Primary need headline (max 5 words, under 40 characters, 1 emoji at end).",
             ),
-            "need_summary": types.Schema(
+            "needs_short_description": types.Schema(
                 type=types.Type.STRING,
-                description="Need in one sentence (max 12 words).",
+                description="Need in one sentence (max 18 words, 1-2 emojis at end).",
             ),
-            "need_details": types.Schema(
+            "needs_more_detail": types.Schema(
                 type=types.Type.STRING,
-                description="Primary need evidence (max 40 words).",
+                description="Primary need evidence (max 40 words, 1-2 emojis at end).",
             ),
-            "chart_info": types.Schema(
+            "chart_type": types.Schema(
                 type=types.Type.STRING,
-                description="Chart shape from the need; no values.",
+                enum=list(_CHART_TYPES),
+                description="Chart type that best showcases the user's need.",
+            ),
+            "chart_info_months": types.Schema(
+                type=types.Type.INTEGER,
+                description="Months of chart data to display (minimum 3).",
+            ),
+            "chart_account_ids": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.INTEGER),
+                description="Account IDs when chart_type requires accounts; otherwise [].",
+            ),
+            "chart_categories": types.Schema(
+                type=types.Type.ARRAY,
+                items=types.Schema(type=types.Type.STRING),
+                description="Category slugs when chart_type is sum_categories_spending; otherwise [].",
             ),
         },
     )
 
 
+def _coerce_int_list(value: Any, field: str) -> list[int]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list")
+    out: list[int] = []
+    for item in value:
+        try:
+            out.append(int(item))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must contain integers") from exc
+    return out
+
+
+def _coerce_str_list(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be a list")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{field} must contain non-empty strings")
+        out.append(item.strip())
+    return out
+
+
 def _validate_need_response(parsed: Any) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("Response must be a JSON object")
-    need_title = parsed.get("need_title")
-    if not isinstance(need_title, str) or not need_title.strip():
-        raise ValueError("need_title must be a non-empty string")
-    need_summary = parsed.get("need_summary")
-    if not isinstance(need_summary, str) or not need_summary.strip():
-        raise ValueError("need_summary must be a non-empty string")
-    need_details = parsed.get("need_details")
-    if isinstance(need_details, dict):
-        raw_bullets = need_details.get("bullets")
+    needs_title = parsed.get("needs_title")
+    if not isinstance(needs_title, str) or not needs_title.strip():
+        raise ValueError("needs_title must be a non-empty string")
+    needs_short_description = parsed.get("needs_short_description")
+    if not isinstance(needs_short_description, str) or not needs_short_description.strip():
+        raise ValueError("needs_short_description must be a non-empty string")
+    needs_more_detail = parsed.get("needs_more_detail")
+    if isinstance(needs_more_detail, dict):
+        raw_bullets = needs_more_detail.get("bullets")
         if isinstance(raw_bullets, list):
-            need_details = " ".join(
+            needs_more_detail = " ".join(
                 str(item).strip()
                 for item in raw_bullets
                 if isinstance(item, str) and item.strip()
             )
-    if not isinstance(need_details, str) or not need_details.strip():
-        raise ValueError("need_details must be a non-empty string")
-    chart_info = parsed.get("chart_info")
-    if not isinstance(chart_info, str) or not chart_info.strip():
-        raise ValueError("chart_info must be a non-empty string")
+    if not isinstance(needs_more_detail, str) or not needs_more_detail.strip():
+        raise ValueError("needs_more_detail must be a non-empty string")
+    chart_type = parsed.get("chart_type")
+    if not isinstance(chart_type, str) or chart_type not in _CHART_TYPES:
+        raise ValueError(f"chart_type must be one of: {', '.join(_CHART_TYPES)}")
+    chart_info_months = parsed.get("chart_info_months")
+    try:
+        chart_info_months = int(chart_info_months)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("chart_info_months must be an integer") from exc
+    if chart_info_months < _MIN_CHART_INFO_MONTHS:
+        raise ValueError(f"chart_info_months must be >= {_MIN_CHART_INFO_MONTHS}")
+    chart_account_ids = _coerce_int_list(parsed.get("chart_account_ids"), "chart_account_ids")
+    chart_categories = _coerce_str_list(parsed.get("chart_categories"), "chart_categories")
+    if chart_type in _CHART_TYPES_REQUIRING_ACCOUNT_IDS and not chart_account_ids:
+        raise ValueError(f"chart_type {chart_type!r} requires chart_account_ids")
+    if chart_type == "sum_categories_spending" and not chart_categories:
+        raise ValueError("chart_type sum_categories_spending requires chart_categories")
+    if chart_type != "sum_categories_spending" and chart_categories:
+        raise ValueError("chart_categories must be [] unless chart_type is sum_categories_spending")
+    if chart_type not in _CHART_TYPES_REQUIRING_ACCOUNT_IDS and chart_account_ids:
+        raise ValueError(f"chart_account_ids must be [] unless chart_type requires accounts")
     return {
-        "need_title": need_title.strip(),
-        "need_summary": need_summary.strip(),
-        "need_details": need_details.strip(),
-        "chart_info": chart_info.strip(),
+        "needs_title": needs_title.strip(),
+        "needs_short_description": needs_short_description.strip(),
+        "needs_more_detail": needs_more_detail.strip(),
+        "chart_type": chart_type,
+        "chart_info_months": chart_info_months,
+        "chart_account_ids": chart_account_ids,
+        "chart_categories": chart_categories,
     }
 
 
@@ -243,30 +337,37 @@ def format_financial_need_block(need_verbalizer_response: dict[str, Any]) -> str
     """Render verbalized need JSON as ``# Financial Need`` + ``## Need Details`` markdown."""
     if not isinstance(need_verbalizer_response, dict):
         raise ValueError("need_verbalizer_response must be a JSON object")
-    need_summary = str(need_verbalizer_response.get("need_summary") or "").strip()
-    if not need_summary:
-        raise ValueError("need_verbalizer_response must include need_summary")
+    short_description = str(
+        need_verbalizer_response.get("needs_short_description")
+        or need_verbalizer_response.get("short_description")
+        or ""
+    ).strip()
+    if not short_description:
+        raise ValueError("need_verbalizer_response must include needs_short_description")
 
-    need_details = need_verbalizer_response.get("need_details")
-    if isinstance(need_details, dict):
-        raw_bullets = need_details.get("bullets")
+    long_description = (
+        need_verbalizer_response.get("needs_more_detail")
+        or need_verbalizer_response.get("long_description")
+    )
+    if isinstance(long_description, dict):
+        raw_bullets = long_description.get("bullets")
         if isinstance(raw_bullets, list):
-            need_details = " ".join(
+            long_description = " ".join(
                 str(item).strip()
                 for item in raw_bullets
                 if isinstance(item, str) and item.strip()
             )
-    if not isinstance(need_details, str) or not need_details.strip():
-        raise ValueError("need_verbalizer_response.need_details must be a non-empty string")
+    if not isinstance(long_description, str) or not long_description.strip():
+        raise ValueError("need_verbalizer_response.needs_more_detail must be a non-empty string")
 
     lines = [
         _FINANCIAL_NEED_H1,
         "",
-        need_summary,
+        short_description,
         "",
         _NEED_DETAILS_H2,
         "",
-        need_details.strip(),
+        long_description.strip(),
     ]
     return "\n".join(lines) + "\n"
 
@@ -681,10 +782,13 @@ TEST_CASES: list[dict[str, Any]] = [
   - Next due **2026-04-18** per payment schedule.
 """,
         "ideal_response": {
-            "need_title": "Venture interest",
-            "need_summary": "$312 interest each 90 days on $8,400.",
-            "need_details": "Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18**.",
-            "chart_info": "Credit balance climbing steadily over time.",
+            "needs_title": "Venture interest drag 💳",
+            "needs_short_description": "$312 interest every 90 days on your $8,400 Venture balance. 📉",
+            "needs_more_detail": "Interest tool shows $312 on Venture in 90 days with next payment due 2026-04-18. 💸",
+            "chart_type": "total_all_credit_accounts_balance",
+            "chart_info_months": 3,
+            "chart_account_ids": [],
+            "chart_categories": [],
         },
     },
     {
@@ -702,10 +806,13 @@ TEST_CASES: list[dict[str, Any]] = [
   - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 """,
         "ideal_response": {
-            "need_title": "April mortgage",
-            "need_summary": "$800 checking vs $2,100 mortgage April 1.",
-            "need_details": "Checking **$800** vs mortgage **$2,100** on the 1st. Outflows **$3,600**/mo vs income **$4,000**/mo.",
-            "chart_info": "Cash balance dipping toward zero ahead of a large outflow.",
+            "needs_title": "April mortgage gap 🏠",
+            "needs_short_description": "Checking has $800 with a $2,100 mortgage due April 1. 📅",
+            "needs_more_detail": "Checking $800 vs mortgage $2,100 on the 1st while outflows run $3,600/mo against $4,000 income. 💵",
+            "chart_type": "total_all_depository_accounts_balance",
+            "chart_info_months": 3,
+            "chart_account_ids": [],
+            "chart_categories": [],
         },
     },
     {
@@ -723,10 +830,13 @@ TEST_CASES: list[dict[str, Any]] = [
   - APR tool: **~21.8%** on Platinum.
 """,
         "ideal_response": {
-            "need_title": "Platinum creep",
-            "need_summary": "Balance up $300 in three months on $4,800.",
-            "need_details": "Balance up **$300** over three months despite **$115**/mo payments. APR **~21.8%**.",
-            "chart_info": "Credit balance rising slowly over time.",
+            "needs_title": "Platinum balance creep 💳",
+            "needs_short_description": "Platinum rose $300 in three months despite $115 monthly payments. 📈",
+            "needs_more_detail": "Balance climbed $300 over three months at ~21.8% APR while payments stayed near $115/mo. 💸",
+            "chart_type": "total_all_credit_accounts_balance",
+            "chart_info_months": 3,
+            "chart_account_ids": [],
+            "chart_categories": [],
         },
     },
 ]

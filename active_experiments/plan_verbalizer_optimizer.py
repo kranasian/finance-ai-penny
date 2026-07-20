@@ -4,10 +4,11 @@ Optimizer runner for **P:PlanVerbalizer** (Gemini prompt tuning).
 Input is verbalized ``# Financial Need`` (with ``## Need Details``), the matching ``# Financial Strategy`` subsection
 (recommended or alternative only) and a ``### Spending Schedule`` block with compact spending
 bullets for one scenario (recommended by default, or
-``--scenario-id``).
+``--scenario-id``), plus ``### Projection`` when simulation months are known.
 
 Objective: verbalize that one plan as ``plan_title``, ``plan_badge``, ``plan_summary``,
-``table_title``, ``spending_budget_table``, and ``chart_type``.
+``table_title``, ``spending_budget_table``, ``chart_type``, ``chart_info_months``,
+and ``chart_target_balance``.
 
 Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance-ai-llm-server/llm``):
 
@@ -80,9 +81,16 @@ GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
 PLAN_VERBALIZER_THINKING_BUDGET = 128
 PLAN_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
+_CHART_TYPES = (
+    "projected_total_credit_balance",
+    "projected_total_depository_balance",
+    "projected_combined_net_balance",
+)
+_MIN_CHART_INFO_MONTHS = 3
+
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
 
-Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, and caps under ``### Spending Schedule``.
+Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, caps under ``### Spending Schedule``, and ``### Projection`` when present.
 
 - ``plan_title``: one-line headline for this plan (max **5 words**; punchy, no jargon).
 - ``plan_badge``: adjective for how hard or how unique this plan is.
@@ -95,7 +103,14 @@ Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financ
     - first phase: ``$amount (n% cut)`` vs Current (use ``0% cut`` or ``n% up`` if not a cut)
     - later phases: ``$amount N months later`` (months from plan start to that phase)
   - Final row: ``Total`` with summed Current and Budget totals (Budget totals also multi-line when phased).
-- ``chart_type``: short plain-language description of the chart that best complements this plan — name the series and the shape/trend only, never dollar amounts, dates, or account names.
+- ``chart_type``: choose the projected chart that best shows the plan's primary outcome over time. Must be exactly one of:
+  * ``projected_total_credit_balance`` — when the plan goal is paying credit down (to ``$0`` or a stated floor)
+  * ``projected_total_depository_balance`` — when the plan goal is building savings, an emergency fund, or holding a cash buffer
+  * ``projected_combined_net_balance`` — when net position (depository minus credit) is the main story
+- ``chart_info_months``: months from ``### Projection`` (``Projection: N mo``); minimum 3.
+- ``chart_target_balance``: integer goal line (``0`` for full credit payoff, the payoff floor for partial paydown, the savings target for depository charts).
+
+The budget table already shows category caps over time. The chart should show the balance outcome the plan is driving toward.
 
 Do not invent Current amounts — only use ``### Current Spending``. Output compact JSON only — no extra fields.
 """
@@ -113,6 +128,8 @@ def _build_output_schema() -> "types.Schema":
             "table_title",
             "spending_budget_table",
             "chart_type",
+            "chart_info_months",
+            "chart_target_balance",
         ],
         properties={
             "plan_title": types.Schema(
@@ -137,16 +154,41 @@ def _build_output_schema() -> "types.Schema":
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
-                description="Chart that best complements the plan; shape only, no values.",
+                enum=list(_CHART_TYPES),
+                description="Projected chart type that best shows how the plan plays out over time.",
+            ),
+            "chart_info_months": types.Schema(
+                type=types.Type.INTEGER,
+                description="Months of projected chart data to display (minimum 3).",
+            ),
+            "chart_target_balance": types.Schema(
+                type=types.Type.INTEGER,
+                description="Goal line: 0 for full credit payoff, payoff floor, or savings target.",
             ),
         },
     )
 
 
 SPENDING_SCHEDULE_H3 = "### Spending Schedule"
+PROJECTION_H3 = "### Projection"
 CURRENT_SPENDING_H3 = "### Current Spending"
 FINANCIAL_NEED_H1 = "# Financial Need"
 _FINANCIAL_STRATEGY_H1 = "# Financial Strategy"
+
+
+def _format_projection_block(
+    projected_months: Any,
+    *,
+    stop_reason: str = "goal achieved",
+) -> str:
+    try:
+        months = int(projected_months)
+    except (TypeError, ValueError):
+        return ""
+    if months < _MIN_CHART_INFO_MONTHS:
+        return ""
+    reason = str(stop_reason or "goal achieved").strip() or "goal achieved"
+    return f"{PROJECTION_H3}\n\n- Projection: {months} mo, stop {reason}.\n"
 
 
 def _format_current_spending_block(current_spending: Any) -> str:
@@ -180,15 +222,31 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     if not isinstance(spending_budget_table, str) or not spending_budget_table.strip():
         raise ValueError("spending_budget_table must be a non-empty string")
     chart_type = parsed.get("chart_type")
-    if not isinstance(chart_type, str) or not chart_type.strip():
-        raise ValueError("chart_type must be a non-empty string")
+    if not isinstance(chart_type, str) or chart_type not in _CHART_TYPES:
+        raise ValueError(f"chart_type must be one of: {', '.join(_CHART_TYPES)}")
+    chart_info_months = parsed.get("chart_info_months")
+    try:
+        chart_info_months = int(chart_info_months)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("chart_info_months must be an integer") from exc
+    if chart_info_months < _MIN_CHART_INFO_MONTHS:
+        raise ValueError(f"chart_info_months must be >= {_MIN_CHART_INFO_MONTHS}")
+    chart_target_balance = parsed.get("chart_target_balance")
+    try:
+        chart_target_balance = int(chart_target_balance)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("chart_target_balance must be an integer") from exc
+    if chart_target_balance < 0:
+        raise ValueError("chart_target_balance must be >= 0")
     return {
         "plan_title": plan_title.strip(),
         "plan_badge": plan_badge.strip(),
         "plan_summary": plan_summary.strip(),
         "table_title": table_title.strip(),
         "spending_budget_table": spending_budget_table.strip(),
-        "chart_type": chart_type.strip(),
+        "chart_type": chart_type,
+        "chart_info_months": chart_info_months,
+        "chart_target_balance": chart_target_balance,
     }
 
 
@@ -220,6 +278,9 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 ### Spending Schedule
 - 04/26-06/26: Cap food $850, leisure $450 monthly
 - 07/26-03/28: Cap food $700, leisure $350 monthly
+
+### Projection
+- Projection: 12 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Gradual paydown",
@@ -233,7 +294,9 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
                 "| leisure | $500 | $450 (10% cut)<br>$350 3 months later |\n"
                 "| Total | $1,500 | $1,300<br>$1,050 |"
             ),
-            "chart_type": "Credit balance stepping down to zero across phased months.",
+            "chart_type": "projected_total_credit_balance",
+            "chart_info_months": 12,
+            "chart_target_balance": 0,
         },
     },
     {
@@ -263,6 +326,9 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $700, leisure $350 monthly
+
+### Projection
+- Projection: 8 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Steady cut",
@@ -276,7 +342,9 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
                 "| leisure | $500 | $350 (30% cut) |\n"
                 "| Total | $1,500 | $1,050 |"
             ),
-            "chart_type": "Credit balance declining steeply to zero from month one.",
+            "chart_type": "projected_total_credit_balance",
+            "chart_info_months": 8,
+            "chart_target_balance": 0,
         },
     },
     {
@@ -305,6 +373,9 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $520, shopping $180 monthly
+
+### Projection
+- Projection: 6 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Pay to three thousand",
@@ -318,7 +389,9 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
                 "| shopping | $250 | $180 (28% cut) |\n"
                 "| Total | $900 | $700 |"
             ),
-            "chart_type": "Credit balance declining toward a set payoff floor.",
+            "chart_type": "projected_total_credit_balance",
+            "chart_info_months": 6,
+            "chart_target_balance": 3000,
         },
     },
     {
@@ -348,6 +421,9 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $450, shopping $150 monthly
+
+### Projection
+- Projection: 5 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Aggressive flex cut",
@@ -361,7 +437,9 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
                 "| shopping | $250 | $150 (40% cut) |\n"
                 "| Total | $900 | $600 |"
             ),
-            "chart_type": "Credit balance declining toward a set payoff floor.",
+            "chart_type": "projected_total_credit_balance",
+            "chart_info_months": 5,
+            "chart_target_balance": 1500,
         },
     },
     {
@@ -390,6 +468,9 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $520, leisure $300 monthly
+
+### Projection
+- Projection: 12 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Balanced trim",
@@ -403,7 +484,9 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
                 "| leisure | $400 | $300 (25% cut) |\n"
                 "| Total | $1,050 | $820 |"
             ),
-            "chart_type": "Credit balance declining steadily to zero.",
+            "chart_type": "projected_total_credit_balance",
+            "chart_info_months": 12,
+            "chart_target_balance": 0,
         },
     },
     {
@@ -433,6 +516,9 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $450, leisure $380 monthly
+
+### Projection
+- Projection: 9 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Leisure-first",
@@ -446,7 +532,9 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
                 "| leisure | $400 | $380 (5% cut) |\n"
                 "| Total | $1,050 | $830 |"
             ),
-            "chart_type": "Credit balance declining toward a set payoff floor.",
+            "chart_type": "projected_total_credit_balance",
+            "chart_info_months": 9,
+            "chart_target_balance": 2000,
         },
     },
     {
@@ -482,6 +570,9 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
 - 08/26-10/26: Cap food $1200, leisure $300, shopping $50, health $80, education $450, uncategorized $300 monthly
 - 11/26-01/27: Cap food $750, leisure $200, shopping $50, health $80, education $450, uncategorized $300 monthly
 - 02/27-: Cap food $500, leisure $100, shopping $50, health $80, education $450, uncategorized $300 monthly
+
+### Projection
+- Projection: 9 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Staged drift reset",
@@ -499,7 +590,9 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
                 "| uncategorized | $350 | $300 (14% cut)<br>$300 3 months later<br>$300 6 months later |\n"
                 "| Total | $2,760 | $2,380<br>$1,830<br>$1,480 |"
             ),
-            "chart_type": "Credit balance stepping down to zero across phased months.",
+            "chart_type": "projected_total_credit_balance",
+            "chart_info_months": 9,
+            "chart_target_balance": 0,
         },
     },
     {
@@ -529,6 +622,9 @@ Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little sla
 
 ### Spending Schedule
 - 04/26-03/28: Cap food $520, leisure $300, shopping $50 monthly
+
+### Projection
+- Projection: 12 mo, stop goal achieved.
 """,
         "ideal_response": {
             "plan_title": "Emergency fund target",
@@ -543,7 +639,9 @@ Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little sla
                 "| shopping | $80 | $50 (38% cut) |\n"
                 "| Total | $1,130 | $870 |"
             ),
-            "chart_type": "Savings line rising toward a target amount.",
+            "chart_type": "projected_total_depository_balance",
+            "chart_info_months": 12,
+            "chart_target_balance": 6000,
         },
     },
 ]
@@ -668,6 +766,9 @@ def build_plan_verbalizer_input_bundle(
         parts.append(current_block.rstrip())
     if plan_block:
         parts.append(plan_block.rstrip())
+    projection_block = _format_projection_block(goal_plan_scenario.get("projected_months"))
+    if projection_block:
+        parts.append(projection_block.rstrip())
     return "\n\n".join(parts) + "\n"
 
 
