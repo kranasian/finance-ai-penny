@@ -56,7 +56,7 @@ from active_experiments.verbalizer_optimizer_db import (
 if load_dotenv is not None:
     load_dotenv()
 
-GEMINI_FLASH_LITE = "gemini-flash-lite-latest"
+GEMINI_FLASH_LITE = "gemini-3.1-flash-lite"
 NEED_VERBALIZER_THINKING_BUDGET = 256
 NEED_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
@@ -105,14 +105,14 @@ def _category_display_label(slug: str) -> str:
 SYSTEM_PROMPT = """You are Penny — a positive, empathetic money coach who turns the diagnosed financial need into copy users actually want to read.
 
 ## Penny's Personality & Tone Rules:
-- **Empathetic & Supportive Partnership:** Money is emotional and stressful. Frame suggestions as a partnership (e.g. "Let's look at this together", "Our move here is..."). Recognize and validate life's complexity and the difficulty of the situation. Never shame, lecture, mock, or sound sarcastic or patronizing.
+- **Empathetic & Supportive Partnership:** Money is emotional and stressful. Frame suggestions as a partnership. You must speak from a shared perspective using first-person plural pronouns ("we", "our", "us", "let's"). For example: "Let's look at this together", "Our checking balance dipped...". Avoid using second-person pronouns ("you", "your") in descriptions to reinforce the partnership feel. Recognize and validate life's complexity and the difficulty of the situation. Never shame, lecture, mock, or sound sarcastic or patronizing.
 - **Positive & Encouraging:** Support the user through their difficulty. Avoid being off-putting or naggy.
 - **No Imperatives / Commanding Language:** Do not command the user. Avoid imperative verbs like "Do this" or "Stop that".
 - **No Financial Jargon:** Avoid cheesy copy and dry financial jargon.
 
 ## Output Schema Properties & Length Limits:
 
-- `needs_title`: punchy primary-need headline from `# Financial Needs` (max 5 words and under 40 characters). Do not use jargon. Include exactly 1 emoji placed at the very end of the title.
+- `needs_title`: punchy sentence-like statement of the financial problem from `# Financial Needs` (max 5 words and under 40 characters). It must describe the problem itself rather than suggesting an action, solution, or next step. Follow strict sentence-case formatting: capitalize only the very first letter of the first word (making it uppercase), and keep all subsequent words in lowercase (unless they are proper nouns like "IRS" or abbreviations). For example: "Tax payment depleted checking" or "Balances hover near zero". Do not use a period at the end. Do not use jargon. Include exactly 1 emoji placed at the very end of the title.
 - `needs_short_description`: one sentence on the need (max 18 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Focus on a single high-level insight rather than listing multiple numbers. Include 1 to 2 emojis placed at the very end of the sentence.
 - `needs_more_detail`: primary-need evidence only (max 40 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Prioritize conciseness and flow over listing too many figures in a row. Include 1 to 2 emojis placed at the very end of the paragraph.
 
@@ -148,34 +148,33 @@ def _build_output_schema() -> "types.Schema":
         properties={
             "needs_title": types.Schema(
                 type=types.Type.STRING,
-                description="Primary need headline (max 5 words, under 40 characters, 1 emoji at end).",
+                description="Primary need headline in sentence-like case stating the financial problem (not an action/solution/next step), without a period at the end. Max 5 words and under 40 characters. Include exactly 1 emoji.",
             ),
             "needs_short_description": types.Schema(
                 type=types.Type.STRING,
-                description="Need in one sentence (max 18 words, 1-2 emojis at end).",
+                description="Empathetic summary of the need in one sentence. Max 18 words. Include 1 to 2 emojis.",
             ),
             "needs_more_detail": types.Schema(
                 type=types.Type.STRING,
-                description="Primary need evidence (max 40 words, 1-2 emojis at end).",
+                description="Empathetic detail on primary-need evidence. Max 40 words. Include 1 to 2 emojis.",
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
-                enum=list(_CHART_TYPES),
-                description="Chart type that best showcases the user's need.",
+                description="The ideal chart type to showcase the user's primary need, aiming to visually explain as much of the problem as possible. Must be one of: total_accounts_balance, total_all_depository_accounts_balance, total_all_credit_accounts_balance, total_credit_accounts_balance, sum_categories_spending.",
             ),
             "chart_info_months": types.Schema(
                 type=types.Type.INTEGER,
-                description="Months of chart data to display (minimum 3).",
+                description="Number of months to display in the chart. Minimum 3 months.",
             ),
             "chart_account_ids": types.Schema(
                 type=types.Type.ARRAY,
                 items=types.Schema(type=types.Type.INTEGER),
-                description="Account IDs when chart_type requires accounts; otherwise [].",
+                description="List of account IDs to display (for total_accounts_balance and total_credit_accounts_balance). Empty array if other chart type.",
             ),
             "chart_categories": types.Schema(
                 type=types.Type.ARRAY,
                 items=types.Schema(type=types.Type.STRING),
-                description="Category slugs when chart_type is sum_categories_spending; otherwise [].",
+                description="List of category slugs to display in the chart (for sum_categories_spending). Empty array if other chart type.",
             ),
         },
     )
@@ -202,6 +201,88 @@ def _coerce_str_list(value: Any, field: str) -> list[str]:
             raise ValueError(f"{field} must contain non-empty strings")
         out.append(item.strip())
     return out
+
+
+_TABLE_ROW_ACCOUNT_ID_RE = re.compile(r"^\|\s*(\d+)\s*\|", re.MULTILINE)
+_ID_PAREN_RE = re.compile(r"\(ID:\s*(\d+)\)", re.IGNORECASE)
+_ACCOUNT_ID_TOKEN_RE = re.compile(r"account_id[:\s]+(\d+)", re.IGNORECASE)
+_H2_SECTION_RE = re.compile(r"(?ms)^## ([^\n]+)\s*\n(.*?)(?=^## |\Z)")
+
+
+def _extract_markdown_h2_section(body: str, heading: str) -> str:
+    h = heading.strip()
+    if not h.startswith("##"):
+        h = f"## {h.lstrip('#').strip()}"
+    target = h[3:].strip().lower()
+    for match in _H2_SECTION_RE.finditer(body or ""):
+        if (match.group(1) or "").strip().lower() == target:
+            return f"## {match.group(1).strip()}\n{match.group(2).rstrip()}\n"
+    return ""
+
+
+def _account_ids_from_markdown_block(block: str) -> list[int]:
+    text = block or ""
+    ids: list[int] = []
+    for pattern in (_TABLE_ROW_ACCOUNT_ID_RE, _ID_PAREN_RE, _ACCOUNT_ID_TOKEN_RE):
+        for match in pattern.finditer(text):
+            ids.append(int(match.group(1)))
+    return list(dict.fromkeys(ids))
+
+
+def _credit_account_ids_from_profile_input(profile_input: str) -> list[int]:
+    credit_block = _extract_markdown_h2_section(profile_input, "## Credit")
+    ids = _account_ids_from_markdown_block(credit_block)
+    if ids:
+        return ids
+    return _account_ids_from_markdown_block(profile_input)
+
+
+def _all_account_ids_from_profile_input(profile_input: str) -> list[int]:
+    ids: list[int] = []
+    for section_heading in ("## Credit", "## Depository"):
+        ids.extend(_account_ids_from_markdown_block(_extract_markdown_h2_section(profile_input, section_heading)))
+    if not ids:
+        ids = _account_ids_from_markdown_block(profile_input)
+    return list(dict.fromkeys(ids))
+
+
+def _post_process_need_response(parsed: dict[str, Any], profile_input: str) -> dict[str, Any]:
+    patched = dict(parsed)
+    chart_account_ids = patched.get("chart_account_ids")
+    if not isinstance(chart_account_ids, list):
+        chart_account_ids = []
+    known_ids = set(_all_account_ids_from_profile_input(profile_input))
+    filtered_ids: list[int] = []
+    for item in chart_account_ids:
+        try:
+            aid = int(item)
+        except (TypeError, ValueError):
+            continue
+        if aid in known_ids:
+            filtered_ids.append(aid)
+    patched["chart_account_ids"] = list(dict.fromkeys(filtered_ids))
+    chart_type = patched.get("chart_type")
+    if chart_type in _CHART_TYPES_REQUIRING_ACCOUNT_IDS and not patched["chart_account_ids"]:
+        if chart_type == "total_credit_accounts_balance":
+            inferred = _credit_account_ids_from_profile_input(profile_input)
+            if len(inferred) == 1:
+                patched["chart_account_ids"] = inferred
+            else:
+                patched["chart_type"] = "total_all_credit_accounts_balance"
+                patched["chart_account_ids"] = []
+        elif chart_type == "total_accounts_balance":
+            inferred = _all_account_ids_from_profile_input(profile_input)
+            if len(inferred) == 1:
+                patched["chart_account_ids"] = [inferred[0]]
+            else:
+                patched["chart_account_ids"] = []
+    return patched
+
+
+def _normalize_needs_title(value: str) -> str:
+    text = (value or "").strip()
+    text = re.sub(r"\.(?=\s*[\U0001F300-\U0001FAFF\u2600-\u27BF]+$)", "", text)
+    return text.rstrip(".").rstrip()
 
 
 def _validate_need_response(parsed: Any) -> dict[str, Any]:
@@ -245,7 +326,7 @@ def _validate_need_response(parsed: Any) -> dict[str, Any]:
     if chart_type not in _CHART_TYPES_REQUIRING_ACCOUNT_IDS and chart_account_ids:
         raise ValueError(f"chart_account_ids must be [] unless chart_type requires accounts")
     return {
-        "needs_title": needs_title.strip(),
+        "needs_title": _normalize_needs_title(needs_title.strip()),
         "needs_short_description": needs_short_description.strip(),
         "needs_more_detail": needs_more_detail.strip(),
         "chart_type": chart_type,
@@ -763,7 +844,7 @@ class NeedVerbalizerOptimizer:
             detail = str(parse_error or "unknown parse error")
             raise ValueError(f"Invalid JSON response. finish_reason={reason!r}; {detail}") from parse_error
 
-        return _validate_need_response(parsed)
+        return _validate_need_response(_post_process_need_response(parsed, profile_input))
 
 
 TEST_CASES: list[dict[str, Any]] = [
@@ -782,7 +863,7 @@ TEST_CASES: list[dict[str, Any]] = [
   - Next due **2026-04-18** per payment schedule.
 """,
         "ideal_response": {
-            "needs_title": "Venture interest drag 💳",
+            "needs_title": "Venture interest keeps adding to your balance 💳",
             "needs_short_description": "$312 interest every 90 days on your $8,400 Venture balance. 📉",
             "needs_more_detail": "Interest tool shows $312 on Venture in 90 days with next payment due 2026-04-18. 💸",
             "chart_type": "total_all_credit_accounts_balance",
@@ -806,7 +887,7 @@ TEST_CASES: list[dict[str, Any]] = [
   - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
 """,
         "ideal_response": {
-            "needs_title": "April mortgage gap 🏠",
+            "needs_title": "Your checking may not cover the April mortgage 🏠",
             "needs_short_description": "Checking has $800 with a $2,100 mortgage due April 1. 📅",
             "needs_more_detail": "Checking $800 vs mortgage $2,100 on the 1st while outflows run $3,600/mo against $4,000 income. 💵",
             "chart_type": "total_all_depository_accounts_balance",
@@ -830,7 +911,7 @@ TEST_CASES: list[dict[str, Any]] = [
   - APR tool: **~21.8%** on Platinum.
 """,
         "ideal_response": {
-            "needs_title": "Platinum balance creep 💳",
+            "needs_title": "Platinum balance rises despite monthly payments 💳",
             "needs_short_description": "Platinum rose $300 in three months despite $115 monthly payments. 📈",
             "needs_more_detail": "Balance climbed $300 over three months at ~21.8% APR while payments stayed near $115/mo. 💸",
             "chart_type": "total_all_credit_accounts_balance",
