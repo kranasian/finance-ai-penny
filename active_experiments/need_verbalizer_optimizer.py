@@ -140,6 +140,7 @@ def _build_output_schema() -> "types.Schema":
             "needs_title",
             "needs_short_description",
             "needs_more_detail",
+            "chart_title",
             "chart_type",
             "chart_info_months",
             "chart_account_ids",
@@ -157,6 +158,10 @@ def _build_output_schema() -> "types.Schema":
             "needs_more_detail": types.Schema(
                 type=types.Type.STRING,
                 description="Empathetic detail on primary-need evidence. Max 40 words. Include 1 to 2 emojis.",
+            ),
+            "chart_title": types.Schema(
+                type=types.Type.STRING,
+                description="Title for the need chart (max 6 words and 40 characters); aligned with chart_type.",
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
@@ -305,6 +310,9 @@ def _validate_need_response(parsed: Any) -> dict[str, Any]:
             )
     if not isinstance(needs_more_detail, str) or not needs_more_detail.strip():
         raise ValueError("needs_more_detail must be a non-empty string")
+    chart_title = parsed.get("chart_title")
+    if not isinstance(chart_title, str) or not chart_title.strip():
+        raise ValueError("chart_title must be a non-empty string")
     chart_type = parsed.get("chart_type")
     if not isinstance(chart_type, str) or chart_type not in _CHART_TYPES:
         raise ValueError(f"chart_type must be one of: {', '.join(_CHART_TYPES)}")
@@ -329,6 +337,7 @@ def _validate_need_response(parsed: Any) -> dict[str, Any]:
         "needs_title": _normalize_needs_title(needs_title.strip()),
         "needs_short_description": needs_short_description.strip(),
         "needs_more_detail": needs_more_detail.strip(),
+        "chart_title": chart_title.strip(),
         "chart_type": chart_type,
         "chart_info_months": chart_info_months,
         "chart_account_ids": chart_account_ids,
@@ -866,6 +875,7 @@ TEST_CASES: list[dict[str, Any]] = [
             "needs_title": "Venture interest keeps adding to your balance 💳",
             "needs_short_description": "$312 interest every 90 days on your $8,400 Venture balance. 📉",
             "needs_more_detail": "Interest tool shows $312 on Venture in 90 days with next payment due 2026-04-18. 💸",
+            "chart_title": "All credit accounts",
             "chart_type": "total_all_credit_accounts_balance",
             "chart_info_months": 3,
             "chart_account_ids": [],
@@ -890,6 +900,7 @@ TEST_CASES: list[dict[str, Any]] = [
             "needs_title": "Your checking may not cover the April mortgage 🏠",
             "needs_short_description": "Checking has $800 with a $2,100 mortgage due April 1. 📅",
             "needs_more_detail": "Checking $800 vs mortgage $2,100 on the 1st while outflows run $3,600/mo against $4,000 income. 💵",
+            "chart_title": "All savings accounts",
             "chart_type": "total_all_depository_accounts_balance",
             "chart_info_months": 3,
             "chart_account_ids": [],
@@ -914,6 +925,7 @@ TEST_CASES: list[dict[str, Any]] = [
             "needs_title": "Platinum balance rises despite monthly payments 💳",
             "needs_short_description": "Platinum rose $300 in three months despite $115 monthly payments. 📈",
             "needs_more_detail": "Balance climbed $300 over three months at ~21.8% APR while payments stayed near $115/mo. 💸",
+            "chart_title": "All credit accounts",
             "chart_type": "total_all_credit_accounts_balance",
             "chart_info_months": 3,
             "chart_account_ids": [],
