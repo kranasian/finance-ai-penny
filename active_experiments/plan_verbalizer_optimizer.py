@@ -50,17 +50,28 @@ except Exception:  # pragma: no cover
     ClientError = Exception  # type: ignore[misc, assignment]
 
 from active_experiments.verbalizer_optimizer_db import (
+    _LLM_SERVER_ROOT,
     _bundled_input_from_test_case,
     _fetch_ai_agent_outcome_row,
-    _fetch_user_goal_plan,
     _finalize_goal_plan_for_bundle,
     _goal_plan_active_scenario,
+    _load_slave_db_connect_kwargs,
     _normalize_goal_plan_list,
     _resolve_ideal_response,
     _scenario_ids_from_simulate_strategy,
     load_simulate_agent_outcome_markdown,
     resolve_simulate_agent_outcome_id,
 )
+
+if str(_LLM_SERVER_ROOT) not in sys.path:
+    sys.path.insert(0, str(_LLM_SERVER_ROOT))
+
+try:
+    import psycopg2
+except Exception:  # pragma: no cover
+    psycopg2 = None  # type: ignore[assignment]
+
+from propose_next_steps.goal_plan_bundle import load_user_goal_plan
 from active_experiments.need_verbalizer_optimizer import (
     NeedVerbalizerOptimizer,
     _category_display_label,
@@ -100,7 +111,7 @@ Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financ
   - One row per category in ``### Spending Schedule`` (use display names from the schedule, capitalized for a premium look).
   - ``Current`` from ``### Current Spending`` for that category (ground every **$**).
   - ``Budget`` may use multiple lines in a cell (separate with ``<br>``) when the schedule has multiple phases:
-    - first phase: ``$amount (n% cut)`` vs Current (use ``0% cut`` or ``n% up`` if not a cut)
+    - first phase: ``$amount (n% cut)`` vs Current, or ``$amount (n% up)`` when higher; omit the percent label when unchanged (no ``0% cut`` / ``0% up``)
     - later phases: ``$amount N months later`` (months from plan start to that phase)
   - Final row: ``Total`` with summed Current and Budget totals (Budget totals also multi-line when phased).
 - ``chart_title``: short title for the plan chart (max **6 words** and **40 characters**); describe what the selected ``chart_type`` shows.
@@ -161,7 +172,8 @@ def _build_output_schema() -> "types.Schema":
                 description=(
                     "Markdown table with columns: Spending, Current, Budget. Separate rows using "
                     "standard newlines \\n (do not use <br> to separate rows). Capitalize category "
-                    "names. Phased Budget cells use <br>. Total row at bottom."
+                    "names. Phased Budget cells use <br>. Omit (0% cut) or (0% up) when unchanged. "
+                    "Total row at bottom."
                 ),
             ),
             "chart_title": types.Schema(
@@ -614,8 +626,8 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
                 "| food | $1,400 | $1,200 (14% cut)<br>$750 3 months later<br>$500 6 months later |\n"
                 "| leisure | $400 | $300 (25% cut)<br>$200 3 months later<br>$100 6 months later |\n"
                 "| shopping | $80 | $50 (38% cut)<br>$50 3 months later<br>$50 6 months later |\n"
-                "| health | $80 | $80 (0% cut)<br>$80 3 months later<br>$80 6 months later |\n"
-                "| education | $450 | $450 (0% cut)<br>$450 3 months later<br>$450 6 months later |\n"
+                "| health | $80 | $80<br>$80 3 months later<br>$80 6 months later |\n"
+                "| education | $450 | $450<br>$450 3 months later<br>$450 6 months later |\n"
                 "| uncategorized | $350 | $300 (14% cut)<br>$300 3 months later<br>$300 6 months later |\n"
                 "| Total | $2,760 | $2,380<br>$1,830<br>$1,480 |"
             ),
@@ -826,10 +838,16 @@ def build_plan_verbalizer_input(
         optimizer = need_optimizer or NeedVerbalizerOptimizer()
         need_verbalizer_response = optimizer.generate_response(need_input)
 
-    goal_plan = _fetch_user_goal_plan(sim_uid)
+    if psycopg2 is None:
+        raise RuntimeError("Missing dependency `psycopg2`.")
+    conn = psycopg2.connect(**_load_slave_db_connect_kwargs())
+    try:
+        goal_plan = load_user_goal_plan(conn, user_id=sim_uid)
+    finally:
+        conn.close()
     if goal_plan is None:
         raise ValueError(
-            f"users.goal_plan is empty for user_id={sim_uid}; "
+            f"user_plans is empty for user_id={sim_uid}; "
             "run simulate_financial_strategy with persistence first"
         )
     goal_plan = _finalize_goal_plan_for_bundle(
