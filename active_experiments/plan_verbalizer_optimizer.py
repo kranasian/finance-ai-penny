@@ -101,10 +101,10 @@ _MIN_CHART_INFO_MONTHS = 3
 
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
 
-Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, and caps under ``### Spending Schedule``.
+Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, caps under ``### Spending Schedule``, and ``### Existing plan name`` when present.
 
-- ``plan_title``: one-line headline for this plan (max **5 words** and **40 characters**; punchy, no jargon).
-- ``plan_badge``: adjective for how hard or how unique this plan is (e.g., "Disciplined", "Balanced", "Austerity", "Rigorous", "Empathetic", "Steady"). Use Title Case.
+- ``plan_title``: one-line headline for this plan (max **5 words** and **40 characters**; punchy, no jargon). If ``### Existing plan name`` is present, keep that title unless the updated plan's goal or overall approach changed.
+- ``plan_badge``: adjective for how hard or how unique this plan is (e.g., "Disciplined", "Balanced", "Austerity", "Rigorous", "Empathetic", "Steady"). Use Title Case. If ``### Existing plan name`` is present, keep that badge unless the updated plan's goal or overall approach changed.
 - ``plan_summary``: short description of what this plan does (max **20 words**, max **3 lines**, and **155 characters**); ground every **$** and date in the input.
 - ``table_title``: short title for the spending comparison table (max **6 words** and **40 characters**).
 - ``spending_budget_table``: one markdown table with columns ``Spending``, ``Current``, ``Budget`` (separate rows using standard markdown newlines `\\n`, do NOT use `<br>` to separate rows).
@@ -147,13 +147,19 @@ def _build_output_schema() -> "types.Schema":
         properties={
             "plan_title": types.Schema(
                 type=types.Type.STRING,
-                description="One-line plan headline (max 5 words and 40 characters; punchy, no jargon).",
+                description=(
+                    "One-line plan headline (max 5 words and 40 characters; punchy, no jargon). "
+                    "If ### Existing plan name is present, keep that title unless the updated "
+                    "plan's goal or overall approach changed."
+                ),
             ),
             "plan_badge": types.Schema(
                 type=types.Type.STRING,
                 description=(
                     "Adjective for plan difficulty, exactly one of: Disciplined, Balanced, "
-                    "Austerity, Rigorous, Empathetic, Steady (Title Case)."
+                    "Austerity, Rigorous, Empathetic, Steady (Title Case). If ### Existing plan "
+                    "name is present, keep that badge unless the updated plan's goal or overall "
+                    "approach changed."
                 ),
             ),
             "plan_summary": types.Schema(
@@ -216,7 +222,7 @@ def _format_projection_block(
         months = int(projected_months)
     except (TypeError, ValueError):
         return ""
-    if months < _MIN_CHART_INFO_MONTHS:
+    if months < 1:
         return ""
     reason = str(stop_reason or "goal achieved").strip() or "goal achieved"
     return f"{PROJECTION_H3}\n\n- Projection: {months} mo, stop {reason}.\n"
