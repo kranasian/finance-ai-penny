@@ -1,7 +1,7 @@
 """
 Optimizer runner for **P:NeedVerbalizer** (Gemini prompt tuning).
 
-Input is trimmed ``simulate_financial_strategy`` markdown (``# Financial Needs`` and evidence only).
+Input is trimmed ``simulate_financial_strategy`` markdown (``# Financial Needs`` plus ``# Financial Strategy`` when present).
 
 Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance-ai-llm-server/llm``):
 
@@ -68,6 +68,7 @@ _SIMULATE_OUTCOME_TYPE = "simulate_financial_strategy"
 
 _EXCLUDED_SIMULATE_SECTIONS = (
     "## Credit Interest Rates",
+    "## Evidence",
     "## Immediate Things to Do",
     "## Next Set of Milestones to Aspire",
     "## Next Set of Milestones",
@@ -104,6 +105,13 @@ def _category_display_label(slug: str) -> str:
 
 SYSTEM_PROMPT = """You are Penny — a positive, empathetic money coach who turns the diagnosed financial need into copy users actually want to read.
 
+## Which needs to verbalize:
+- `# Financial Needs` may list 2–3 primary needs.
+- When `# Financial Strategy` is present, verbalize the need or needs those recommended and alternative plans actually address — not listed needs the plans do not tackle. Plans may address one need or several at once (e.g. pay down credit while rebuilding checking).
+- If plans focus on credit paydown, verbalize the credit need even when a cash need is listed first. If plans rebuild cash, verbalize the depository/cash need. If plans address multiple needs, weave the relevant primary needs into one cohesive message; lead with the most urgent in the title and use detail for supporting figures.
+- Ground copy and the chart in `# Financial Needs` / `## Primary needs` for the need(s) the plans address only.
+- When `# Financial Strategy` is absent, verbalize the top primary need as listed.
+
 ## Penny's Personality & Tone Rules:
 - **Empathetic & Supportive Partnership:** Money is emotional and stressful. Frame suggestions as a partnership. You must speak from a shared perspective using first-person plural pronouns ("we", "our", "us", "let's"). For example: "Let's look at this together", "Our checking balance dipped...". Avoid using second-person pronouns ("you", "your") in descriptions to reinforce the partnership feel. Recognize and validate life's complexity and the difficulty of the situation. Never shame, lecture, mock, or sound sarcastic or patronizing.
 - **Positive & Encouraging:** Support the user through their difficulty. Avoid being off-putting or naggy.
@@ -112,12 +120,12 @@ SYSTEM_PROMPT = """You are Penny — a positive, empathetic money coach who turn
 
 ## Output Schema Properties & Length Limits:
 
-- `needs_title`: punchy sentence-like statement of the financial problem from `# Financial Needs` (max 5 words and under 40 characters). It must describe the problem itself rather than suggesting an action, solution, or next step. Follow strict sentence-case formatting: capitalize only the very first letter of the first word (making it uppercase), and keep all subsequent words in lowercase (unless they are proper nouns like "IRS" or abbreviations). For example: "Tax payment depleted checking" or "Balances hover near zero". Do not use a period at the end. Do not use jargon. Include exactly 1 emoji placed at the very end of the title.
-- `needs_short_description`: one sentence on the need (max 18 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Focus on a single high-level insight rather than listing multiple numbers. Include 1 to 2 emojis placed at the very end of the sentence.
-- `needs_more_detail`: primary-need evidence only (max 40 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Prioritize conciseness and flow over listing too many figures in a row. Include 1 to 2 emojis placed at the very end of the paragraph.
+- `needs_title`: punchy sentence-like statement of the financial problem(s) the plans address from `# Financial Needs` (max 5 words and under 40 characters). It must describe the problem itself rather than suggesting an action, solution, or next step. When plans address multiple needs, capture the combined problem in one headline. Follow strict sentence-case formatting: capitalize only the very first letter of the first word (making it uppercase), and keep all subsequent words in lowercase (unless they are proper nouns like "IRS" or abbreviations). For example: "Tax payment depleted checking" or "Balances hover near zero". Do not use a period at the end. Do not use jargon. Include exactly 1 emoji placed at the very end of the title.
+- `concise_need`: one sentence on the need or needs the plans address (max 18 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Focus on a single high-level insight rather than listing multiple numbers. Include 1 to 2 emojis placed at the very end of the sentence.
+- `full_need`: supporting detail for the need or needs the plans address from `## Primary needs` (max 40 words). If you include any dollar amounts ($) or dates, they must be perfectly correct according to the input. Prioritize conciseness and flow over listing too many figures in a row. Include 1 to 2 emojis placed at the very end of the paragraph.
 
 Do not include any greetings, intros, or sign-offs (e.g. "Hi", "Hello", "Thanks").
-- `chart_type`: choose the ideal chart to showcase the user's need, aiming to visually explain as much of the problem as possible. Must be exactly one of:
+- `chart_type`: choose the ideal chart to showcase the need or needs the plans address, aiming to visually explain as much of the problem as possible. When multiple needs are addressed, pick the chart that best illustrates the combined problem or the most urgent need. Must be exactly one of:
   * `total_accounts_balance` (requires specifying `chart_account_ids`)
   * `total_all_depository_accounts_balance`
   * `total_all_credit_accounts_balance`
@@ -138,8 +146,8 @@ def _build_output_schema() -> "types.Schema":
         type=types.Type.OBJECT,
         required=[
             "needs_title",
-            "needs_short_description",
-            "needs_more_detail",
+            "concise_need",
+            "full_need",
             "chart_title",
             "chart_type",
             "chart_info_months",
@@ -149,15 +157,15 @@ def _build_output_schema() -> "types.Schema":
         properties={
             "needs_title": types.Schema(
                 type=types.Type.STRING,
-                description="Primary need headline in sentence-like case stating the financial problem (not an action/solution/next step), without a period at the end. Max 5 words and under 40 characters. Include exactly 1 emoji.",
+                description="Headline for the need or needs the plans address, in sentence-like case stating the financial problem (not an action/solution/next step), without a period at the end. Max 5 words and under 40 characters. Include exactly 1 emoji.",
             ),
-            "needs_short_description": types.Schema(
+            "concise_need": types.Schema(
                 type=types.Type.STRING,
-                description="Empathetic summary of the need in one sentence. Max 18 words. Include 1 to 2 emojis.",
+                description="Empathetic summary of the need or needs the plans address in one sentence. Max 18 words. Include 1 to 2 emojis.",
             ),
-            "needs_more_detail": types.Schema(
+            "full_need": types.Schema(
                 type=types.Type.STRING,
-                description="Empathetic detail on primary-need evidence. Max 40 words. Include 1 to 2 emojis.",
+                description="Empathetic detail on the need or needs the plans address from ## Primary needs. Max 40 words. Include 1 to 2 emojis.",
             ),
             "chart_title": types.Schema(
                 type=types.Type.STRING,
@@ -165,7 +173,7 @@ def _build_output_schema() -> "types.Schema":
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
-                description="The ideal chart type to showcase the user's primary need, aiming to visually explain as much of the problem as possible. Must be one of: total_accounts_balance, total_all_depository_accounts_balance, total_all_credit_accounts_balance, total_credit_accounts_balance, sum_categories_spending.",
+                description="The ideal chart type to showcase the need or needs the plans address, aiming to visually explain as much of the problem as possible. Must be one of: total_accounts_balance, total_all_depository_accounts_balance, total_all_credit_accounts_balance, total_credit_accounts_balance, sum_categories_spending.",
             ),
             "chart_info_months": types.Schema(
                 type=types.Type.INTEGER,
@@ -296,20 +304,12 @@ def _validate_need_response(parsed: Any) -> dict[str, Any]:
     needs_title = parsed.get("needs_title")
     if not isinstance(needs_title, str) or not needs_title.strip():
         raise ValueError("needs_title must be a non-empty string")
-    needs_short_description = parsed.get("needs_short_description")
-    if not isinstance(needs_short_description, str) or not needs_short_description.strip():
-        raise ValueError("needs_short_description must be a non-empty string")
-    needs_more_detail = parsed.get("needs_more_detail")
-    if isinstance(needs_more_detail, dict):
-        raw_bullets = needs_more_detail.get("bullets")
-        if isinstance(raw_bullets, list):
-            needs_more_detail = " ".join(
-                str(item).strip()
-                for item in raw_bullets
-                if isinstance(item, str) and item.strip()
-            )
-    if not isinstance(needs_more_detail, str) or not needs_more_detail.strip():
-        raise ValueError("needs_more_detail must be a non-empty string")
+    concise_need = parsed.get("concise_need")
+    if not isinstance(concise_need, str) or not concise_need.strip():
+        raise ValueError("concise_need must be a non-empty string")
+    full_need = parsed.get("full_need")
+    if not isinstance(full_need, str) or not full_need.strip():
+        raise ValueError("full_need must be a non-empty string")
     chart_title = parsed.get("chart_title")
     if not isinstance(chart_title, str) or not chart_title.strip():
         raise ValueError("chart_title must be a non-empty string")
@@ -335,8 +335,8 @@ def _validate_need_response(parsed: Any) -> dict[str, Any]:
         raise ValueError(f"chart_account_ids must be [] unless chart_type requires accounts")
     return {
         "needs_title": _normalize_needs_title(needs_title.strip()),
-        "needs_short_description": needs_short_description.strip(),
-        "needs_more_detail": needs_more_detail.strip(),
+        "concise_need": concise_need.strip(),
+        "full_need": full_need.strip(),
         "chart_title": chart_title.strip(),
         "chart_type": chart_type,
         "chart_info_months": chart_info_months,
@@ -400,12 +400,16 @@ def _trim_simulate_outcome_from_financial_needs(simulate_outcome_md: str) -> str
 
 
 def trim_simulate_outcome_for_need_bundle(simulate_outcome_md: str) -> str:
-    """Drop content before ``# Financial Needs``, excluded needs subsections, and strategy prose."""
+    """Drop content before ``# Financial Needs`` and excluded subsections. Keep ``# Financial Strategy`` when present."""
     text = _trim_simulate_outcome_from_financial_needs(simulate_outcome_md)
     strategy_idx = text.find(_FINANCIAL_STRATEGY_H1)
-    if strategy_idx >= 0:
-        text = text[:strategy_idx].rstrip() + "\n"
-    return text
+    if strategy_idx < 0:
+        return text
+    needs = text[:strategy_idx].rstrip()
+    strategy = ensure_blank_line_after_plan_headings(
+        trim_simulate_outcome_for_plan_bundle(text)
+    )
+    return needs + "\n\n" + strategy.strip() + "\n"
 
 
 def trim_simulate_outcome_for_plan_bundle(simulate_outcome_md: str) -> str:
@@ -427,37 +431,21 @@ def format_financial_need_block(need_verbalizer_response: dict[str, Any]) -> str
     """Render verbalized need JSON as ``# Financial Need`` + ``## Need Details`` markdown."""
     if not isinstance(need_verbalizer_response, dict):
         raise ValueError("need_verbalizer_response must be a JSON object")
-    short_description = str(
-        need_verbalizer_response.get("needs_short_description")
-        or need_verbalizer_response.get("short_description")
-        or ""
-    ).strip()
-    if not short_description:
-        raise ValueError("need_verbalizer_response must include needs_short_description")
-
-    long_description = (
-        need_verbalizer_response.get("needs_more_detail")
-        or need_verbalizer_response.get("long_description")
-    )
-    if isinstance(long_description, dict):
-        raw_bullets = long_description.get("bullets")
-        if isinstance(raw_bullets, list):
-            long_description = " ".join(
-                str(item).strip()
-                for item in raw_bullets
-                if isinstance(item, str) and item.strip()
-            )
-    if not isinstance(long_description, str) or not long_description.strip():
-        raise ValueError("need_verbalizer_response.needs_more_detail must be a non-empty string")
+    concise_need = str(need_verbalizer_response.get("concise_need") or "").strip()
+    if not concise_need:
+        raise ValueError("need_verbalizer_response must include concise_need")
+    full_need = str(need_verbalizer_response.get("full_need") or "").strip()
+    if not full_need:
+        raise ValueError("need_verbalizer_response must include full_need")
 
     lines = [
         _FINANCIAL_NEED_H1,
         "",
-        short_description,
+        concise_need,
         "",
         _NEED_DETAILS_H2,
         "",
-        long_description.strip(),
+        full_need,
     ]
     return "\n".join(lines) + "\n"
 
@@ -864,17 +852,24 @@ TEST_CASES: list[dict[str, Any]] = [
 # Financial Needs
 
 ## Primary needs
-1. **Reduce interest drag**: Venture balance **$8,400** with **$312** interest paid over 90 days while spending tracks near income.
 
-## Evidence
-* **Reduce interest drag**
-  - Interest tool: **$312** on Venture in 90 days.
-  - Next due **2026-04-18** per payment schedule.
+1. **Reduce interest drag**: Venture balance **$8,400** with **$312** interest paid over 90 days while spending tracks near income; next due **2026-04-18**.
+2. **Stabilize cash flow**: Checking **$1,200** with committed outflows **$3,400**/mo against income **$4,000**/mo — thin buffer before flexible cuts.
+
+# Financial Strategy
+
+## Recommended plan: gradual_paydown
+
+Pay down Venture over several months by trimming meals and leisure while keeping essentials steady.
+
+## Alternative plan: steady_cut
+
+Cut meals and leisure from month 1 to clear Venture faster.
 """,
         "ideal_response": {
             "needs_title": "Venture interest keeps adding to your balance 💳",
-            "needs_short_description": "$312 interest every 90 days on your $8,400 Venture balance. 📉",
-            "needs_more_detail": "Interest tool shows $312 on Venture in 90 days with next payment due 2026-04-18. 💸",
+            "concise_need": "$312 interest every 90 days on your $8,400 Venture balance. 📉",
+            "full_need": "Interest tool shows $312 on Venture in 90 days with next payment due 2026-04-18. 💸",
             "chart_title": "All credit accounts",
             "chart_type": "total_all_credit_accounts_balance",
             "chart_info_months": 3,
@@ -889,17 +884,24 @@ TEST_CASES: list[dict[str, Any]] = [
 # Financial Needs
 
 ## Primary needs
-1. **Stabilize cash flow**: Checking **$800** with **$2,100** mortgage due **2026-04-01** — liquidity risk before flexible spend cuts matter.
 
-## Evidence
-* **Stabilize cash flow**
-  - Checking **$800** vs mortgage **$2,100** on the 1st.
-  - Forecast committed outflows **$3,600**/mo vs income **$4,000**/mo.
+1. **Stabilize cash flow**: Checking **$800** with **$2,100** mortgage due **2026-04-01** — forecast outflows **$3,600**/mo vs income **$4,000**/mo.
+2. **Settle debt**: Platinum **$2,400** with minimum-style payments and **~19.5%** APR — balance flat over 90 days despite **$75**/mo paid.
+
+# Financial Strategy
+
+## Recommended plan: mortgage_buffer
+
+Trim discretionary spend to rebuild checking before the April mortgage and hold a one-month buffer.
+
+## Alternative plan: tight_cash_hold
+
+Freeze leisure and delay non-mortgage payments to keep checking above the April mortgage.
 """,
         "ideal_response": {
             "needs_title": "Your checking may not cover the April mortgage 🏠",
-            "needs_short_description": "Checking has $800 with a $2,100 mortgage due April 1. 📅",
-            "needs_more_detail": "Checking $800 vs mortgage $2,100 on the 1st while outflows run $3,600/mo against $4,000 income. 💵",
+            "concise_need": "Checking has $800 with a $2,100 mortgage due April 1. 📅",
+            "full_need": "Checking $800 vs mortgage $2,100 on the 1st while outflows run $3,600/mo against $4,000 income. 💵",
             "chart_title": "All savings accounts",
             "chart_type": "total_all_depository_accounts_balance",
             "chart_info_months": 3,
@@ -914,17 +916,88 @@ TEST_CASES: list[dict[str, Any]] = [
 # Financial Needs
 
 ## Primary needs
-1. **Settle debt**: Platinum **$4,800** with slow paydown at minimum-style payments.
 
-## Evidence
-* **Settle debt**
-  - Balance up **$300** over three months despite **$115**/mo payments.
-  - APR tool: **~21.8%** on Platinum.
+1. **Settle debt**: Platinum **$4,800** with slow paydown at minimum-style payments; balance up **$300** in three months at **~21.8%** APR despite **$115**/mo payments.
+2. **Build emergency savings**: Total liquid savings **$900** vs **$3,200**/mo essential spend — under one month of runway.
+
+# Financial Strategy
+
+## Recommended plan: platinum_paydown
+
+Increase Platinum payments above minimums by cutting meals and shopping.
+
+## Alternative plan: aggressive_platinum_cut
+
+Larger early cuts to stop balance creep on Platinum.
 """,
         "ideal_response": {
             "needs_title": "Platinum balance rises despite monthly payments 💳",
-            "needs_short_description": "Platinum rose $300 in three months despite $115 monthly payments. 📈",
-            "needs_more_detail": "Balance climbed $300 over three months at ~21.8% APR while payments stayed near $115/mo. 💸",
+            "concise_need": "Platinum rose $300 in three months despite $115 monthly payments. 📈",
+            "full_need": "Balance climbed $300 over three months at ~21.8% APR while payments stayed near $115/mo. 💸",
+            "chart_title": "All credit accounts",
+            "chart_type": "total_all_credit_accounts_balance",
+            "chart_info_months": 3,
+            "chart_account_ids": [],
+            "chart_categories": [],
+        },
+    },
+    {
+        "name": "plans_address_credit_not_listed_first_need",
+        "batch": 3,
+        "input": """
+# Financial Needs
+
+## Primary needs
+
+1. **Cover a tax drain**: Checking fell to **$420** after a **$6,200** IRS payment.
+2. **Stop credit interest**: Venture **$8,400** with **$312** interest in 90 days.
+
+# Financial Strategy
+
+## Recommended plan: gradual_paydown
+
+Pay down Venture over 6 months by trimming meals and leisure, then hold a small cash buffer.
+
+## Alternative plan: aggressive_paydown
+
+Cut more now to clear Venture faster, then rebuild checking.
+""",
+        "ideal_response": {
+            "needs_title": "Venture interest keeps stacking 💳",
+            "concise_need": "Venture is $8,400 with $312 interest over 90 days. 📉",
+            "full_need": "Interest tool shows $312 on the $8,400 Venture balance in 90 days. 💸",
+            "chart_title": "All credit accounts",
+            "chart_type": "total_all_credit_accounts_balance",
+            "chart_info_months": 3,
+            "chart_account_ids": [],
+            "chart_categories": [],
+        },
+    },
+    {
+        "name": "plans_address_multiple_needs",
+        "batch": 3,
+        "input": """
+# Financial Needs
+
+## Primary needs
+
+1. **Cover a tax drain**: Checking fell to **$420** after a **$6,200** IRS payment.
+2. **Stop credit interest**: Venture **$8,400** with **$312** interest in 90 days.
+
+# Financial Strategy
+
+## Recommended plan: dual_recovery
+
+Rebuild checking above **$1,500** while paying down Venture over 6 months by trimming meals and leisure.
+
+## Alternative plan: credit_first_then_cash
+
+Clear Venture faster, then shift surplus to rebuild checking.
+""",
+        "ideal_response": {
+            "needs_title": "Thin cash and card interest 💳",
+            "concise_need": "Checking is $420 after IRS while Venture runs $312 interest in 90 days. 📉",
+            "full_need": "IRS payment left checking at $420 while Venture holds $8,400 with $312 interest in 90 days. 💸",
             "chart_title": "All credit accounts",
             "chart_type": "total_all_credit_accounts_balance",
             "chart_info_months": 3,

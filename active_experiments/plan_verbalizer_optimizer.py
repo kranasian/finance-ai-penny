@@ -6,7 +6,7 @@ Input is verbalized ``# Financial Need`` (with ``## Need Details``), the matchin
 bullets for one scenario (recommended by default, or
 ``--scenario-id``), plus ``### Projection`` when simulation months are known.
 
-Objective: verbalize that one plan as ``plan_title``, ``plan_badge``, ``plan_summary``,
+Objective: verbalize that one plan as ``plan_title``, ``plan_badge``, ``concise_plan``, ``full_plan``,
 ``table_title``, ``spending_budget_table``, ``chart_title``, ``chart_type``, ``chart_info_months``,
 and ``chart_target_balance``.
 
@@ -105,7 +105,8 @@ Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financ
 
 - ``plan_title``: one-line headline for this plan (max **5 words** and **40 characters**; punchy, no jargon). If ``### Existing plan name`` is present, write a new title for this updated plan; do not reuse the existing title verbatim.
 - ``plan_badge``: adjective for how hard or how unique this plan is (e.g., "Disciplined", "Balanced", "Austerity", "Rigorous", "Empathetic", "Steady"). Use Title Case. If ``### Existing plan name`` is present, keep that badge unless the updated plan's difficulty or overall approach changed.
-- ``plan_summary``: short description of what this plan does (max **20 words**, max **3 lines**, and **155 characters**); ground every **$** and date in the input.
+- ``concise_plan``: one sentence on what this plan does (max **18 words**); ground every **$** and date in the input.
+- ``full_plan``: supporting detail on what this plan does (max **40 words**); ground every **$** and date in the input.
 - ``table_title``: short title for the spending comparison table (max **6 words** and **40 characters**).
 - ``spending_budget_table``: one markdown table with columns ``Spending``, ``Current``, ``Budget`` (separate rows using standard markdown newlines `\\n`, do NOT use `<br>` to separate rows).
   - One row per category in ``### Spending Schedule`` (use display names from the schedule, capitalized for a premium look).
@@ -136,7 +137,8 @@ def _build_output_schema() -> "types.Schema":
         required=[
             "plan_title",
             "plan_badge",
-            "plan_summary",
+            "concise_plan",
+            "full_plan",
             "table_title",
             "spending_budget_table",
             "chart_title",
@@ -162,12 +164,13 @@ def _build_output_schema() -> "types.Schema":
                     "overall approach changed."
                 ),
             ),
-            "plan_summary": types.Schema(
+            "concise_plan": types.Schema(
                 type=types.Type.STRING,
-                description=(
-                    "Short plan description (strictly max 20 words, max 3 lines, and 155 characters). "
-                    "Ground every $ and date."
-                ),
+                description="One-sentence plan summary. Max 18 words. Ground every $ and date.",
+            ),
+            "full_plan": types.Schema(
+                type=types.Type.STRING,
+                description="Supporting plan detail. Max 40 words. Ground every $ and date.",
             ),
             "table_title": types.Schema(
                 type=types.Type.STRING,
@@ -249,9 +252,12 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     plan_badge = parsed.get("plan_badge")
     if not isinstance(plan_badge, str) or not plan_badge.strip():
         raise ValueError("plan_badge must be a non-empty string")
-    plan_summary = parsed.get("plan_summary")
-    if not isinstance(plan_summary, str) or not plan_summary.strip():
-        raise ValueError("plan_summary must be a non-empty string")
+    concise_plan = parsed.get("concise_plan")
+    if not isinstance(concise_plan, str) or not concise_plan.strip():
+        raise ValueError("concise_plan must be a non-empty string")
+    full_plan = parsed.get("full_plan")
+    if not isinstance(full_plan, str) or not full_plan.strip():
+        raise ValueError("full_plan must be a non-empty string")
     table_title = parsed.get("table_title")
     if not isinstance(table_title, str) or not table_title.strip():
         raise ValueError("table_title must be a non-empty string")
@@ -281,7 +287,8 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     return {
         "plan_title": plan_title.strip(),
         "plan_badge": plan_badge.strip(),
-        "plan_summary": plan_summary.strip(),
+        "concise_plan": concise_plan.strip(),
+        "full_plan": full_plan.strip(),
         "table_title": table_title.strip(),
         "spending_budget_table": spending_budget_table.strip(),
         "chart_title": chart_title.strip(),
@@ -326,7 +333,8 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
         "ideal_response": {
             "plan_title": "Gradual paydown",
             "plan_badge": "Gentle",
-            "plan_summary": "Pay Venture to $0 with phased cuts, then save $200/mo.",
+            "concise_plan": "Phased cuts pay Venture to $0, then save $200/mo.",
+            "full_plan": "Pay Venture to $0 with phased cuts, then save $200/mo.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -375,7 +383,8 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
         "ideal_response": {
             "plan_title": "Steady cut",
             "plan_badge": "Hard",
-            "plan_summary": "Pay Venture to $0 with food at $700/mo and leisure at $350/mo from month one.",
+            "concise_plan": "Cut food and leisure from month one to clear Venture.",
+            "full_plan": "Pay Venture to $0 with food at $700/mo and leisure at $350/mo from month one.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -423,7 +432,8 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
         "ideal_response": {
             "plan_title": "Pay to three thousand",
             "plan_badge": "Moderate",
-            "plan_summary": "Pay the card down to $3,000 while trimming food and shopping.",
+            "concise_plan": "Trim food and shopping to reach a $3,000 balance.",
+            "full_plan": "Pay the card down to $3,000 while trimming food and shopping.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -472,7 +482,8 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
         "ideal_response": {
             "plan_title": "Aggressive flex cut",
             "plan_badge": "Strict",
-            "plan_summary": "Pay the card down to $1,500 with food at $450/mo and shopping at $150/mo.",
+            "concise_plan": "Cap food and shopping to pay the card to $1,500.",
+            "full_plan": "Pay the card down to $1,500 with food at $450/mo and shopping at $150/mo.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -520,7 +531,8 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
         "ideal_response": {
             "plan_title": "Balanced trim",
             "plan_badge": "Moderate",
-            "plan_summary": "Pay Platinum to $0 by Dec 2026 with food at $520/mo and leisure at $300/mo.",
+            "concise_plan": "Cap food and leisure to clear Platinum by Dec 2026.",
+            "full_plan": "Pay Platinum to $0 by Dec 2026 with food at $520/mo and leisure at $300/mo.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -569,7 +581,8 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
         "ideal_response": {
             "plan_title": "Leisure-first",
             "plan_badge": "Unique",
-            "plan_summary": "Pay Platinum down to $2,000 with leisure at $380/mo and food at $450/mo.",
+            "concise_plan": "Trim leisure and food to bring Platinum to $2,000.",
+            "full_plan": "Pay Platinum down to $2,000 with leisure at $380/mo and food at $450/mo.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -624,7 +637,8 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
         "ideal_response": {
             "plan_title": "Staged drift reset",
             "plan_badge": "Gentle",
-            "plan_summary": "Pay high-interest credit to $0 by stepping food and leisure down over three phases.",
+            "concise_plan": "Three-phase food and leisure cuts clear high-interest credit.",
+            "full_plan": "Pay high-interest credit to $0 by stepping food and leisure down over three phases.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
@@ -677,7 +691,8 @@ Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little sla
         "ideal_response": {
             "plan_title": "Emergency fund target",
             "plan_badge": "Focused",
-            "plan_summary": "Save $6,000 by keeping food at $520/mo and leisure at $300/mo, then holding to finish the gap.",
+            "concise_plan": "Hold food and leisure steady to save $6,000.",
+            "full_plan": "Save $6,000 by keeping food at $520/mo and leisure at $300/mo, then holding to finish the gap.",
             "table_title": "Spending vs plan budget",
             "spending_budget_table": (
                 "| Spending | Current | Budget |\n"
