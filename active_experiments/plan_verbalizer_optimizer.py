@@ -1,16 +1,18 @@
 """
 Optimizer runner for **P:PlanVerbalizer** (Gemini prompt tuning).
 
-Input is verbalized ``# Financial Need`` (with ``## Need Details``), the matching ``# Financial Strategy`` subsection
-(recommended or alternative only) and a ``### Spending Schedule`` block with compact spending
+Input is verbalized `# Financial Need` (with `## Need Details`), the matching `# Financial Strategy` subsection
+(recommended or alternative only) and a `### Spending Schedule` block with compact spending
 bullets for one scenario (recommended by default, or
-``--scenario-id``), plus ``### Projection`` when simulation months are known.
+`--scenario-id`), plus `### Projection` when simulation months are known.
+Does not include `### Current Spending` — that input goes to **P:PlanSpendingBudgetVerbalizer**
+(see `plan_spending_budget_verbalizer_optimizer.py`).
 
-Objective: verbalize that one plan as ``plan_title``, ``plan_badge``, ``concise_plan``, ``full_plan``,
-``table_title``, ``spending_budget_table``, ``chart_title``, ``chart_type``, ``chart_info_months``,
-and ``chart_target_balance``.
+Objective: verbalize that one plan as `plan_title`, `plan_badge`, `concise_plan`, `full_plan`,
+`table_title`, `chart_title`, `chart_type`, and `chart_target_balance`.
+`chart_info_months` is added in post-processing from the simulate_financial_strategy projection.
 
-Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance-ai-llm-server/llm``):
+Run from `finance-ai-penny` repo root (`finance-ai-penny/.venv` or `finance-ai-llm-server/llm`):
 
   python3 active_experiments/plan_verbalizer_optimizer.py --test 0
   python3 active_experiments/plan_verbalizer_optimizer.py --test all
@@ -18,7 +20,7 @@ Run from ``finance-ai-penny`` repo root (``finance-ai-penny/.venv`` or ``finance
   python3 active_experiments/plan_verbalizer_optimizer.py --simulate-agent-outcome-id 1148 --scenario-id gradual_paydown_savings
   python3 active_experiments/plan_verbalizer_optimizer.py --user-id 3
 
-DB-backed runs read ``SLAVE_DB`` from ``finance-ai-llm-server/config.ini``. Requires ``psycopg2-binary``.
+DB-backed runs read `SLAVE_DB` from `finance-ai-llm-server/config.ini`. Requires `psycopg2-binary`.
 """
 
 from __future__ import annotations
@@ -97,35 +99,23 @@ _CHART_TYPES = (
     "projected_total_depository_balance",
     "projected_combined_net_balance",
 )
-_MIN_CHART_INFO_MONTHS = 3
-
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
 
-Use ``# Financial Need``, ``## Need Details``, matching plan prose in ``# Financial Strategy``, ``### Current Spending``, caps under ``### Spending Schedule``, and ``### Existing plan name`` when present.
+Use `# Financial Need`, `## Need Details`, matching plan prose in `# Financial Strategy`, caps under `### Spending Schedule`, `### Other plan title` when present, and `### Existing plan name` when present.
 
-- ``plan_title``: one-line headline for this plan (max **5 words** and **40 characters**; punchy, no jargon). If ``### Existing plan name`` is present, write a new title for this updated plan; do not reuse the existing title verbatim.
-- ``plan_badge``: adjective for how hard or how unique this plan is (e.g., "Disciplined", "Balanced", "Austerity", "Rigorous", "Empathetic", "Steady"). Use Title Case. If ``### Existing plan name`` is present, keep that badge unless the updated plan's difficulty or overall approach changed.
-- ``concise_plan``: one sentence on what this plan does (max **18 words**); ground every **$** and date in the input.
-- ``full_plan``: supporting detail on what this plan does (max **40 words**); ground every **$** and date in the input.
-- ``table_title``: short title for the spending comparison table (max **6 words** and **40 characters**).
-- ``spending_budget_table``: one markdown table with columns ``Spending``, ``Current``, ``Budget`` (separate rows using standard markdown newlines `\\n`, do NOT use `<br>` to separate rows).
-  - One row per category in ``### Spending Schedule`` (use display names from the schedule, capitalized for a premium look).
-  - ``Current`` from ``### Current Spending`` for that category (ground every **$**).
-  - ``Budget`` may use multiple lines in a cell (separate with ``<br>``) when the schedule has multiple phases:
-    - first phase: ``$amount (n% cut)`` vs Current, or ``$amount (n% up)`` when higher; omit the percent label when unchanged (no ``0% cut`` / ``0% up``)
-    - later phases: ``$amount N months later`` (months from plan start to that phase)
-  - Final row: ``Total`` with summed Current and Budget totals (Budget totals also multi-line when phased).
-- ``chart_title``: short title for the plan chart (max **6 words** and **40 characters**); describe what the selected ``chart_type`` shows.
-- ``chart_type``: choose the projected chart that best shows the plan's primary outcome over time. Must be exactly one of:
-  * ``projected_total_credit_balance`` — when the plan goal is paying credit down (to ``$0`` or a stated floor)
-  * ``projected_total_depository_balance`` — when the plan goal is building savings, an emergency fund, or holding a cash buffer
-  * ``projected_combined_net_balance`` — when net position (depository minus credit) is the main story
-- ``chart_info_months``: integer months of projected data to display (minimum 3).
-- ``chart_target_balance``: integer goal line (``0`` for full credit payoff, the payoff floor for partial paydown, the savings target for depository charts).
+- `plan_title`: one-line action plan for how we solve the need in `# Financial Need` (max **5 words** and **40 characters**; punchy, no jargon). State what we will do — not the problem itself. Ground it in this plan's distinct pacing and caps from `### Spending Schedule`. When `### Other plan title` is present, write a title that clearly differs from it. When `### Existing plan name` is present, write a new action title for this updated plan; do not reuse the existing title verbatim.
+- `plan_badge`: adjective for how hard or how unique this plan is (e.g., "Disciplined", "Balanced", "Austerity", "Rigorous", "Empathetic", "Steady"). Use Title Case. If `### Existing plan name` is present, keep that badge unless the updated plan's difficulty or overall approach changed.
+- `concise_plan`: one sentence on what this plan does (max **18 words**). Plain action language with everyday spend labels — not a per-category cap dump. Outcome **$** and dates are fine when they add emphasis or highlight impact; per-category amounts belong in `full_plan` and the spending table.
+- `full_plan`: supporting detail on what this plan does (max **40 words**); ground every **$** and date in the input.
+- `table_title`: short title for the spending comparison table (max **6 words** and **40 characters**).
+- `chart_title`: short title for the plan chart (max **6 words** and **40 characters**); describe what the selected `chart_type` shows.
+- `chart_type`: choose the projected chart that best shows the plan's primary outcome over time. Must be exactly one of:
+  * `projected_total_credit_balance` — when the plan goal is paying credit down (to `$0` or a stated floor)
+  * `projected_total_depository_balance` — when the plan goal is building savings, an emergency fund, or holding a cash buffer
+  * `projected_combined_net_balance` — when net position (depository minus credit) is the main story
+- `chart_target_balance`: integer goal line (`0` for full credit payoff, the payoff floor for partial paydown, the savings target for depository charts).
 
-The budget table already shows category caps over time. The chart should show the primary outcome the plan is driving toward.
-
-Do not invent Current amounts — only use ``### Current Spending``. Output compact JSON only — no extra fields.
+The chart should show the primary outcome the plan is driving toward. Output compact JSON only — no extra fields.
 """
 
 
@@ -140,19 +130,20 @@ def _build_output_schema() -> "types.Schema":
             "concise_plan",
             "full_plan",
             "table_title",
-            "spending_budget_table",
             "chart_title",
             "chart_type",
-            "chart_info_months",
             "chart_target_balance",
         ],
         properties={
             "plan_title": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "One-line plan headline (max 5 words and 40 characters; punchy, no jargon). "
-                    "If ### Existing plan name is present, write a new title for this updated "
-                    "plan; do not reuse the existing title verbatim."
+                    "One-line action plan for how we solve the need (max 5 words and 40 characters; "
+                    "punchy, no jargon). State what we will do, not the problem. Ground in this "
+                    "plan's distinct pacing and caps. When ### Other plan title is present, write a "
+                    "title that clearly differs from it. If ### Existing plan name "
+                    "is present, write a new action title for this updated plan; do not reuse the "
+                    "existing title verbatim."
                 ),
             ),
             "plan_badge": types.Schema(
@@ -166,7 +157,12 @@ def _build_output_schema() -> "types.Schema":
             ),
             "concise_plan": types.Schema(
                 type=types.Type.STRING,
-                description="One-sentence plan summary. Max 18 words. Ground every $ and date.",
+                description=(
+                    "One-sentence plan summary. Max 18 words. Plain action language, not a "
+                    "per-category cap dump. Everyday spend labels over category slugs. Outcome "
+                    "$ and dates when they add emphasis or highlight impact; per-category amounts "
+                    "belong in full_plan."
+                ),
             ),
             "full_plan": types.Schema(
                 type=types.Type.STRING,
@@ -176,15 +172,6 @@ def _build_output_schema() -> "types.Schema":
                 type=types.Type.STRING,
                 description="Title for the spending comparison table (max 6 words and 40 characters).",
             ),
-            "spending_budget_table": types.Schema(
-                type=types.Type.STRING,
-                description=(
-                    "Markdown table with columns: Spending, Current, Budget. Separate rows using "
-                    "standard newlines \\n (do not use <br> to separate rows). Capitalize category "
-                    "names. Phased Budget cells use <br>. Omit (0% cut) or (0% up) when unchanged. "
-                    "Total row at bottom."
-                ),
-            ),
             "chart_title": types.Schema(
                 type=types.Type.STRING,
                 description="Title for the plan chart (max 6 words and 40 characters); aligned with chart_type.",
@@ -193,10 +180,6 @@ def _build_output_schema() -> "types.Schema":
                 type=types.Type.STRING,
                 enum=list(_CHART_TYPES),
                 description="Projected chart showing the plan's primary outcome.",
-            ),
-            "chart_info_months": types.Schema(
-                type=types.Type.INTEGER,
-                description="Months of projected chart data to display (minimum 3).",
             ),
             "chart_target_balance": types.Schema(
                 type=types.Type.INTEGER,
@@ -261,22 +244,12 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     table_title = parsed.get("table_title")
     if not isinstance(table_title, str) or not table_title.strip():
         raise ValueError("table_title must be a non-empty string")
-    spending_budget_table = parsed.get("spending_budget_table")
-    if not isinstance(spending_budget_table, str) or not spending_budget_table.strip():
-        raise ValueError("spending_budget_table must be a non-empty string")
     chart_title = parsed.get("chart_title")
     if not isinstance(chart_title, str) or not chart_title.strip():
         raise ValueError("chart_title must be a non-empty string")
     chart_type = parsed.get("chart_type")
     if not isinstance(chart_type, str) or chart_type not in _CHART_TYPES:
         raise ValueError(f"chart_type must be one of: {', '.join(_CHART_TYPES)}")
-    chart_info_months = parsed.get("chart_info_months")
-    try:
-        chart_info_months = int(chart_info_months)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("chart_info_months must be an integer") from exc
-    if chart_info_months < _MIN_CHART_INFO_MONTHS:
-        raise ValueError(f"chart_info_months must be >= {_MIN_CHART_INFO_MONTHS}")
     chart_target_balance = parsed.get("chart_target_balance")
     try:
         chart_target_balance = int(chart_target_balance)
@@ -290,10 +263,8 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
         "concise_plan": concise_plan.strip(),
         "full_plan": full_plan.strip(),
         "table_title": table_title.strip(),
-        "spending_budget_table": spending_budget_table.strip(),
         "chart_title": chart_title.strip(),
         "chart_type": chart_type,
-        "chart_info_months": chart_info_months,
         "chart_target_balance": chart_target_balance,
     }
 
@@ -331,7 +302,7 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 - Projection: 12 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Gradual paydown",
+            "plan_title": "Phase cuts, clear Venture",
             "plan_badge": "Gentle",
             "concise_plan": "Phased cuts pay Venture to $0, then save $200/mo.",
             "full_plan": "Pay Venture to $0 with phased cuts, then save $200/mo.",
@@ -381,7 +352,7 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 - Projection: 8 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Steady cut",
+            "plan_title": "Cut food now, clear Venture",
             "plan_badge": "Hard",
             "concise_plan": "Cut food and leisure from month one to clear Venture.",
             "full_plan": "Pay Venture to $0 with food at $700/mo and leisure at $350/mo from month one.",
@@ -430,7 +401,7 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
 - Projection: 6 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Pay to three thousand",
+            "plan_title": "Trim spend, reach $3,000",
             "plan_badge": "Moderate",
             "concise_plan": "Trim food and shopping to reach a $3,000 balance.",
             "full_plan": "Pay the card down to $3,000 while trimming food and shopping.",
@@ -480,7 +451,7 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
 - Projection: 5 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Aggressive flex cut",
+            "plan_title": "Cut food, hit $1,500",
             "plan_badge": "Strict",
             "concise_plan": "Cap food and shopping to pay the card to $1,500.",
             "full_plan": "Pay the card down to $1,500 with food at $450/mo and shopping at $150/mo.",
@@ -529,7 +500,7 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 - Projection: 12 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Balanced trim",
+            "plan_title": "Trim meals, clear Platinum",
             "plan_badge": "Moderate",
             "concise_plan": "Cap food and leisure to clear Platinum by Dec 2026.",
             "full_plan": "Pay Platinum to $0 by Dec 2026 with food at $520/mo and leisure at $300/mo.",
@@ -579,7 +550,7 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 - Projection: 9 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Leisure-first",
+            "plan_title": "Cut leisure, pay Platinum",
             "plan_badge": "Unique",
             "concise_plan": "Trim leisure and food to bring Platinum to $2,000.",
             "full_plan": "Pay Platinum down to $2,000 with leisure at $380/mo and food at $450/mo.",
@@ -635,7 +606,7 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
 - Projection: 9 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Staged drift reset",
+            "plan_title": "Phase cuts, clear credit",
             "plan_badge": "Gentle",
             "concise_plan": "Three-phase food and leisure cuts clear high-interest credit.",
             "full_plan": "Pay high-interest credit to $0 by stepping food and leisure down over three phases.",
@@ -689,7 +660,7 @@ Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little sla
 - Projection: 12 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "plan_title": "Emergency fund target",
+            "plan_title": "Hold spend, save $6,000",
             "plan_badge": "Focused",
             "concise_plan": "Hold food and leisure steady to save $6,000.",
             "full_plan": "Save $6,000 by keeping food at $520/mo and leisure at $300/mo, then holding to finish the gap.",
@@ -732,7 +703,7 @@ def filter_financial_strategy_for_scenario(
     *,
     is_active: bool | None = None,
 ) -> str:
-    """Keep only the ``# Financial Strategy`` subsection for the intended scenario."""
+    """Keep only the `# Financial Strategy` subsection for the intended scenario."""
     sid = str(scenario_id or "").strip()
     if not sid:
         return simulate_md
@@ -806,13 +777,115 @@ def _prepend_verbalized_need_to_plan_bundle(
     return need_block.rstrip() + "\n\n" + text[strategy_idx:].strip() + "\n"
 
 
+def _extract_markdown_h3_section(body: str, heading: str) -> str:
+    text = body or ""
+    idx = text.find(heading)
+    if idx < 0:
+        return ""
+    rest = text[idx:]
+    after = rest[len(heading) :]
+    nxt = re.search(r"(?m)^#{1,3} ", after)
+    if nxt:
+        rest = rest[: len(heading) + nxt.start()]
+    return rest.strip() + "\n"
+
+
+def _strip_current_spending_from_plan_bundle(bundle_md: str) -> str:
+    text = (bundle_md or "").strip()
+    if CURRENT_SPENDING_H3 not in text:
+        return text + ("\n" if text and not text.endswith("\n") else "")
+    before = text.split(CURRENT_SPENDING_H3, 1)[0].rstrip()
+    after = text.split(CURRENT_SPENDING_H3, 1)[1]
+    nxt = re.search(r"(?m)^#{1,3} ", after.lstrip())
+    tail = after[nxt.start() :].lstrip() if nxt else ""
+    parts = [part for part in (before, tail) if part]
+    return "\n\n".join(parts).strip() + "\n"
+
+
+def build_plan_spending_budget_verbalizer_input_bundle(
+    *,
+    goal_plan_scenario: dict[str, Any],
+) -> str:
+    current_block = _format_current_spending_block(goal_plan_scenario.get("current_spending"))
+    plan_block = _format_goal_plan_narrative([goal_plan_scenario])
+    parts = [part.rstrip() for part in (current_block, plan_block) if part]
+    if not parts:
+        raise ValueError("goal_plan_scenario must include current spending or a spending schedule")
+    return "\n\n".join(parts) + "\n"
+
+
+def build_plan_spending_budget_verbalizer_input(
+    *,
+    simulate_agent_outcome_id: int | None = None,
+    user_id: int | None = None,
+    scenario_id: str | None = None,
+) -> str:
+    sim_id = resolve_simulate_agent_outcome_id(
+        user_id=user_id,
+        simulate_agent_outcome_id=simulate_agent_outcome_id,
+    )
+    sim_uid, simulate_md = load_simulate_agent_outcome_markdown(sim_id)
+    sim_row = _fetch_ai_agent_outcome_row(sim_id)
+    if not sim_row:
+        raise ValueError(f"simulate_agent_outcome_id not found: {sim_id}")
+    if psycopg2 is None:
+        raise RuntimeError("Missing dependency `psycopg2`.")
+    conn = psycopg2.connect(**_load_slave_db_connect_kwargs())
+    try:
+        goal_plan = load_user_goal_plan(conn, user_id=sim_uid)
+    finally:
+        conn.close()
+    if goal_plan is None:
+        raise ValueError(
+            f"user_plans is empty for user_id={sim_uid}; "
+            "run simulate_financial_strategy with persistence first"
+        )
+    goal_plan = _finalize_goal_plan_for_bundle(
+        goal_plan,
+        simulate_md,
+        simulate_calls=sim_row.get("calls"),
+    )
+    scenario = _select_goal_plan_scenario(goal_plan, scenario_id=scenario_id)
+    return build_plan_spending_budget_verbalizer_input_bundle(goal_plan_scenario=scenario)
+
+
+def spending_budget_input_from_plan_bundle(bundle_md: str) -> str:
+    parts = [
+        _extract_markdown_h3_section(bundle_md, CURRENT_SPENDING_H3),
+        _extract_markdown_h3_section(bundle_md, SPENDING_SCHEDULE_H3),
+    ]
+    body = "\n\n".join(part.strip() for part in parts if part.strip())
+    if not body:
+        raise ValueError("plan bundle must include Current Spending and Spending Schedule")
+    return body + "\n"
+
+
+_PLAN_IDEAL_KEYS = frozenset({
+    "plan_title",
+    "plan_badge",
+    "concise_plan",
+    "full_plan",
+    "table_title",
+    "chart_title",
+    "chart_type",
+    "chart_target_balance",
+    "chart_info_months",
+})
+
+
+def _plan_ideal_response(ideal: dict[str, Any] | None) -> dict[str, Any] | None:
+    if ideal is None:
+        return None
+    return {key: value for key, value in ideal.items() if key in _PLAN_IDEAL_KEYS}
+
+
 def build_plan_verbalizer_input_bundle(
     *,
     need_verbalizer_response: dict[str, Any],
     simulate_outcome_md: str,
     goal_plan_scenario: dict[str, Any],
 ) -> str:
-    """Verbalized need + matching strategy subsection + current spend + ``### Spending Schedule``."""
+    """Verbalized need + matching strategy subsection + `### Spending Schedule` (no current spend)."""
     need_block = format_financial_need_block(need_verbalizer_response)
     simulate = trim_simulate_outcome_for_plan_bundle(simulate_outcome_md)
     scenario_id = str(goal_plan_scenario.get("scenario_id") or "").strip()
@@ -823,11 +896,8 @@ def build_plan_verbalizer_input_bundle(
             is_active=goal_plan_scenario.get("is_active"),
         )
     simulate = ensure_blank_line_after_plan_headings(simulate)
-    current_block = _format_current_spending_block(goal_plan_scenario.get("current_spending"))
     plan_block = _format_goal_plan_narrative([goal_plan_scenario])
     parts = [need_block.rstrip(), simulate.rstrip()]
-    if current_block:
-        parts.append(current_block.rstrip())
     if plan_block:
         parts.append(plan_block.rstrip())
     projection_block = _format_projection_block(goal_plan_scenario.get("projected_months"))
@@ -844,7 +914,7 @@ def build_plan_verbalizer_input(
     need_verbalizer_response: dict[str, Any] | None = None,
     need_optimizer: NeedVerbalizerOptimizer | None = None,
 ) -> str:
-    """Build bundled input from DB outcomes + one ``users.goal_plan`` scenario."""
+    """Build bundled input from DB outcomes + one `users.goal_plan` scenario."""
     sim_id = resolve_simulate_agent_outcome_id(
         user_id=user_id,
         simulate_agent_outcome_id=simulate_agent_outcome_id,
@@ -910,7 +980,7 @@ def resolve_plan_test_case_input(
     sid = str(scenario_id or test_case.get("scenario_id") or "").strip()
     if sid:
         bundle = _apply_strategy_filter_to_plan_bundle(bundle, sid)
-    return bundle
+    return _strip_current_spending_from_plan_bundle(bundle)
 
 
 def format_plan_verbalizer_user_message(profile_input: str) -> str:
@@ -1099,7 +1169,7 @@ def _run_test(
         print("=" * 80)
         print("IDEAL RESPONSE:")
         print("=" * 80)
-        print(json.dumps(ideal, indent=2))
+        print(json.dumps(_plan_ideal_response(ideal), indent=2))
     print("=" * 80 + "\n")
     return result
 
