@@ -8,8 +8,8 @@ bullets for one scenario (recommended by default, or
 Does not include `### Current Spending` — that input goes to **P:PlanSpendingBudgetVerbalizer**
 (see `plan_spending_budget_verbalizer_optimizer.py`).
 
-Objective: verbalize that one plan as `plan_title`, `plan_badge`, `concise_plan`, `full_plan`,
-`table_title`, `chart_title`, `chart_type`, and `chart_target_balance`.
+Objective: verbalize that one plan as `plan_title`, `plan_badge`, `plan_badge_severity_level`,
+`concise_plan`, `full_plan`, `table_title`, `chart_title`, `chart_type`, and `chart_target_balance`.
 `chart_info_months` is added in post-processing from the simulate_financial_strategy projection.
 
 Run from `finance-ai-penny` repo root (`finance-ai-penny/.venv` or `finance-ai-llm-server/llm`):
@@ -73,7 +73,10 @@ try:
 except Exception:  # pragma: no cover
     psycopg2 = None  # type: ignore[assignment]
 
-from propose_next_steps.goal_plan_bundle import load_user_goal_plan
+from propose_next_steps.goal_plan_bundle import (
+    build_plan_spending_budget_verbalizer_input_bundle,
+    load_user_goal_plan,
+)
 from active_experiments.need_verbalizer_optimizer import (
     NeedVerbalizerOptimizer,
     _category_display_label,
@@ -99,23 +102,33 @@ _CHART_TYPES = (
     "projected_total_depository_balance",
     "projected_combined_net_balance",
 )
-SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who explains one financial plan in clear, concrete detail.
+SYSTEM_PROMPT = """You are Penny — a clever, fun, and conversational money coach who helps people achieve financial wins with clear, doable plans.
 
+Tone & Style:
+- Sound encouraging, upbeat, and conversational like a friendly financial partner who makes budgeting engaging.
+- Use `we` / `our` when describing shared action steps, adjusting spending, establishing habits, and following the plan.
+- Use `you` / `your` when referring to the user's personal accounts, balances, spending, debts, and savings goals.
+- Keep the language punchy, approachable, and natural. Avoid robotic phrasing and dry financial jargon.
+- When monetary figures or timelines are mentioned, use standard currency symbols and digits (never spell out numbers in words).
+
+Context & Inputs:
 Use `# Financial Need`, `## Need Details`, matching plan prose in `# Financial Strategy`, caps under `### Spending Schedule`, `### Other plan title` when present, and `### Existing plan name` when present.
 
-- `plan_title`: one-line action plan for how we solve the need in `# Financial Need` (max **5 words** and **40 characters**; punchy, no jargon). State what we will do — not the problem itself. Ground it in this plan's distinct pacing and caps from `### Spending Schedule`. When `### Other plan title` is present, write a title that clearly differs from it. When `### Existing plan name` is present, write a new action title for this updated plan; do not reuse the existing title verbatim.
-- `plan_badge`: adjective for how hard or how unique this plan is (e.g., "Disciplined", "Balanced", "Austerity", "Rigorous", "Empathetic", "Steady"). Use Title Case. If `### Existing plan name` is present, keep that badge unless the updated plan's difficulty or overall approach changed.
-- `concise_plan`: one sentence on what this plan does (max **18 words**). Plain action language with everyday spend labels — not a per-category cap dump. Outcome **$** and dates are fine when they add emphasis or highlight impact; per-category amounts belong in `full_plan` and the spending table.
-- `full_plan`: supporting detail on what this plan does (max **40 words**); ground every **$** and date in the input.
-- `table_title`: short title for the spending comparison table (max **6 words** and **40 characters**).
-- `chart_title`: short title for the plan chart (max **6 words** and **40 characters**); describe what the selected `chart_type` shows.
-- `chart_type`: choose the projected chart that best shows the plan's primary outcome over time. Must be exactly one of:
-  * `projected_total_credit_balance` — when the plan goal is paying credit down (to `$0` or a stated floor)
-  * `projected_total_depository_balance` — when the plan goal is building savings, an emergency fund, or holding a cash buffer
-  * `projected_combined_net_balance` — when net position (depository minus credit) is the main story
-- `chart_target_balance`: integer goal line (`0` for full credit payoff, the payoff floor for partial paydown, the savings target for depository charts).
+Field Guidelines:
+- `plan_title`: fun, punchy, action-oriented title for how we will tackle the financial need (max 5 words and 40 characters; catchy, no jargon). Highlight what we will do, grounded in the pacing and caps from `### Spending Schedule`. If `### Other plan title` is present, make the new title clearly distinct. If `### Existing plan name` is present, generate a fresh action title instead of reusing the old name.
+- `plan_badge`: descriptive, motivating phrase in Title Case that captures the approach and scale of adjustment needed to infer its intensity (e.g. descriptive labels of adjustment magnitude, not literal difficulty words).
+- `plan_badge_severity_level`: integer from 1 to 5 reflecting the plan's adjustment intensity (1 = gentle/light adjustment, 5 = intensive/rigorous overhaul).
+- `concise_plan`: one snappy, engaging sentence (max 18 words). Focus on what concrete lifestyle steps we will take to fulfill the goal rather than listing specific dollar amounts.
+- `full_plan`: supporting breakdown (max 40 words) that expounds on the concise plan. Prioritize describing specific actions, behavioral changes, and how they solve the goal over listing granular dollar amounts for every category.
+- `table_title`: short title for the spending comparison table (max 6 words and 40 characters).
+- `chart_title`: short, descriptive title for the visual chart (max 6 words and 40 characters).
+- `chart_type`: select the projection that represents the primary financial milestone:
+  * `projected_total_credit_balance` — when paying off credit cards is the primary target
+  * `projected_total_depository_balance` — when building cash reserves, savings, or an emergency buffer is the main focus
+  * `projected_combined_net_balance` — when both debt paydown and building cash reserves/net worth occur simultaneously as the core story
+- `chart_target_balance`: integer goal line (`0` for complete credit payoff, the payoff floor for partial paydown, or the savings target for depository charts).
 
-The chart should show the primary outcome the plan is driving toward. Output compact JSON only — no extra fields.
+Output compact JSON only — no extra fields.
 """
 
 
@@ -127,6 +140,7 @@ def _build_output_schema() -> "types.Schema":
         required=[
             "plan_title",
             "plan_badge",
+            "plan_badge_severity_level",
             "concise_plan",
             "full_plan",
             "table_title",
@@ -138,53 +152,61 @@ def _build_output_schema() -> "types.Schema":
             "plan_title": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "One-line action plan for how we solve the need (max 5 words and 40 characters; "
-                    "punchy, no jargon). State what we will do, not the problem. Ground in this "
-                    "plan's distinct pacing and caps. When ### Other plan title is present, write a "
-                    "title that clearly differs from it. If ### Existing plan name "
-                    "is present, write a new action title for this updated plan; do not reuse the "
-                    "existing title verbatim."
+                    "Punchy, fun action-oriented title for what we will do (max 5 words and 40 "
+                    "characters; no jargon). Grounded in pacing and caps. Must differ from ### Other "
+                    "plan title if present, and must not reuse ### Existing plan name verbatim."
                 ),
             ),
             "plan_badge": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "Adjective for plan difficulty, exactly one of: Disciplined, Balanced, "
-                    "Austerity, Rigorous, Empathetic, Steady (Title Case). If ### Existing plan "
-                    "name is present, keep that badge unless the updated plan's difficulty or "
-                    "overall approach changed."
+                    "Descriptive word or phrase in Title Case from which plan difficulty and "
+                    "adjustment intensity can be inferred."
+                ),
+            ),
+            "plan_badge_severity_level": types.Schema(
+                type=types.Type.INTEGER,
+                description=(
+                    "Integer from 1 to 5 representing the plan difficulty and adjustment intensity "
+                    "(5 = highest difficulty)."
                 ),
             ),
             "concise_plan": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "One-sentence plan summary. Max 18 words. Plain action language, not a "
-                    "per-category cap dump. Everyday spend labels over category slugs. Outcome "
-                    "$ and dates when they add emphasis or highlight impact; per-category amounts "
-                    "belong in full_plan."
+                    "One sentence TLDR (max 18 words) focusing on concrete lifestyle steps and "
+                    "actions to fulfill the goal rather than listing specific dollar amounts."
                 ),
             ),
             "full_plan": types.Schema(
                 type=types.Type.STRING,
-                description="Supporting plan detail. Max 40 words. Ground every $ and date.",
+                description=(
+                    "Expounded plan summary (max 40 words) prioritizing specific actions, "
+                    "behavioral adjustments, and goal resolution over granular category amounts."
+                ),
             ),
             "table_title": types.Schema(
                 type=types.Type.STRING,
-                description="Title for the spending comparison table (max 6 words and 40 characters).",
+                description="Short title for the spending comparison table (max 6 words and 40 characters).",
             ),
             "chart_title": types.Schema(
                 type=types.Type.STRING,
-                description="Title for the plan chart (max 6 words and 40 characters); aligned with chart_type.",
+                description=(
+                    "Short title describing the projected chart outcome (max 6 words and 40 characters)."
+                ),
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
                 enum=list(_CHART_TYPES),
-                description="Projected chart showing the plan's primary outcome.",
+                description=(
+                    "Projected chart showing the primary outcome: credit payoff, savings/depository "
+                    "buffer, or combined net balance."
+                ),
             ),
             "chart_target_balance": types.Schema(
                 type=types.Type.INTEGER,
                 description=(
-                    "Goal line: 0 for full credit payoff, payoff floor for partial paydown, "
+                    "Integer goal line: 0 for full credit payoff, payoff floor for partial paydown, "
                     "or savings target for depository charts."
                 ),
             ),
@@ -235,6 +257,13 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     plan_badge = parsed.get("plan_badge")
     if not isinstance(plan_badge, str) or not plan_badge.strip():
         raise ValueError("plan_badge must be a non-empty string")
+    plan_badge_severity_level = parsed.get("plan_badge_severity_level")
+    try:
+        plan_badge_severity_level = int(plan_badge_severity_level)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("plan_badge_severity_level must be an integer") from exc
+    if plan_badge_severity_level < 1 or plan_badge_severity_level > 5:
+        raise ValueError("plan_badge_severity_level must be an integer from 1 to 5")
     concise_plan = parsed.get("concise_plan")
     if not isinstance(concise_plan, str) or not concise_plan.strip():
         raise ValueError("concise_plan must be a non-empty string")
@@ -260,6 +289,7 @@ def _validate_plan_response(parsed: Any) -> dict[str, Any]:
     return {
         "plan_title": plan_title.strip(),
         "plan_badge": plan_badge.strip(),
+        "plan_badge_severity_level": plan_badge_severity_level,
         "concise_plan": concise_plan.strip(),
         "full_plan": full_plan.strip(),
         "table_title": table_title.strip(),
@@ -303,7 +333,8 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 """,
         "ideal_response": {
             "plan_title": "Phase cuts, clear Venture",
-            "plan_badge": "Gentle",
+            "plan_badge": "Light Phased Trim",
+            "plan_badge_severity_level": 2,
             "concise_plan": "Phased cuts pay Venture to $0, then save $200/mo.",
             "full_plan": "Pay Venture to $0 with phased cuts, then save $200/mo.",
             "table_title": "Spending vs plan budget",
@@ -353,7 +384,8 @@ Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payme
 """,
         "ideal_response": {
             "plan_title": "Cut food now, clear Venture",
-            "plan_badge": "Hard",
+            "plan_badge": "Immediate Deep Cut",
+            "plan_badge_severity_level": 4,
             "concise_plan": "Cut food and leisure from month one to clear Venture.",
             "full_plan": "Pay Venture to $0 with food at $700/mo and leisure at $350/mo from month one.",
             "table_title": "Spending vs plan budget",
@@ -402,7 +434,8 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
 """,
         "ideal_response": {
             "plan_title": "Trim spend, reach $3,000",
-            "plan_badge": "Moderate",
+            "plan_badge": "Steady Mid Cut",
+            "plan_badge_severity_level": 3,
             "concise_plan": "Trim food and shopping to reach a $3,000 balance.",
             "full_plan": "Pay the card down to $3,000 while trimming food and shopping.",
             "table_title": "Spending vs plan budget",
@@ -452,7 +485,8 @@ Card balance **$4,200**. Interest about **$90**/mo at the current APR. Forecast 
 """,
         "ideal_response": {
             "plan_title": "Cut food, hit $1,500",
-            "plan_badge": "Strict",
+            "plan_badge": "Tight Buffer Sprint",
+            "plan_badge_severity_level": 5,
             "concise_plan": "Cap food and shopping to pay the card to $1,500.",
             "full_plan": "Pay the card down to $1,500 with food at $450/mo and shopping at $150/mo.",
             "table_title": "Spending vs plan budget",
@@ -501,7 +535,8 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 """,
         "ideal_response": {
             "plan_title": "Trim meals, clear Platinum",
-            "plan_badge": "Moderate",
+            "plan_badge": "Steady Mid Cut",
+            "plan_badge_severity_level": 3,
             "concise_plan": "Cap food and leisure to clear Platinum by Dec 2026.",
             "full_plan": "Pay Platinum to $0 by Dec 2026 with food at $520/mo and leisure at $300/mo.",
             "table_title": "Spending vs plan budget",
@@ -551,7 +586,8 @@ Balance up **$300** over three months despite **$115**/mo payments. APR tool: **
 """,
         "ideal_response": {
             "plan_title": "Cut leisure, pay Platinum",
-            "plan_badge": "Unique",
+            "plan_badge": "Leisure-First Squeeze",
+            "plan_badge_severity_level": 3,
             "concise_plan": "Trim leisure and food to bring Platinum to $2,000.",
             "full_plan": "Pay Platinum down to $2,000 with leisure at $380/mo and food at $450/mo.",
             "table_title": "Spending vs plan budget",
@@ -607,7 +643,8 @@ Shelter $2,850 plus school/daycare $500 and utilities ~$350 consume most take-ho
 """,
         "ideal_response": {
             "plan_title": "Phase cuts, clear credit",
-            "plan_badge": "Gentle",
+            "plan_badge": "Staged Ramp-Down",
+            "plan_badge_severity_level": 2,
             "concise_plan": "Three-phase food and leisure cuts clear high-interest credit.",
             "full_plan": "Pay high-interest credit to $0 by stepping food and leisure down over three phases.",
             "table_title": "Spending vs plan budget",
@@ -661,7 +698,8 @@ Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little sla
 """,
         "ideal_response": {
             "plan_title": "Hold spend, save $6,000",
-            "plan_badge": "Focused",
+            "plan_badge": "Steady Savings Push",
+            "plan_badge_severity_level": 3,
             "concise_plan": "Hold food and leisure steady to save $6,000.",
             "full_plan": "Save $6,000 by keeping food at $520/mo and leisure at $300/mo, then holding to finish the gap.",
             "table_title": "Spending vs plan budget",
@@ -802,18 +840,6 @@ def _strip_current_spending_from_plan_bundle(bundle_md: str) -> str:
     return "\n\n".join(parts).strip() + "\n"
 
 
-def build_plan_spending_budget_verbalizer_input_bundle(
-    *,
-    goal_plan_scenario: dict[str, Any],
-) -> str:
-    current_block = _format_current_spending_block(goal_plan_scenario.get("current_spending"))
-    plan_block = _format_goal_plan_narrative([goal_plan_scenario])
-    parts = [part.rstrip() for part in (current_block, plan_block) if part]
-    if not parts:
-        raise ValueError("goal_plan_scenario must include current spending or a spending schedule")
-    return "\n\n".join(parts) + "\n"
-
-
 def build_plan_spending_budget_verbalizer_input(
     *,
     simulate_agent_outcome_id: int | None = None,
@@ -863,6 +889,7 @@ def spending_budget_input_from_plan_bundle(bundle_md: str) -> str:
 _PLAN_IDEAL_KEYS = frozenset({
     "plan_title",
     "plan_badge",
+    "plan_badge_severity_level",
     "concise_plan",
     "full_plan",
     "table_title",
