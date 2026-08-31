@@ -1,17 +1,15 @@
 """
 Optimizer runner for **P:NeedPlanEmailVerbalizer** (Gemini prompt tuning).
 
-Input is verbalized ``# Financial Need`` plus ``# Your Plan`` from ``user_plans``
-(need + plan verbalizer output for one plan).
+Input is verbalized ``# Financial Need``, ``# Recommended Plan``, and optional ``# Alternative Plan``.
 
-Output: ``email_subject``, ``need_tldr``, ``body_text``; ``plan_chart`` is attached
-post-LLM from ``verbalized_plan`` (not model-generated).
+Output: ``email_subject``, ``need_tldr`` (the need Penny identified), and ``body_text`` (plan(s) to address it).
 
 Run from finance-ai-penny repo root:
 
   python3 active_experiments/need_plan_email_verbalizer_optimizer.py --test 0
   python3 active_experiments/need_plan_email_verbalizer_optimizer.py --test all
-  python3 active_experiments/need_plan_email_verbalizer_optimizer.py --user-id 3 --plan-id 14 --print-input-only
+  python3 active_experiments/need_plan_email_verbalizer_optimizer.py --user-id 3 --plan-ids 14 15 --print-input-only
 """
 
 from __future__ import annotations
@@ -69,20 +67,23 @@ _NEED_TLDR_MAX_CHARS = 130
 _NEED_TLDR_MAX_WORDS = 20
 _BODY_MAX_WORDS = 90
 
-SYSTEM_PROMPT = """You are Penny — a warm, direct personal finance coach emailing a user that their **new plan is ready**.
+SYSTEM_PROMPT = """You are Penny — a warm, direct personal finance coach emailing a user.
 
-**Goal:** Write copy that feels like a clear roadmap, not a data dump. Validate the need, show Penny already did the heavy lifting, and make the finish line feel visible and doable. The email includes a projection chart below the copy — reference the finish line, do not describe chart axes.
+**Goal:** Communicate the financial need Penny identified and the plan(s) Penny built to address it — then invite the user to view those plan(s) in Penny. Be clear and scannable, not a data dump.
 
-**Input:** ``# Financial Need``, ``# Your Plan`` with ``## What this plan does``, ``## Key adjustments``, and ``## Finish line``. Ground every **$** only in the input. Do not invent figures. For when the goal is reached, use ``## Finish line`` (simulation result) — not month counts from ``## What this plan does``.
+**Input:** ``# Financial Need``, ``# Recommended Plan``, and optional ``# Alternative Plan`` (at most one). Each plan has ``## What this plan does``, ``## Key adjustments``, and ``## Finish line``. Ground every **$** only in the input. Do not invent figures. For when the goal is reached, use ``## Finish line`` — not month counts from ``## What this plan does``. Use each plan's title from the input (e.g. Gradual paydown), not generic labels like "the gradual plan."
 
-Return ``email_subject``, ``need_tldr``, and ``body_text`` only.
+**Flow:** ``need_tldr`` and ``body_text`` are read back-to-back as one email. ``need_tldr`` states the need; ``body_text`` opens by bridging from that need into what Penny prepared (e.g. "Penny mapped two paths to clear that balance") — never jump straight into plan mechanics as if the headline were not there.
 
-- ``need_tldr`` is the **email hero headline** — one outcome-focused, empathetic line about what this plan makes possible. Lead with the plan promise, not a stat recitation.
-- ``body_text`` is **exactly 2 short paragraphs** separated by a blank line. Paragraph 1: acknowledge the need without lecturing; Penny mapped a step-by-step path. Paragraph 2: what the plan does in plain language, one concrete adjustment from ``## Key adjustments``, and point to the finish line from ``## Finish line``. Invite the user to review the setup — no homework.
+Return ``email_subject``, ``need_tldr``, and ``body_text`` only. The user sees only these three fields — write self-contained copy; do not reference charts, attachments, or email layout outside these fields.
+
+- ``email_subject``: Inbox hook (max 8 words). Signal the need or that plan(s) are ready.
+- ``need_tldr``: Email hero headline (max 20 words). The financial need Penny identified — one crisp line from ``# Financial Need``, not a recap of plan details.
+- ``body_text``: Plan(s) Penny built for that need (max 90 words). Open with Penny bridging from the need, then plan details. When ``# Alternative Plan`` is present, cover both and how they differ. Close with a warm declarative nudge to view the plan(s) in Penny. Use plan titles from the input.
 - Use **whole dollars with commas** when citing amounts. Cap at **2 dollar figures** in ``body_text``.
-- Warm, conversational, scannable. No corporate filler ("creates a new reality", "navigate this transition", "cash flow").
+- Warm, conversational, scannable. Second person. Never use I/we — Penny is the actor, user is "you".
 - No greeting (Hi, Hello) and no sign-off (Thanks, Best).
-- No imperatives or homework (you should, try to, consider).
+- No imperatives or homework (you should, try to, consider, you choose, if you prefer).
 - No exclamation marks.
 - Do not use the word budget.
 """
@@ -100,22 +101,24 @@ def _build_output_schema() -> "types.Schema":
                 type=types.Type.STRING,
                 description=(
                     "Inbox subject (max 8 words, 60 characters, no period, exactly 1 emoji at end). "
-                    "Lead with plan outcome or strongest need hook."
+                    "Signal the financial need or that plan(s) are ready."
                 ),
             ),
             "need_tldr": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "Email hero headline (max 20 words, 130 characters). Outcome-focused roadmap line; "
-                    "empathetic, not a stat dump. No emoji required."
+                    "Email hero headline (max 20 words, 130 characters). The financial need Penny "
+                    "identified — one crisp line from Financial Need; not plan details. No emoji required."
                 ),
             ),
             "body_text": types.Schema(
                 type=types.Type.STRING,
                 description=(
-                    "Exactly 2 paragraphs separated by two newline characters; max 90 words total; "
-                    "second person. Para 1: validate need + Penny built the path. Para 2: plan outcome, "
-                    "one key adjustment, finish line. Max 2 dollar figures. Max 2 emojis."
+                    "Plan(s) for the need in need_tldr; hard max 90 words; flows from need_tldr — "
+                    "open with Penny bridging from the need, then plan details using plan titles from "
+                    "input. Cover Recommended Plan; when Alternative Plan is in input, include both. "
+                    "Close with declarative nudge to view plan(s) in Penny. Max 2 dollar figures. "
+                    "Max 2 emojis."
                 ),
             ),
         },
@@ -165,8 +168,8 @@ def format_need_plan_email_user_message(profile_input: str) -> str:
         raise ValueError("profile_input must be non-empty markdown.")
     if "# Financial Need" not in body:
         raise ValueError("profile_input must include # Financial Need.")
-    if "# Your Plan" not in body:
-        raise ValueError("profile_input must include # Your Plan.")
+    if "# Recommended Plan" not in body:
+        raise ValueError("profile_input must include # Recommended Plan.")
     return body + "\n"
 
 
@@ -255,7 +258,7 @@ $312 in interest every 90 days on your $8,400 balance while spending tracks inco
 
 Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payment schedule. 📉
 
-# Your Plan
+# Recommended Plan
 
 **Gradual paydown** (Gentle)
 
@@ -274,13 +277,71 @@ Pay Venture to $0 with phased cuts, then save $200/mo.
 - Projection: 5 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "email_subject": "Your roadmap to zero is ready 💳",
-            "need_tldr": "A realistic roadmap to pay Venture down without sacrificing your sanity",
+            "email_subject": "Your Venture interest problem, solved 💳",
+            "need_tldr": "Interest keeps stacking on your $8,400 Venture balance",
             "body_text": (
-                "Money gets overwhelming when there is no clear finish line — Penny mapped a "
-                "step-by-step path that shows when your Venture balance gets cleared.\n\n"
-                "Gradual paydown phases food and leisure cuts so the card reaches $0 over about "
-                "12 months. Review the setup below and see if this path feels doable for you."
+                "Penny built Gradual paydown to tackle that balance — food trims to $850 so Venture "
+                "reaches $0 by Oct 31, 2026. The plan is ready for you in Penny."
+            ),
+        },
+    },
+    {
+        "name": "credit_paydown_two_plans",
+        "batch": 1,
+        "input": """
+# Financial Need
+
+**Interest keeps stacking on $8,400** 💳
+
+$312 in interest every 90 days on your $8,400 balance while spending tracks income.
+
+## Need Details
+
+Interest tool: **$312** on Venture in 90 days. Next due **2026-04-18** per payment schedule. 📉
+
+# Recommended Plan
+
+**Gradual paydown** (Gentle)
+
+## What this plan does
+
+Pay Venture to $0 with phased cuts, then save $200/mo.
+
+## Key adjustments
+
+- Food: $1,000 today → $850 (15% cut), then $700 3 months later
+- Leisure: $500 today → $450 (10% cut), then $350 3 months later
+
+## Finish line
+
+- **Interest-free credit (card balance $0)**: achieved By Oct 31, 2026.
+- Projection: 5 mo, stop goal achieved.
+
+# Alternative Plan
+
+**Aggressive paydown** (Intensive)
+
+## What this plan does
+
+Cut discretionary spending harder to clear Venture in fewer months.
+
+## Key adjustments
+
+- Food: $1,000 today → $700 (30% cut)
+- Leisure: $500 today → $400 (20% cut)
+
+## Finish line
+
+- **Interest-free credit (card balance $0)**: achieved By Aug 31, 2026.
+- Projection: 3 mo, stop goal achieved.
+""",
+        "ideal_response": {
+            "email_subject": "Two paths to clear Venture 💳",
+            "need_tldr": "Interest keeps stacking on your $8,400 Venture balance",
+            "body_text": (
+                "Penny mapped two paths to clear that balance — Gradual paydown eases cuts toward "
+                "$0 by Oct 31, 2026, while Aggressive paydown pushes harder for Aug 31, 2026. Both "
+                "plans are ready for you in Penny."
             ),
         },
     },
@@ -298,7 +359,7 @@ You want an emergency buffer of **$6,000**, but your current savings is only **$
 
 Savings gap is **$5,000** to reach **$6,000**. Committed spend leaves little slack. 🌱
 
-# Your Plan
+# Recommended Plan
 
 **Emergency fund target** (Focused)
 
@@ -318,13 +379,12 @@ Save $6,000 by keeping food at $520/mo and leisure at $300/mo.
 - Projection: 12 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "email_subject": "Your savings roadmap is ready 🏦",
-            "need_tldr": "A steady path to a $6,000 cushion without guessing each month",
+            "email_subject": "Your savings gap has a plan 🏦",
+            "need_tldr": "You're $5,000 short of a $6,000 emergency buffer",
             "body_text": (
-                "Building a safety net is easier when the steps are already laid out — Penny "
-                "structured a path from $1,000 toward $6,000 in savings.\n\n"
-                "Emergency fund target trims food and leisure first while holding essentials steady. "
-                "The chart below shows how savings can grow over about 12 months if you follow this setup."
+                "Penny built Emergency fund target to close that gap — food and leisure trim first "
+                "while essentials hold steady, reaching $6,000 by Jun 30, 2027. The plan is ready "
+                "for you in Penny."
             ),
         },
     },
@@ -342,7 +402,7 @@ Your monthly income decreased significantly over the last three months.
 
 Your monthly income shifted from $86,313 in May to $20,195 in July, impacting your cash flow. 📉
 
-# Your Plan
+# Recommended Plan
 
 **Adaptive Income Stabilization Plan** (Balanced)
 
@@ -362,13 +422,12 @@ Adjust spending to your new $20,195 income. Reach a $40,000 liquidity target by 
 - Projection: 1 mo, stop goal achieved.
 """,
         "ideal_response": {
-            "email_subject": "Your stability plan is ready 📈",
-            "need_tldr": "A realistic roadmap to rebuild liquidity after your income shift",
+            "email_subject": "A plan for your income shift 📈",
+            "need_tldr": "Your monthly income dropped from $86,313 to $20,195",
             "body_text": (
-                "When income drops sharply, the hard part is not knowing what still fits — Penny "
-                "mapped a step-by-step path aligned to your $20,195 monthly income.\n\n"
-                "Adaptive Income Stabilization pays down credit and reaches your $40,000 liquidity "
-                "target by Sep 30, 2026. Review the projection chart below to see the finish line."
+                "Penny built Adaptive Income Stabilization around that shift — spending caps "
+                "tighten over time toward $40,000 by Sep 30, 2026 with credit cleared. The plan "
+                "is ready for you in Penny."
             ),
         },
     },
@@ -446,7 +505,7 @@ def run_test(
     return _run_test(resolve_test_case_input(tc), optimizer, ideal=ideal)
 
 
-def _load_input_from_db(*, user_id: int, plan_id: int) -> str:
+def _load_input_from_db(*, user_id: int, plan_ids: list[int]) -> str:
     try:
         import psycopg2
     except Exception as exc:
@@ -456,7 +515,7 @@ def _load_input_from_db(*, user_id: int, plan_id: int) -> str:
         profile_input, _ = build_need_plan_email_verbalizer_input(
             conn,
             user_id=int(user_id),
-            plan_id=int(plan_id),
+            plan_ids=plan_ids,
         )
         return profile_input
     finally:
@@ -468,15 +527,15 @@ def main() -> None:
     parser.add_argument("--test", type=str, help="Test name or index")
     parser.add_argument("--batch", type=int, help="Run all tests in batch N")
     parser.add_argument("--user-id", type=int, help="User id for DB-backed input")
-    parser.add_argument("--plan-id", type=int, help="user_plans.plan_id for DB-backed input")
+    parser.add_argument("--plan-ids", type=int, nargs="+", help="user_plans.plan_id values for DB-backed input")
     parser.add_argument("--print-input-only", action="store_true")
     parser.add_argument("--model", type=str, default=GEMINI_FLASH_LITE)
     parser.add_argument("--no-thinking", action="store_true")
     args = parser.parse_args()
 
-    if args.user_id is not None and args.plan_id is not None:
-        built = _load_input_from_db(user_id=args.user_id, plan_id=args.plan_id)
-        print(f"Using user_id={args.user_id} plan_id={args.plan_id}")
+    if args.user_id is not None and args.plan_ids:
+        built = _load_input_from_db(user_id=args.user_id, plan_ids=args.plan_ids)
+        print(f"Using user_id={args.user_id} plan_ids={args.plan_ids}")
         print("BUILT NEED PLAN EMAIL INPUT")
         print("-" * 80)
         print(built)
@@ -492,7 +551,7 @@ def main() -> None:
         return
 
     if args.print_input_only:
-        print("Error: --print-input-only requires --user-id and --plan-id", file=sys.stderr)
+        print("Error: --print-input-only requires --user-id and --plan-ids", file=sys.stderr)
         raise SystemExit(1)
 
     thinking_budget = 0 if args.no_thinking else _THINKING_BUDGET
@@ -522,7 +581,7 @@ def main() -> None:
     print("  --test <name_or_index>   Run one bundled test case")
     print("  --test all               Run all bundled test cases")
     print("  --batch N                Run tests tagged with batch N")
-    print("  --user-id ID --plan-id ID  Build input from user_plans")
+    print("  --user-id ID --plan-ids ID [ID]  Build input from user_plans")
     print("  --print-input-only       Print LLM input without calling the model")
     print("\nAvailable test cases:")
     for i, tc in enumerate(TEST_CASES):
