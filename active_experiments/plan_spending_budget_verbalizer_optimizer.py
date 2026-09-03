@@ -101,8 +101,6 @@ TEST_CASES: list[dict[str, Any]] = [
         "batch": 1,
         "input": """### Spending Baseline
 
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
-
 | food | $1,000 |  $900 ~ $1,100  |
 | leisure | $500 |  $450 ~ $550  |
 
@@ -122,8 +120,6 @@ Last 3-month: Jun 1, 2026 – Aug 31, 2026
         "scenario_id": "steady_cut",
         "input": """### Spending Baseline
 
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
-
 | food | $1,000 |  $900 ~ $1,100  |
 | leisure | $500 |  $450 ~ $550  |
 
@@ -140,8 +136,6 @@ Last 3-month: Jun 1, 2026 – Aug 31, 2026
         "name": "cash_flow_recommended",
         "batch": 1,
         "input": """### Spending Baseline
-
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
 
 | food | $650 |  $600 ~ $700  |
 | shopping | $250 |  $220 ~ $280  |
@@ -161,8 +155,6 @@ Last 3-month: Jun 1, 2026 – Aug 31, 2026
         "scenario_id": "aggressive_flex_cut",
         "input": """### Spending Baseline
 
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
-
 | food | $650 |  $600 ~ $700  |
 | shopping | $250 |  $220 ~ $280  |
 
@@ -179,8 +171,6 @@ Last 3-month: Jun 1, 2026 – Aug 31, 2026
         "name": "slow_debt_recommended",
         "batch": 2,
         "input": """### Spending Baseline
-
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
 
 | food | $650 |  $600 ~ $700  |
 | leisure | $400 |  $350 ~ $430  |
@@ -200,8 +190,6 @@ Last 3-month: Jun 1, 2026 – Aug 31, 2026
         "scenario_id": "leisure_first",
         "input": """### Spending Baseline
 
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
-
 | food | $650 |  $600 ~ $700  |
 | leisure | $400 |  $350 ~ $430  |
 
@@ -219,8 +207,6 @@ Last 3-month: Jun 1, 2026 – Aug 31, 2026
         "batch": 3,
         "simulate_agent_outcome_id": 1252,
         "input": """### Spending Baseline
-
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
 
 | food | $1,400 |  $1,200 ~ $1,500  |
 | leisure | $400 |  $350 ~ $450  |
@@ -248,8 +234,6 @@ Last 3-month: Jun 1, 2026 – Aug 31, 2026
         "name": "emergency_savings_target_recommended",
         "batch": 4,
         "input": """### Spending Baseline
-
-Last 3-month: Jun 1, 2026 – Aug 31, 2026
 
 | food | $650 |  $600 ~ $700  |
 | leisure | $400 |  $350 ~ $430  |
