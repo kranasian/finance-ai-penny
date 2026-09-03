@@ -1,7 +1,7 @@
 """
 Optimizer runner for **P:PlanSpendingBudgetVerbalizer** (Gemini prompt tuning).
 
-Input is `### Current Spending` (table with variance) and `### Spending Schedule` (table with phased caps) for one goal-plan scenario.
+Input is `### Spending Baseline` (table with 3-month average and variance) and `### Spending Schedule` (table with phased caps) for one goal-plan scenario.
 
 Objective: markdown spending comparison table only.
 
@@ -41,9 +41,7 @@ except Exception:
     ClientError = Exception
 
 from active_experiments.plan_verbalizer_optimizer import (
-    CURRENT_SPENDING_H3,
     GEMINI_FLASH_LITE,
-    SPENDING_SCHEDULE_H3,
     _collect_model_response,
     build_plan_spending_budget_verbalizer_input,
 )
@@ -56,6 +54,10 @@ from active_experiments.verbalizer_optimizer_db import (
 if str(_LLM_SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(_LLM_SERVER_ROOT))
 
+from propose_next_steps.goal_plan_narrative import (
+    SPENDING_BASELINE_H3,
+    SPENDING_SCHEDULE_H3,
+)
 from propose_next_steps.persist_plan_spending_budget_verbalizer import (
     format_plan_spending_budget_verbalizer_markdown,
     post_process_plan_spending_budget_verbalizer_response,
@@ -69,17 +71,17 @@ PLAN_SPENDING_BUDGET_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
 SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach who builds a spending comparison table for one financial plan.
 
-Use `### Current Spending` (table rows with current amount and variance range) and caps under `### Spending Schedule` (table rows with phased caps and percent-change labels).
+Use `### Spending Baseline` (table rows with 3-month average amount and variance range) and caps under `### Spending Schedule` (table rows with phased caps and percent-change labels).
 
-Return one markdown table only with columns `Spending`, `Current`, `Budget` (separate rows using standard markdown newlines `\\n`, do NOT use `<br>` to separate rows).
+Return one markdown table only with columns `Spending`, `Baseline`, `Budget`.
   - One row per category in `### Spending Schedule` (use display names from the schedule, capitalized for a premium look).
-  - `Current` from `### Current Spending` for that category (ground every **$**).
+  - `Baseline` from `### Spending Baseline` for that category (ground every **$**).
   - `Budget` may use multiple lines in a cell (separate with `<br>`) when the schedule has multiple phases:
-    - first phase: `$amount (n% cut)` vs Current, or `$amount (n% up)` when higher; omit the percent label when unchanged (no `0% cut` / `0% up`)
+    - first phase: `$amount (n% cut)` vs Baseline, or `$amount (n% up)` when higher; omit the percent label when unchanged (no `0% cut` / `0% up`)
     - later phases: `$amount N months later` (months from plan start to that phase)
-  - Final row: `Total` with summed Current and Budget totals (Budget totals also multi-line when phased).
+  - Final row: `Total` with summed Baseline and Budget totals (Budget totals also multi-line when phased).
 
-Do not invent Current amounts — only use `### Current Spending`. Output markdown table only — no title heading, no JSON, no code fences, no extra prose.
+Do not invent baseline amounts — only use `### Spending Baseline`. Output markdown table only — no title heading, no JSON, no code fences, no extra prose.
 """
 
 
@@ -97,7 +99,10 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "debt_paydown_recommended",
         "batch": 1,
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $1,000 |  $900 ~ $1,100  |
 | leisure | $500 |  $450 ~ $550  |
 
@@ -105,7 +110,7 @@ TEST_CASES: list[dict[str, Any]] = [
 | 04/2026 to 06/2026 |  Cap food to $850 (15% less), leisure $450 (10% less) monthly |
 | 07/2026 to 03/2028 |  Cap food to $700 (30% less), leisure $350 (30% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $1,000 | $850 (15% cut)<br>$700 3 months later |
 | leisure | $500 | $450 (10% cut)<br>$350 3 months later |
@@ -115,14 +120,17 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "debt_paydown_alternative",
         "batch": 1,
         "scenario_id": "steady_cut",
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $1,000 |  $900 ~ $1,100  |
 | leisure | $500 |  $450 ~ $550  |
 
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $700 (30% less), leisure $350 (30% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $1,000 | $700 (30% cut) |
 | leisure | $500 | $350 (30% cut) |
@@ -131,14 +139,17 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "cash_flow_recommended",
         "batch": 1,
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $650 |  $600 ~ $700  |
 | shopping | $250 |  $220 ~ $280  |
 
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $520 (20% less), shopping $180 (28% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $650 | $520 (20% cut) |
 | shopping | $250 | $180 (28% cut) |
@@ -148,14 +159,17 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "cash_flow_alternative",
         "batch": 1,
         "scenario_id": "aggressive_flex_cut",
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $650 |  $600 ~ $700  |
 | shopping | $250 |  $220 ~ $280  |
 
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $450 (31% less), shopping $150 (40% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $650 | $450 (31% cut) |
 | shopping | $250 | $150 (40% cut) |
@@ -164,14 +178,17 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "slow_debt_recommended",
         "batch": 2,
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $650 |  $600 ~ $700  |
 | leisure | $400 |  $350 ~ $430  |
 
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $520 (20% less), leisure $300 (25% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $650 | $520 (20% cut) |
 | leisure | $400 | $300 (25% cut) |
@@ -181,14 +198,17 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "slow_debt_alternative",
         "batch": 2,
         "scenario_id": "leisure_first",
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $650 |  $600 ~ $700  |
 | leisure | $400 |  $350 ~ $430  |
 
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $450 (31% less), leisure $380 (5% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $650 | $450 (31% cut) |
 | leisure | $400 | $380 (5% cut) |
@@ -198,7 +218,10 @@ TEST_CASES: list[dict[str, Any]] = [
         "name": "spending_drift_recommended",
         "batch": 3,
         "simulate_agent_outcome_id": 1252,
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $1,400 |  $1,200 ~ $1,500  |
 | leisure | $400 |  $350 ~ $450  |
 | shopping | $80 |  $60 ~ $100  |
@@ -211,7 +234,7 @@ TEST_CASES: list[dict[str, Any]] = [
 | 11/2026 to 01/2027 |  Cap food to $750 (46% less), leisure $200 (50% less), shopping $50 (38% less), health $80, education $450, uncategorized $300 (14% less) monthly |
 | 02/2027 to future |  Cap food to $500 (64% less), leisure $100 (75% less), shopping $50 (38% less), health $80, education $450, uncategorized $300 (14% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $1,400 | $1,200 (14% cut)<br>$750 3 months later<br>$500 6 months later |
 | leisure | $400 | $300 (25% cut)<br>$200 3 months later<br>$100 6 months later |
@@ -224,7 +247,10 @@ TEST_CASES: list[dict[str, Any]] = [
     {
         "name": "emergency_savings_target_recommended",
         "batch": 4,
-        "input": """### Current Spending
+        "input": """### Spending Baseline
+
+Last 3-month: Jun 1, 2026 – Aug 31, 2026
+
 | food | $650 |  $600 ~ $700  |
 | leisure | $400 |  $350 ~ $430  |
 | shopping | $80 |  $60 ~ $100  |
@@ -232,7 +258,7 @@ TEST_CASES: list[dict[str, Any]] = [
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $520 (20% less), leisure $300 (25% less), shopping $50 (38% less) monthly |
 """,
-        "ideal_response": """| Spending | Current | Budget |
+        "ideal_response": """| Spending | Baseline | Budget |
 | --- | --- | --- |
 | food | $650 | $520 (20% cut) |
 | leisure | $400 | $300 (25% cut) |
@@ -246,8 +272,8 @@ def format_plan_spending_budget_verbalizer_user_message(profile_input: str) -> s
     body = (profile_input or "").strip()
     if not body:
         raise ValueError("profile_input must be non-empty markdown.")
-    if CURRENT_SPENDING_H3 not in body:
-        raise ValueError(f"profile_input must include {CURRENT_SPENDING_H3}.")
+    if SPENDING_BASELINE_H3 not in body:
+        raise ValueError(f"profile_input must include {SPENDING_BASELINE_H3}.")
     if SPENDING_SCHEDULE_H3 not in body:
         raise ValueError(f"profile_input must include {SPENDING_SCHEDULE_H3}.")
     return body + "\n"
