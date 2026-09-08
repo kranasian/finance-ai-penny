@@ -112,7 +112,7 @@ Per-plan field guidelines:
 - `plan_badge`: descriptive motivating phrase in Title Case reflecting adjustment intensity.
 - `plan_badge_severity_level`: integer 1–5 (1 = gentle, 5 = intensive).
 - `concise_plan`: one sentence TLDR (max 18 words) focused on lifestyle steps, not dollar lists.
-- `full_plan`: supporting breakdown (max 40 words) prioritizing actions over granular amounts.
+- `full_plan`: supporting breakdown (max 40 words) prioritizing actions over granular amounts. State when the plan starts using the first month in that plan's `### Plan Details`.
 - `table_title`: short title for the spending comparison table (max 6 words and 40 characters).
 - `chart_title`: short chart title (max 6 words and 40 characters).
 - `chart_type`: `projected_total_credit_balance`, `projected_total_depository_balance`, or `projected_combined_net_balance`.
@@ -142,44 +142,71 @@ def _build_output_schema() -> "types.Schema":
         properties={
             "scenario_id": types.Schema(
                 type=types.Type.STRING,
-                description="Must match one ## Plan A: or ## Plan B: scenario_id heading in the input.",
+                description=(
+                    "Must match one of the ## Plan A: or ## Plan B: scenario_id headings in the input."
+                ),
             ),
             "plan_title": types.Schema(
                 type=types.Type.STRING,
-                description="Punchy action title (max 5 words). Must differ from the other plan.",
+                description=(
+                    "Punchy, fun action-oriented title for what we will do (max 5 words and 40 "
+                    "characters; no jargon). Grounded in pacing and caps. Must differ from the other "
+                    "plan title."
+                ),
             ),
             "plan_badge": types.Schema(
                 type=types.Type.STRING,
-                description="Title Case phrase reflecting this plan's adjustment intensity.",
+                description=(
+                    "Descriptive word or phrase in Title Case from which plan difficulty and "
+                    "adjustment intensity can be inferred."
+                ),
             ),
             "plan_badge_severity_level": types.Schema(
                 type=types.Type.INTEGER,
-                description="Integer from 1 to 5 representing adjustment intensity.",
+                description=(
+                    "Integer from 1 to 5 representing the plan difficulty and adjustment intensity "
+                    "(5 = highest difficulty)."
+                ),
             ),
             "concise_plan": types.Schema(
                 type=types.Type.STRING,
-                description="One sentence TLDR (max 18 words).",
+                description=(
+                    "One sentence TLDR (max 18 words) focusing on concrete lifestyle steps and "
+                    "actions to fulfill the goal rather than listing specific dollar amounts."
+                ),
             ),
             "full_plan": types.Schema(
                 type=types.Type.STRING,
-                description="Expounded plan summary (max 40 words).",
+                description=(
+                    "Expounded plan summary (max 40 words) prioritizing specific actions, "
+                    "behavioral adjustments, and goal resolution over granular category amounts. "
+                    "State when the plan starts using the first month in ### Plan Details."
+                ),
             ),
             "table_title": types.Schema(
                 type=types.Type.STRING,
-                description="Short spending table title (max 6 words and 40 characters).",
+                description="Short title for the spending comparison table (max 6 words and 40 characters).",
             ),
             "chart_title": types.Schema(
                 type=types.Type.STRING,
-                description="Short chart title (max 6 words and 40 characters).",
+                description=(
+                    "Short title describing the projected chart outcome (max 6 words and 40 characters)."
+                ),
             ),
             "chart_type": types.Schema(
                 type=types.Type.STRING,
                 enum=list(_CHART_TYPES),
-                description="Primary projected outcome chart for this plan.",
+                description=(
+                    "Projected chart showing the primary outcome: credit payoff, savings/depository "
+                    "buffer, or combined net balance."
+                ),
             ),
             "chart_target_balance": types.Schema(
                 type=types.Type.INTEGER,
-                description="Integer goal line for the chart.",
+                description=(
+                    "Integer goal line: 0 for full credit payoff, payoff floor for partial paydown, "
+                    "or savings target for depository charts."
+                ),
             ),
         },
     )
@@ -189,7 +216,7 @@ def _build_output_schema() -> "types.Schema":
         properties={
             "plans": types.Schema(
                 type=types.Type.ARRAY,
-                description="Exactly two differentiated plan verbalizations.",
+                description="Exactly two differentiated plan verbalizations, one per scenario_id in the input.",
                 items=plan_schema,
             ),
         },
