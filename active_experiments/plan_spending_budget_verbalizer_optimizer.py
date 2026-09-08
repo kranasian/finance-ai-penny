@@ -69,20 +69,23 @@ if load_dotenv is not None:
 PLAN_SPENDING_BUDGET_VERBALIZER_THINKING_BUDGET = 128
 PLAN_SPENDING_BUDGET_VERBALIZER_MAX_OUTPUT_TOKENS = 2048
 
-SYSTEM_PROMPT = """You are Penny — a sharp, witty money coach summarizing spending for one financial plan.
+SYSTEM_PROMPT = """Turn spending baseline and schedule input into one markdown comparison table.
 
-Use `### Spending Baseline` and `### Spending Schedule` in the user message. Include every category that appears in the input — one table row per category. For each category, show the baseline amount and the plan amount. Use dollar figures from the input only — do not invent amounts.
+## Input
+The user message has `### Spending Baseline` (category averages) and `### Spending Schedule` (phased monthly caps).
 
-When `### Spending Schedule` has more than one row, this is a multi-phase budget:
-- One table row per category; put every phase in the budget cell, earliest first, separated by line breaks.
-- Each phase: cap plus percent change vs baseline; keep the same percent wording style for all phases in that row.
-- Each phase after the first must include a short start-timing cue from the schedule. A second phase with only cap and percent is incomplete.
-- Incomplete: `$850 (15% less)<br>$700 (30% less)`
-- Complete second-phase examples: `$700 (30% less) 3 months later` or `$700 (30% less) from Jul 2026` — other short cues are fine; pick what reads best and vary the form across plans.
+## Table rules
+- Include every category from the input — one row per category, plus a final Total row.
+- Use three columns: category label, baseline amount from `### Spending Baseline`, and plan cap(s) from `### Spending Schedule`.
+- You choose all three column header labels. Keep each header short. Keep the same headers on every row — do not rename columns mid-table.
+- Use dollar figures from the input only — do not invent amounts.
+- Multi-phase schedule (more than one schedule row): one table row per category; put every phase in the plan-cap column, earliest first, separated by `<br>`. Each phase shows cap plus percent change vs baseline. Each phase after the first must include a short start-timing cue from the schedule (for example `3 months later` or `from Jul 2026`).
+- Total row: summed baseline and plan-cap amounts for each phase.
 
-Always include a final Total row with summed baseline and budget for each phase.
+## Output
+Return only one markdown pipe table: your header row, a separator row (`| --- | ... |`), one row per category, and a Total row.
 
-Return exactly one markdown pipe table (`| col | col |` rows with a header separator line). Use the same column headers on every row — do not rename columns mid-table. No heading above the table, no JSON, no code fences, no extra prose."""
+Do not return intro or outro prose, personality, `###` headings, JSON, code fences, or a second table."""
 
 
 def _validate_spending_budget_response(parsed: Any, *, profile_input: str = "") -> dict[str, Any]:
@@ -103,7 +106,7 @@ TEST_CASES: list[dict[str, Any]] = [
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $1,000 |
 | leisure | $500 |
@@ -112,7 +115,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 | 04/2026 to 06/2026 |  Cap food to $850 (15% less), leisure $450 (10% less) monthly |
 | 07/2026 to 03/2028 |  Cap food to $700 (30% less), leisure $350 (30% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $1,000 | $850 (15% cut)<br>$700 3 months later |
 | leisure | $500 | $450 (10% cut)<br>$350 3 months later |
@@ -126,7 +129,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $1,000 |
 | leisure | $500 |
@@ -134,7 +137,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $700 (30% less), leisure $350 (30% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $1,000 | $700 (30% cut) |
 | leisure | $500 | $350 (30% cut) |
@@ -147,7 +150,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $1,200 |
 | leisure | $600 |
@@ -157,7 +160,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 | 07/2026 to 09/2026 |  Cap food to $850 (29% less), leisure $400 (33% less) monthly |
 | 10/2026 to future |  Cap food to $700 (42% less), leisure $300 (50% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $1,200 | $1,000 (17% cut)<br>$850 (29% cut) from Jul 2026<br>$700 (42% cut) from Oct 2026 |
 | leisure | $600 | $500 (17% cut)<br>$400 (33% cut) from Jul 2026<br>$300 (50% cut) from Oct 2026 |
@@ -170,7 +173,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $650 |
 | shopping | $250 |
@@ -178,7 +181,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $520 (20% less), shopping $180 (28% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $650 | $520 (20% cut) |
 | shopping | $250 | $180 (28% cut) |
@@ -192,7 +195,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $650 |
 | shopping | $250 |
@@ -200,7 +203,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $450 (31% less), shopping $150 (40% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $650 | $450 (31% cut) |
 | shopping | $250 | $150 (40% cut) |
@@ -213,7 +216,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $650 |
 | leisure | $400 |
@@ -221,7 +224,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $520 (20% less), leisure $300 (25% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $650 | $520 (20% cut) |
 | leisure | $400 | $300 (25% cut) |
@@ -235,7 +238,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $650 |
 | leisure | $400 |
@@ -243,7 +246,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $450 (31% less), leisure $380 (5% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $650 | $450 (31% cut) |
 | leisure | $400 | $380 (5% cut) |
@@ -257,7 +260,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $1,400 |
 | leisure | $400 |
@@ -271,7 +274,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 | 11/2026 to 01/2027 |  Cap food to $750 (46% less), leisure $200 (50% less), shopping $50 (38% less), health $80, education $450, uncategorized $300 (14% less) monthly |
 | 02/2027 to future |  Cap food to $500 (64% less), leisure $100 (75% less), shopping $50 (38% less), health $80, education $450, uncategorized $300 (14% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $1,400 | $1,200 (14% cut)<br>$750 3 months later<br>$500 6 months later |
 | leisure | $400 | $300 (25% cut)<br>$200 3 months later<br>$100 6 months later |
@@ -288,7 +291,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
 Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 
-| Category | 3-month Average |
+| Category | Last 3-month Average |
 | --- | --- |
 | food | $650 |
 | leisure | $400 |
@@ -297,7 +300,7 @@ Duration: 3 months — Jun 1, 2026 – Aug 31, 2026
 ### Spending Schedule
 | 04/2026 to 03/2028 |  Cap food to $520 (20% less), leisure $300 (25% less), shopping $50 (38% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Avg | Plan |
 | --- | --- | --- |
 | food | $650 | $520 (20% cut) |
 | leisure | $400 | $300 (25% cut) |
@@ -319,7 +322,7 @@ Duration: 1 month — Jun 1, 2026 – Jun 30, 2026
 ### Spending Schedule
 | 07/2026 to 03/2028 |  Cap food to $650 (19% less), leisure $225 (25% less) monthly |
 """,
-        "ideal_response": """| Spending | Baseline | Budget |
+        "ideal_response": """| Category | Last | Plan |
 | --- | --- | --- |
 | food | $800 | $650 (19% cut) |
 | leisure | $300 | $225 (25% cut) |
