@@ -9,7 +9,6 @@ Run from ``finance-ai-penny`` repo root:
   python3 active_experiments/m_capture_chat_memory_optimizer.py --list
   python3 active_experiments/m_capture_chat_memory_optimizer.py --test 0
   python3 active_experiments/m_capture_chat_memory_optimizer.py --test habits_goals_and_categorization
-  python3 active_experiments/m_capture_chat_memory_optimizer.py --test prior_memories_supersede_next_batch
   python3 active_experiments/m_capture_chat_memory_optimizer.py --test budget_next_month_specific_content
   python3 active_experiments/m_capture_chat_memory_optimizer.py --test all
   python3 active_experiments/m_capture_chat_memory_optimizer.py --test 1 --model gemini-flash-lite-latest
@@ -71,18 +70,13 @@ SYSTEM_PROMPT = """You extract durable user memories from Penny (AI financial ad
 Read the conversation and return note-worthy memories that Penny should remember later to personalize advice. Capture preferences, habits, goals, and personal context the user shared explicitly or clearly implied.
 
 ## Input
-JSON object (or a bare conversation array for legacy callers).
+JSON array of chronological messages (oldest first).
 
-Object form:
-- `conversation`: chronological messages (oldest first)
-- `prior_memories`: optional array of memories still active at the end of `conversation` (each has `expiry_datetime` after the latest `captured_datetime` in `conversation`). Use the conversation to refresh or supersede these.
-
-Every conversation item must include:
-- `captured_datetime`: ISO-8601 UTC timestamp when the message was sent (e.g. `2025-09-10T14:35:00Z`)
+Every message must include:
+- `captured_datetime`: timestamp when the message was sent
+- `penny_log_id`: message id
 - `speaker`: `"Penny"` or `"User"`
 - `message`: message text
-
-Every `prior_memories` item uses the same shape as output memories (`captured_datetime`, `expiry_datetime`, `type`, `content`).
 
 ## What to capture
 Record only information that is:
@@ -113,7 +107,7 @@ Every output `type` must be exactly one of:
 - `user_facts`: identity, family, location, demographics, relationships
 - `life_events`: dated or upcoming events affecting finances
 - `income`: employment type, pay schedule, variable income notes
-- `goals`: savings targets, debt payoff, budget limits, and tradeoffs; include stated dollar amounts, Penny category slugs, and the specific month, year, or date range when the user bounds the goal
+- `goals`: savings targets, debt payoff, budget limits, and tradeoffs
 - `spending`: recurring spend patterns, timing, channels, and preferred merchants
 - `categorization`: how user wants labels applied or corrected; use actual Penny category slugs in content (e.g. `meals_dining_out`, `meals_groceries`), never invented labels like Coffee
 - `accounts`: how user moves money between accounts
@@ -133,7 +127,8 @@ Compute `expiry_datetime` as ISO-8601 UTC. For `permanent`, use captured_datetim
 When the user states an explicit timeframe or end date, set `expiry_datetime` to the last moment of that period instead of a generic bucket:
 - "for next month" on `2025-08-21` → `2025-09-30T23:59:59Z`
 - A trip or event in a named month → last moment of that month or event date
-When no end date is stated for an ongoing habit, goal, or preference, use `2099-12-31T23:59:59Z`.
+
+When no end date is stated for an ongoing habit, goal, preference, or durable rule, set `expiry_datetime` to `null` (no expiry).
 
 ## Content specificity
 - Preserve concrete details the user stated: dollar amounts, merchants, Penny category slugs, dates, months, years, and durations.
@@ -145,16 +140,17 @@ When no end date is stated for an ongoing habit, goal, or preference, use `2099-
 When the user updates or contradicts an earlier fact later in the conversation (same topic, same `type`):
 - Output the older memory and the newer replacement memory; do not silently drop the older fact.
 - Set the older memory's `expiry_datetime` to the newer memory's `captured_datetime` (when the updated fact appeared). Do not use the normal expiry bucket for the superseded memory.
-- Set the replacement memory's `expiry_datetime` using the normal expiry bucket from its own `captured_datetime`.
+- Set the replacement memory's `expiry_datetime` using the normal expiry rules above (including `null` when open-ended).
 
 ## Output (JSON only)
-Return a JSON array of memory objects for this conversation window only. When `prior_memories` is present, include superseded or updated rows from that list plus any new memories; omit unchanged prior rows.
+Return a JSON array of memory objects for this conversation window only.
 
 Each object:
-- `captured_datetime`: ISO-8601 UTC timestamp of the user message (or latest relevant message) where the fact appeared
-- `expiry_datetime`: ISO-8601 UTC computed from the expiry bucket rules above, or for a superseded memory the `captured_datetime` of the memory that replaced it
-- `type`: one allowed memory type slug
-- `content`: one concise third-person sentence Penny can reuse later, with specific amounts, category slugs, merchants, and time periods when the user stated them (e.g. "User set a budget of $500 for the month of Sept 2025 for the meals_dining_out category.")
+- `captured_datetime`: timestamp when the fact appeared
+- `expiry_datetime`: timestamp when the memory expires, or `null` when open-ended
+- `type`: memory type slug
+- `content`: third-person memory sentence
+- `penny_log_id`: message id
 
 Return an empty array `[]` when no durable memories are present.
 Return only the JSON array. No markdown fences or extra text."""
@@ -167,24 +163,13 @@ def _build_output_schema() -> "types.Schema":
     type=types.Type.ARRAY,
     items=types.Schema(
       type=types.Type.OBJECT,
-      required=["captured_datetime", "expiry_datetime", "type", "content"],
+      required=["captured_datetime", "type", "content", "penny_log_id"],
       properties={
-        "captured_datetime": types.Schema(
-          type=types.Type.STRING,
-          description="ISO-8601 UTC timestamp when the memory was captured from the conversation.",
-        ),
-        "expiry_datetime": types.Schema(
-          type=types.Type.STRING,
-          description="ISO-8601 UTC timestamp when the memory should expire; for superseded memories, equals the captured_datetime of the replacing memory.",
-        ),
-        "type": types.Schema(
-          type=types.Type.STRING,
-          description="One allowed memory type slug.",
-        ),
-        "content": types.Schema(
-          type=types.Type.STRING,
-          description="Concise third-person memory sentence for Penny with specific amounts, category slugs, merchants, and time periods when stated.",
-        ),
+        "captured_datetime": types.Schema(type=types.Type.STRING),
+        "expiry_datetime": types.Schema(type=types.Type.STRING, nullable=True),
+        "type": types.Schema(type=types.Type.STRING),
+        "content": types.Schema(type=types.Type.STRING),
+        "penny_log_id": types.Schema(type=types.Type.INTEGER),
       },
     ),
   )
@@ -241,43 +226,21 @@ def _validate_conversation_messages(messages: list[dict[str, Any]], path_prefix:
     captured = msg.get("captured_datetime")
     if not isinstance(captured, str) or not captured.strip():
       raise ValueError(f"{path_prefix}[{i}].captured_datetime is required")
-
-
-def _validate_prior_memories(memories: list[dict[str, Any]]) -> None:
-  for i, row in enumerate(memories):
-    if not isinstance(row, dict):
-      raise ValueError(f"prior_memories[{i}] must be an object")
-    for field in ("captured_datetime", "expiry_datetime", "type", "content"):
-      if field not in row or not str(row.get(field, "")).strip():
-        raise ValueError(f"prior_memories[{i}].{field} is required")
-    if row.get("type") not in MEMORY_TYPES:
-      raise ValueError(f"prior_memories[{i}].type is invalid")
+    if msg.get("penny_log_id") is None:
+      raise ValueError(f"{path_prefix}[{i}].penny_log_id is required")
 
 
 def _normalize_input_payload(
-  payload: str | list[dict[str, Any]] | dict[str, Any],
-) -> tuple[str, list[dict[str, Any]] | dict[str, Any]]:
+  payload: str | list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
   if isinstance(payload, str):
     parsed = json.loads(payload.strip())
   else:
     parsed = payload
-  if isinstance(parsed, list):
-    _validate_conversation_messages(parsed, "input")
-    return json.dumps(parsed, indent=2), parsed
-  if isinstance(parsed, dict):
-    conversation = parsed.get("conversation")
-    if not isinstance(conversation, list):
-      raise ValueError("input.conversation must be an array")
-    _validate_conversation_messages(conversation, "input.conversation")
-    prior_memories = parsed.get("prior_memories") or []
-    if not isinstance(prior_memories, list):
-      raise ValueError("input.prior_memories must be an array")
-    _validate_prior_memories(prior_memories)
-    normalized: dict[str, Any] = {"conversation": conversation}
-    if prior_memories:
-      normalized["prior_memories"] = prior_memories
-    return json.dumps(normalized, indent=2), normalized
-  raise ValueError("input must be a JSON array or object with conversation")
+  if not isinstance(parsed, list):
+    raise ValueError("input must be a JSON array of messages")
+  _validate_conversation_messages(parsed, "input")
+  return json.dumps(parsed, indent=2), parsed
 
 
 def _memory_slot_key(item: dict[str, Any]) -> tuple[str, str]:
@@ -296,9 +259,13 @@ def _compare_memories(
   for row in actual:
     if not isinstance(row, dict):
       return False, "each memory must be an object"
-    for field in ("captured_datetime", "expiry_datetime", "type", "content"):
+    for field in ("captured_datetime", "type", "content"):
       if field not in row or not str(row.get(field, "")).strip():
         return False, f"missing or empty field: {field}"
+    if "expiry_datetime" not in row:
+      return False, "missing field: expiry_datetime"
+    if row.get("penny_log_id") is None:
+      return False, "missing penny_log_id"
     if row.get("type") not in MEMORY_TYPES:
       return False, f"invalid type: {row.get('type')}"
   ideal_keys = {_memory_slot_key(r) for r in ideal if isinstance(r, dict)}
@@ -330,83 +297,99 @@ TEST_CASES = [
 [
   {
     "captured_datetime": "2025-09-01T10:00:00Z",
+    "penny_log_id": 100001,
     "speaker": "Penny",
     "message": "Hey! I sorted most of your November transactions. Want help with the rest?"
   },
   {
     "captured_datetime": "2025-09-01T10:03:00Z",
+    "penny_log_id": 100002,
     "speaker": "User",
     "message": "Yes please. Also I usually grocery shop at Sprouts on Sundays."
   },
   {
     "captured_datetime": "2025-09-01T10:06:00Z",
     "speaker": "Penny",
-    "message": "Got it! I'll keep an eye on Sprouts trips. Anything else?"
+    "message": "Got it! I'll keep an eye on Sprouts trips. Anything else?",
+    "penny_log_id": 200001
   },
   {
     "captured_datetime": "2025-09-01T10:09:00Z",
     "speaker": "User",
-    "message": "We're saving $15,000 for a Hawaii trip next summer."
+    "message": "We're saving $15,000 for a Hawaii trip next summer.",
+    "penny_log_id": 200002
   },
   {
     "captured_datetime": "2025-09-01T10:12:00Z",
     "speaker": "Penny",
-    "message": "Love that goal! I can track progress toward $15,000."
+    "message": "Love that goal! I can track progress toward $15,000.",
+    "penny_log_id": 200003
   },
   {
     "captured_datetime": "2025-09-01T10:15:00Z",
     "speaker": "User",
-    "message": "When you see Starbucks, put it under dining out, not groceries."
+    "message": "When you see Starbucks, put it under dining out, not groceries.",
+    "penny_log_id": 200004
   },
   {
     "captured_datetime": "2025-09-01T10:18:00Z",
     "speaker": "Penny",
-    "message": "Dining out for Starbucks \u2014 noted."
+    "message": "Dining out for Starbucks \u2014 noted.",
+    "penny_log_id": 200005
   },
   {
     "captured_datetime": "2025-09-01T10:21:00Z",
     "speaker": "User",
-    "message": "I dine out mostly Mondays and Tuesdays because my partner works late other nights."
+    "message": "I dine out mostly Mondays and Tuesdays because my partner works late other nights.",
+    "penny_log_id": 200006
   },
   {
     "captured_datetime": "2025-09-01T10:24:00Z",
     "speaker": "Penny",
-    "message": "Makes sense. I'll remember your Monday/Tuesday dining pattern."
+    "message": "Makes sense. I'll remember your Monday/Tuesday dining pattern.",
+    "penny_log_id": 200007
   },
   {
     "captured_datetime": "2025-09-01T10:27:00Z",
     "speaker": "User",
-    "message": "I'm self-employed so my income varies month to month."
+    "message": "I'm self-employed so my income varies month to month.",
+    "penny_log_id": 200008
   },
   {
     "captured_datetime": "2025-09-01T10:30:00Z",
     "speaker": "Penny",
-    "message": "Thanks for sharing \u2014 I'll factor variable income into forecasts."
+    "message": "Thanks for sharing \u2014 I'll factor variable income into forecasts.",
+    "penny_log_id": 200009
   },
   {
     "captured_datetime": "2025-09-01T10:33:00Z",
     "speaker": "User",
-    "message": "I keep checking low and pay my cards from my brokerage account."
+    "message": "I keep checking low and pay my cards from my brokerage account.",
+    "penny_log_id": 200010
   },
   {
     "captured_datetime": "2025-09-01T10:36:00Z",
     "speaker": "Penny",
-    "message": "Helpful context on how you move money."
+    "message": "Helpful context on how you move money.",
+    "penny_log_id": 200011
   },
   {
     "captured_datetime": "2025-09-01T10:39:00Z",
     "speaker": "User",
-    "message": "Please keep messages short \u2014 I read these on the go."
+    "message": "Please keep messages short \u2014 I read these on the go.",
+    "penny_log_id": 200012
   },
   {
     "captured_datetime": "2025-09-01T10:42:00Z",
     "speaker": "Penny",
-    "message": "Short and sweet from here on!"
+    "message": "Short and sweet from here on!",
+    "penny_log_id": 200013
   },
   {
     "captured_datetime": "2025-09-01T10:45:00Z",
     "speaker": "User",
-    "message": "Thanks!"
+    "message": "Thanks!",
+    "penny_log_id": 200014
   }
 ]
 """,
@@ -414,45 +397,52 @@ TEST_CASES = [
 [
   {
     "captured_datetime": "2025-09-01T10:03:00Z",
-    "expiry_datetime": "2026-09-01T10:03:00Z",
+    "expiry_datetime": null,
     "type": "spending",
-    "content": "User usually grocery shops at Sprouts on Sundays."
+    "content": "User usually grocery shops at Sprouts on Sundays.",
+    "penny_log_id": 200001
   },
   {
     "captured_datetime": "2025-09-01T10:09:00Z",
     "expiry_datetime": "2026-03-01T10:09:00Z",
     "type": "goals",
-    "content": "User is saving $15,000 for a Hawaii trip next summer."
+    "content": "User is saving $15,000 for a Hawaii trip next summer.",
+    "penny_log_id": 200002
   },
   {
     "captured_datetime": "2025-09-01T10:15:00Z",
-    "expiry_datetime": "2026-09-01T10:15:00Z",
+    "expiry_datetime": null,
     "type": "categorization",
-    "content": "User wants Starbucks transactions categorized as meals_dining_out, not meals_groceries."
+    "content": "User wants Starbucks transactions categorized as meals_dining_out, not meals_groceries.",
+    "penny_log_id": 200003
   },
   {
     "captured_datetime": "2025-09-01T10:21:00Z",
-    "expiry_datetime": "2026-09-01T10:21:00Z",
+    "expiry_datetime": null,
     "type": "spending",
-    "content": "User usually dines out on Mondays and Tuesdays because their partner works late on other nights."
+    "content": "User usually dines out on Mondays and Tuesdays because their partner works late on other nights.",
+    "penny_log_id": 200004
   },
   {
     "captured_datetime": "2025-09-01T10:27:00Z",
-    "expiry_datetime": "2026-09-01T10:27:00Z",
+    "expiry_datetime": null,
     "type": "income",
-    "content": "User is self-employed and has variable month-to-month income."
+    "content": "User is self-employed and has variable month-to-month income.",
+    "penny_log_id": 200005
   },
   {
     "captured_datetime": "2025-09-01T10:33:00Z",
-    "expiry_datetime": "2026-09-01T10:33:00Z",
+    "expiry_datetime": null,
     "type": "accounts",
-    "content": "User keeps checking account balances low and pays credit cards from a brokerage account."
+    "content": "User keeps checking account balances low and pays credit cards from a brokerage account.",
+    "penny_log_id": 200006
   },
   {
     "captured_datetime": "2025-09-01T10:39:00Z",
-    "expiry_datetime": "2026-09-01T10:39:00Z",
+    "expiry_datetime": null,
     "type": "communication",
-    "content": "User prefers short messages because they read them on the go."
+    "content": "User prefers short messages because they read them on the go.",
+    "penny_log_id": 200007
   }
 ]
 """,
@@ -465,42 +455,50 @@ TEST_CASES = [
   {
     "captured_datetime": "2025-09-05T16:00:00Z",
     "speaker": "Penny",
-    "message": "Your grocery spend last week was $412. Want a category breakdown?"
+    "message": "Your grocery spend last week was $412. Want a category breakdown?",
+    "penny_log_id": 200001
   },
   {
     "captured_datetime": "2025-09-05T16:03:00Z",
     "speaker": "User",
-    "message": "Sure, send it."
+    "message": "Sure, send it.",
+    "penny_log_id": 200002
   },
   {
     "captured_datetime": "2025-09-05T16:06:00Z",
     "speaker": "Penny",
-    "message": "Groceries $280, household $90, personal care $42."
+    "message": "Groceries $280, household $90, personal care $42.",
+    "penny_log_id": 200003
   },
   {
     "captured_datetime": "2025-09-05T16:09:00Z",
     "speaker": "User",
-    "message": "What was my total eating out?"
+    "message": "What was my total eating out?",
+    "penny_log_id": 200004
   },
   {
     "captured_datetime": "2025-09-05T16:12:00Z",
     "speaker": "Penny",
-    "message": "Eating out was $186 across 6 transactions."
+    "message": "Eating out was $186 across 6 transactions.",
+    "penny_log_id": 200005
   },
   {
     "captured_datetime": "2025-09-05T16:15:00Z",
     "speaker": "User",
-    "message": "Ok thanks."
+    "message": "Ok thanks.",
+    "penny_log_id": 200006
   },
   {
     "captured_datetime": "2025-09-05T16:18:00Z",
     "speaker": "Penny",
-    "message": "Any questions about those numbers?"
+    "message": "Any questions about those numbers?",
+    "penny_log_id": 200007
   },
   {
     "captured_datetime": "2025-09-05T16:21:00Z",
     "speaker": "User",
-    "message": "Nope, all good."
+    "message": "Nope, all good.",
+    "penny_log_id": 200008
   }
 ]
 """,
@@ -516,47 +514,56 @@ TEST_CASES = [
   {
     "captured_datetime": "2025-08-20T09:00:00Z",
     "speaker": "Penny",
-    "message": "I noticed a few large transfers this week \u2014 everything look right?"
+    "message": "I noticed a few large transfers this week \u2014 everything look right?",
+    "penny_log_id": 200001
   },
   {
     "captured_datetime": "2025-08-20T09:05:00Z",
     "speaker": "User",
-    "message": "Yes, we're moving to Austin in March for my wife's new job."
+    "message": "Yes, we're moving to Austin in March for my wife's new job.",
+    "penny_log_id": 200002
   },
   {
     "captured_datetime": "2025-08-20T09:10:00Z",
     "speaker": "Penny",
-    "message": "Exciting move! I can help budget relocation costs."
+    "message": "Exciting move! I can help budget relocation costs.",
+    "penny_log_id": 200003
   },
   {
     "captured_datetime": "2025-08-20T09:15:00Z",
     "speaker": "User",
-    "message": "We have two kids, ages 7 and 10."
+    "message": "We have two kids, ages 7 and 10.",
+    "penny_log_id": 200004
   },
   {
     "captured_datetime": "2025-08-20T09:20:00Z",
     "speaker": "Penny",
-    "message": "I'll keep family context in mind for planning."
+    "message": "I'll keep family context in mind for planning.",
+    "penny_log_id": 200005
   },
   {
     "captured_datetime": "2025-08-20T09:25:00Z",
     "speaker": "User",
-    "message": "Rent in Austin will be about $2,800 so tighten the fun budget until we move."
+    "message": "Rent in Austin will be about $2,800 so tighten the fun budget until we move.",
+    "penny_log_id": 200006
   },
   {
     "captured_datetime": "2025-08-20T09:30:00Z",
     "speaker": "Penny",
-    "message": "I'll treat $2,800 rent as the target and watch discretionary spend."
+    "message": "I'll treat $2,800 rent as the target and watch discretionary spend.",
+    "penny_log_id": 200007
   },
   {
     "captured_datetime": "2025-08-20T09:35:00Z",
     "speaker": "User",
-    "message": "Call me Dan, not Daniel."
+    "message": "Call me Dan, not Daniel.",
+    "penny_log_id": 200008
   },
   {
     "captured_datetime": "2025-08-20T09:40:00Z",
     "speaker": "Penny",
-    "message": "Dan it is!"
+    "message": "Dan it is!",
+    "penny_log_id": 200009
   }
 ]
 """,
@@ -566,25 +573,29 @@ TEST_CASES = [
     "captured_datetime": "2025-08-20T09:05:00Z",
     "expiry_datetime": "2026-02-20T09:05:00Z",
     "type": "life_events",
-    "content": "User is moving to Austin in March because their wife started a new job there."
+    "content": "User is moving to Austin in March because their wife started a new job there.",
+    "penny_log_id": 200001
   },
   {
     "captured_datetime": "2025-08-20T09:15:00Z",
     "expiry_datetime": "2035-08-20T09:15:00Z",
     "type": "user_facts",
-    "content": "User has two children, ages 7 and 10."
+    "content": "User has two children, ages 7 and 10.",
+    "penny_log_id": 200002
   },
   {
     "captured_datetime": "2025-08-20T09:25:00Z",
     "expiry_datetime": "2026-02-20T09:25:00Z",
     "type": "goals",
-    "content": "User wants discretionary fun spending reduced until they move because Austin rent will be about $2,800."
+    "content": "User wants discretionary fun spending reduced until they move because Austin rent will be about $2,800.",
+    "penny_log_id": 200003
   },
   {
     "captured_datetime": "2025-08-20T09:35:00Z",
     "expiry_datetime": "2035-08-20T09:35:00Z",
     "type": "user_facts",
-    "content": "User prefers to be called Dan, not Daniel."
+    "content": "User prefers to be called Dan, not Daniel.",
+    "penny_log_id": 200004
   }
 ]
 """,
@@ -597,27 +608,32 @@ TEST_CASES = [
   {
     "captured_datetime": "2025-09-10T14:00:00Z",
     "speaker": "Penny",
-    "message": "Any savings goals you want me to track?"
+    "message": "Any savings goals you want me to track?",
+    "penny_log_id": 200001
   },
   {
     "captured_datetime": "2025-09-10T14:05:00Z",
     "speaker": "User",
-    "message": "We're saving $15,000 for a Hawaii trip next summer."
+    "message": "We're saving $15,000 for a Hawaii trip next summer.",
+    "penny_log_id": 200002
   },
   {
     "captured_datetime": "2025-09-10T14:10:00Z",
     "speaker": "Penny",
-    "message": "I'll track progress toward $15,000."
+    "message": "I'll track progress toward $15,000.",
+    "penny_log_id": 200003
   },
   {
     "captured_datetime": "2025-09-10T14:15:00Z",
     "speaker": "User",
-    "message": "Actually bump that to $20,000 — flights went up."
+    "message": "Actually bump that to $20,000 \u2014 flights went up.",
+    "penny_log_id": 200004
   },
   {
     "captured_datetime": "2025-09-10T14:18:00Z",
     "speaker": "Penny",
-    "message": "Updated to $20,000 for Hawaii."
+    "message": "Updated to $20,000 for Hawaii.",
+    "penny_log_id": 200005
   }
 ]
 """,
@@ -627,7 +643,18 @@ TEST_CASES = [
     "captured_datetime": "2025-09-10T14:05:00Z",
     "expiry_datetime": "2025-09-10T14:15:00Z",
     "type": "goals",
-    "content": "User is saving $15,000 for a Hawaii trip next summer."
+    "content": "User is saving $15,000 for a Hawaii trip next summer.",
+    "penny_log_id": 200001
+  },
+  {
+    "captured_datetime": "2025-09-10T14:15:00Z",
+    "expiry_datetime": "2026-03-10T14:15:00Z",
+    "type": "goals",
+    "content": "User is saving $20,000 for a Hawaii trip next summer.",
+    "penny_log_id": 200002
+  }
+]
+""",
   },
   {
     "captured_datetime": "2025-09-10T14:15:00Z",
@@ -640,50 +667,6 @@ TEST_CASES = [
   },
   {
     "batch": 5,
-    "name": "prior_memories_supersede_next_batch",
-    "input": """
-{
-  "prior_memories": [
-    {
-      "captured_datetime": "2025-09-10T14:05:00Z",
-      "expiry_datetime": "2026-09-10T14:05:00Z",
-      "type": "goals",
-      "content": "User is saving $15,000 for a Hawaii trip next summer."
-    }
-  ],
-  "conversation": [
-    {
-      "captured_datetime": "2025-09-10T14:15:00Z",
-      "speaker": "User",
-      "message": "Actually bump that to $20,000 — flights went up."
-    },
-    {
-      "captured_datetime": "2025-09-10T14:18:00Z",
-      "speaker": "Penny",
-      "message": "Updated to $20,000 for Hawaii."
-    }
-  ]
-}
-""",
-    "output": """
-[
-  {
-    "captured_datetime": "2025-09-10T14:05:00Z",
-    "expiry_datetime": "2025-09-10T14:15:00Z",
-    "type": "goals",
-    "content": "User is saving $15,000 for a Hawaii trip next summer."
-  },
-  {
-    "captured_datetime": "2025-09-10T14:15:00Z",
-    "expiry_datetime": "2026-03-10T14:15:00Z",
-    "type": "goals",
-    "content": "User is saving $20,000 for a Hawaii trip next summer."
-  }
-]
-""",
-  },
-  {
-    "batch": 6,
     "name": "budget_next_month_specific_content",
     "input": """
 [
@@ -745,7 +728,7 @@ class CaptureChatMemoryOptimizer:
 
   def generate_response(
     self,
-    payload: str | list[dict[str, Any]] | dict[str, Any],
+    payload: str | list[dict[str, Any]],
   ) -> list[dict[str, Any]]:
     request_text, _ = _normalize_input_payload(payload)
     t = types
@@ -843,7 +826,6 @@ def main(
     print("  List tests:     python3 active_experiments/m_capture_chat_memory_optimizer.py --list")
     print("  Run by index:   python3 active_experiments/m_capture_chat_memory_optimizer.py --test 0")
     print("  Run by name:    python3 active_experiments/m_capture_chat_memory_optimizer.py --test habits_goals_and_categorization")
-    print("  Incremental:    python3 active_experiments/m_capture_chat_memory_optimizer.py --test prior_memories_supersede_next_batch")
     print("  Bounded budget: python3 active_experiments/m_capture_chat_memory_optimizer.py --test budget_next_month_specific_content")
     print("  Run all tests:  python3 active_experiments/m_capture_chat_memory_optimizer.py --test all")
     return
